@@ -1,0 +1,457 @@
+/* Estilos para el Dashboard con Sidebar */
+:root {
+    --primary: #0a2647;
+    --primary-dark: #051a34;
+    --primary-light: #1e3a6b;
+    --secondary: #64748b;
+    --success: #10b981;
+    --warning: #f59e0b;
+    --danger: #ef4444;
+    --dark: #1e293b;
+    --light: #f8fafc;
+    --gray: #94a3b8;
+    --sidebar-width: 260px;
+    --header-height: 70px;
+}
+
+/* Divider en el menú */
+.nav-divider {
+    height: 1px;
+    background: rgba(255, 255, 255, 0.1);
+    margin: 15px 20px;
+}
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #f1f5f9;
+    height: 100vh;
+    overflow: hidden;
+}
+
+/* Layout principal */
+.dashboard-layout {
+    display: flex;
+    height: 100vh;
+    width: 100%;
+}
+
+/* Sidebar */
+.sidebar {
+    width: var(--sidebar-width);
+    background: linear-gradient(180deg, var(--primary) 0%, var(--primary-dark) 100%);
+    color: white;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    position: fixed;
+    left: 0;
+    top: 0;
+    box-shadow: 4px 0 10px rgba(0, 0, 0, 0.1);
+}
+
+.sidebar-header {
+    padding: 25px 20px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.sidebar-header .logo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.sidebar-header .logo i {
+    font-size: 28px;
+    color: white;
+}
+
+.sidebar-header .logo span {
+    font-size: 20px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+}
+
+.sidebar-header .logo small {
+    display: block;
+    font-size: 12px;
+    opacity: 0.7;
+    margin-top: 2px;
+}
+
+/* Perfil de usuario en sidebar */
+.user-profile {
+    padding: 20px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.user-avatar {
+    width: 50px;
+    height: 50px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 12px;
+}
+
+.user-avatar i {
+    font-size: 24px;
+    color: white;
+}
+
+.user-info h4 {
+    font-size: 15px;
+    font-weight: 600;
+    margin-bottom: 4px;
+}
+
+.user-info p {
+    font-size: 12px;
+    opacity: 0.7;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.user-info .rol-badge {
+    background: rgba(255, 255, 255, 0.2);
+    padding: 3px 8px;
+    border-radius: 20px;
+    font-size: 11px;
+    display: inline-block;
+}
+
+/* Menú de navegación */
+.sidebar-nav {
+    flex: 1;
+    padding: 20px 0;
+    overflow-y: auto;
+}
+
+.sidebar-nav ul {
+    list-style: none;
+}
+
+.sidebar-nav li {
+    margin-bottom: 5px;
+}
+
+.sidebar-nav a {
+    display: flex;
+    align-items: center;
+    padding: 12px 20px;
+    color: rgba(255, 255, 255, 0.7);
+    text-decoration: none;
+    transition: all 0.3s;
+    border-left: 3px solid transparent;
+}
+
+.sidebar-nav a:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: white;
+    border-left-color: white;
+}
+
+.sidebar-nav a.active {
+    background: rgba(255, 255, 255, 0.15);
+    color: white;
+    border-left-color: white;
+}
+
+.sidebar-nav i {
+    width: 24px;
+    font-size: 18px;
+    margin-right: 12px;
+}
+
+.sidebar-nav span {
+    font-size: 14px;
+    font-weight: 500;
+}
+
+/* Footer del sidebar */
+.sidebar-footer {
+    padding: 20px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.logout-btn {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: rgba(255, 255, 255, 0.7);
+    text-decoration: none;
+    padding: 10px;
+    border-radius: 8px;
+    transition: all 0.3s;
+    font-size: 14px;
+}
+
+.logout-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: white;
+}
+
+.logout-btn i {
+    font-size: 16px;
+}
+
+/* Contenido principal */
+.main-content {
+    flex: 1;
+    margin-left: var(--sidebar-width);
+    height: 100vh;
+    overflow-y: auto;
+    background: #f1f5f9;
+}
+
+/* Top bar */
+.top-bar {
+    background: white;
+    padding: 0 30px;
+    height: var(--header-height);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.02);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+.page-title {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+
+.page-title h2 {
+    font-size: 20px;
+    color: var(--dark);
+    font-weight: 600;
+}
+
+.page-title .breadcrumb {
+    color: var(--gray);
+    font-size: 14px;
+}
+
+.page-title .breadcrumb a {
+    color: var(--primary);
+    text-decoration: none;
+}
+
+.page-actions {
+    display: flex;
+    gap: 15px;
+}
+
+/* Content area */
+.content-area {
+    padding: 30px;
+}
+
+/* Cards de bienvenida */
+.welcome-card {
+    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
+    border-radius: 16px;
+    padding: 30px;
+    color: white;
+    margin-bottom: 30px;
+    box-shadow: 0 10px 30px rgba(10, 38, 71, 0.2);
+}
+
+.welcome-card h1 {
+    font-size: 28px;
+    font-weight: 600;
+    margin-bottom: 10px;
+}
+
+.welcome-card p {
+    font-size: 16px;
+    opacity: 0.9;
+}
+
+/* Grid de módulos */
+.modules-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 25px;
+    margin-top: 20px;
+}
+
+.module-card {
+    background: white;
+    border-radius: 16px;
+    overflow: hidden;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.02);
+    transition: all 0.3s;
+    cursor: pointer;
+    border: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.module-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+    border-color: var(--primary-light);
+}
+
+.module-card-header {
+    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
+    padding: 25px;
+    text-align: center;
+}
+
+.module-card-header i {
+    font-size: 40px;
+    color: white;
+}
+
+.module-card-body {
+    padding: 20px;
+    text-align: center;
+}
+
+.module-card-body h3 {
+    color: var(--primary);
+    font-size: 18px;
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+
+.module-card-body p {
+    color: var(--gray);
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+/* Scrollbar personalizado */
+.sidebar-nav::-webkit-scrollbar,
+.main-content::-webkit-scrollbar {
+    width: 6px;
+}
+
+.sidebar-nav::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.sidebar-nav::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.3);
+    border-radius: 3px;
+}
+
+.main-content::-webkit-scrollbar-track {
+    background: #e2e8f0;
+}
+
+.main-content::-webkit-scrollbar-thumb {
+    background: var(--gray);
+    border-radius: 3px;
+}
+
+.main-content::-webkit-scrollbar-thumb:hover {
+    background: var(--secondary);
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .sidebar {
+        width: 70px;
+        overflow: hidden;
+    }
+    
+    .sidebar:hover {
+        width: var(--sidebar-width);
+        position: fixed;
+        z-index: 1000;
+    }
+    
+    .sidebar .logo span,
+    .sidebar .user-info,
+    .sidebar-nav span,
+    .sidebar-footer .logout-btn span {
+        display: none;
+    }
+    
+    .sidebar:hover .logo span,
+    .sidebar:hover .user-info,
+    .sidebar:hover .sidebar-nav span,
+    .sidebar:hover .logout-btn span {
+        display: inline-block;
+    }
+    
+    .main-content {
+        margin-left: 70px;
+    }
+    
+    .modules-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .welcome-card h1 {
+        font-size: 22px;
+    }
+}
+
+@media (max-width: 480px) {
+    .top-bar {
+        padding: 0 15px;
+    }
+    
+    .content-area {
+        padding: 20px 15px;
+    }
+    
+    .welcome-card {
+        padding: 20px;
+    }
+}
+/* Botones */
+.btn-primary {
+    background: var(--primary);
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    transition: background 0.2s;
+}
+
+.btn-primary:hover {
+    background: var(--primary-light);
+}
+
+/* Cards genéricas */
+.card {
+    background: white;
+    border-radius: 16px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.02);
+    border: 1px solid rgba(0, 0, 0, 0.05);
+    margin-bottom: 25px;
+}
+
+.card-header {
+    padding: 20px 25px;
+    border-bottom: 1px solid #eef2f6;
+}
+
+.card-header h3 {
+    color: var(--dark);
+    font-size: 18px;
+    font-weight: 600;
+}
+
+.card-body {
+    padding: 25px;
+}
