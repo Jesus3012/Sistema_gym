@@ -24,7 +24,7 @@ if ($current_page == 'clases.php') $active_module = 'classes';
 if ($current_page == 'reportes.php') $active_module = 'reports';
 if ($current_page == 'configuracion.php') $active_module = 'settings';
 
-// Obtener datos del usuario desde la sesión (coincidiendo con tu login)
+// Obtener datos del usuario desde la sesión
 $user_name = isset($_SESSION['user_name']) ? $_SESSION['user_name'] : 'Usuario';
 $user_email = isset($_SESSION['user_email']) ? $_SESSION['user_email'] : 'usuario@email.com';
 $user_rol = isset($_SESSION['user_rol']) ? $_SESSION['user_rol'] : 'recepcionista';
@@ -59,60 +59,65 @@ $user_rol_display = isset($rol_spanish[$user_rol]) ? $rol_spanish[$user_rol] : u
     box-sizing: border-box;
 }
 
+html, body {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+}
+
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
     background: #f5f7fa;
-    margin: 0;
-    padding: 0;
     overflow-x: hidden;
 }
 
-/* Botón Hamburguesa */
-.hamburger-btn {
-    position: fixed;
-    top: 20px;
-    left: 20px;
-    z-index: 1002;
-    background: var(--sidebar-bg);
-    border: none;
-    cursor: pointer;
-    width: 45px;
-    height: 45px;
-    border-radius: 12px;
-    color: white;
-    font-size: 1.2rem;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-    transition: all 0.3s ease;
-}
-
-.hamburger-btn:hover {
-    background: var(--sidebar-hover);
-    transform: scale(1.02);
-}
-
-/* Sidebar */
+/* Sidebar - Ocupa toda la altura */
 .sidebar {
     position: fixed;
     left: 0;
     top: 0;
     width: 280px;
-    height: 100vh;
+    height: 100%;
+    min-height: 100vh;
     background: var(--sidebar-bg);
     display: flex;
     flex-direction: column;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    z-index: 1001;
+    transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    z-index: 1000;
     overflow-y: auto;
     overflow-x: hidden;
     box-shadow: 2px 0 12px rgba(0, 0, 0, 0.1);
 }
 
-/* Estado Colapsado en PC */
+/* Botón de colapsar DENTRO del sidebar */
+.sidebar-collapse-btn {
+    position: absolute;
+    right: 12px;
+    top: 20px;
+    width: 40px;
+    height: 40px;
+    background: var(--sidebar-accent);
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 0.9rem;
+    transition: all 0.3s ease;
+    z-index: 10;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+}
+
+.sidebar-collapse-btn:hover {
+    background: #2563eb;
+    transform: scale(1.05);
+}
+
+/* Estado Colapsado */
 .sidebar.collapsed {
-    width: 75px;
+    width: 85px !important;
 }
 
 .sidebar.collapsed .logo-text,
@@ -124,7 +129,6 @@ body {
 
 .sidebar.collapsed .logo {
     justify-content: center;
-    padding: 0;
 }
 
 .sidebar.collapsed .user-profile {
@@ -151,17 +155,58 @@ body {
     padding: 14px;
 }
 
+.sidebar.collapsed .sidebar-collapse-btn {
+    right: 19px;
+}
+
+.sidebar.collapsed .sidebar-collapse-btn i {
+    transform: rotate(180deg);
+}
+
+/* Botón Hamburguesa para móvil - Solo visible en móvil */
+.hamburger-mobile {
+    position: fixed;
+    top: 15px;
+    left: 15px;
+    z-index: 1001;
+    background: var(--sidebar-bg);
+    border: none;
+    cursor: pointer;
+    width: 45px;
+    height: 45px;
+    border-radius: 12px;
+    color: white;
+    font-size: 1.2rem;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    transition: all 0.3s ease;
+}
+
+.hamburger-mobile:hover {
+    background: var(--sidebar-hover);
+    transform: scale(1.02);
+}
+
 /* Estado Móvil */
 @media (max-width: 768px) {
+    .hamburger-mobile {
+        display: flex;
+    }
+    
     .sidebar {
         transform: translateX(-100%);
         width: 280px;
-        box-shadow: none;
+        transition: transform 0.3s ease;
     }
     
     .sidebar.mobile-open {
         transform: translateX(0);
-        box-shadow: 2px 0 12px rgba(0, 0, 0, 0.2);
+    }
+    
+    .sidebar-collapse-btn {
+        display: none;
     }
 }
 
@@ -169,6 +214,7 @@ body {
 .sidebar-header {
     padding: 24px 20px;
     border-bottom: 1px solid var(--sidebar-border);
+    position: relative;
 }
 
 .logo {
@@ -324,6 +370,7 @@ body {
 .sidebar-footer {
     padding: 16px 20px;
     border-top: 1px solid var(--sidebar-border);
+    margin-top: auto;
 }
 
 .logout-btn {
@@ -394,7 +441,7 @@ body {
     right: 0;
     bottom: 0;
     background: rgba(0, 0, 0, 0.5);
-    z-index: 1000;
+    z-index: 999;
     display: none;
 }
 
@@ -402,16 +449,18 @@ body {
     display: block;
 }
 
-/* Ajuste para el contenido principal */
+/* Contenido principal - Se desplaza según el sidebar */
 .main-content {
     margin-left: 280px;
     transition: margin-left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     min-height: 100vh;
     padding: 20px;
+    background: #f5f7fa;
 }
 
+.sidebar.collapsed ~ .main-content,
 body.sidebar-collapsed .main-content {
-    margin-left: 75px;
+    margin-left: 70px;
 }
 
 @media (max-width: 768px) {
@@ -423,34 +472,6 @@ body.sidebar-collapsed .main-content {
     body.sidebar-open .main-content {
         filter: blur(2px);
         pointer-events: none;
-    }
-}
-
-/* Mejoras para móvil - Asegurar visibilidad de letras */
-@media (max-width: 768px) {
-    .nav-text, 
-    .logo-text, 
-    .user-info h4, 
-    .user-info p,
-    .logout-text {
-        display: block !important;
-        visibility: visible !important;
-        opacity: 1 !important;
-    }
-    
-    .sidebar.collapsed .nav-text,
-    .sidebar.collapsed .logo-text,
-    .sidebar.collapsed .user-info,
-    .sidebar.collapsed .logout-text {
-        display: none !important;
-    }
-    
-    .nav-link {
-        padding: 14px 20px;
-    }
-    
-    .nav-link i {
-        font-size: 1.2rem;
     }
 }
 
@@ -471,8 +492,8 @@ body.sidebar-collapsed .main-content {
 }
 </style>
 
-<!-- Botón Hamburguesa -->
-<button class="hamburger-btn" id="hamburgerBtn">
+<!-- Botón Hamburguesa para móvil (solo visible en móvil) -->
+<button class="hamburger-mobile" id="hamburgerMobile">
     <i class="fas fa-bars"></i>
 </button>
 
@@ -491,6 +512,10 @@ body.sidebar-collapsed .main-content {
                 <small>Panel de Control</small>
             </div>
         </a>
+        <!-- Botón de colapsar DENTRO del sidebar (visible solo en PC) -->
+        <button class="sidebar-collapse-btn" id="sidebarCollapseBtn">
+            <i class="fas fa-chevron-left"></i>
+        </button>
     </div>
 
     <div class="user-profile">
@@ -563,60 +588,68 @@ body.sidebar-collapsed .main-content {
 <script>
 (function() {
     const sidebar = document.getElementById('sidebar');
-    const hamburgerBtn = document.getElementById('hamburgerBtn');
+    const sidebarCollapseBtn = document.getElementById('sidebarCollapseBtn');
+    const hamburgerMobile = document.getElementById('hamburgerMobile');
     const mobileOverlay = document.getElementById('mobileOverlay');
     const dragHandle = document.getElementById('dragHandle');
     
-    let isCollapsed = localStorage.getItem('sidebarCollapsed') === 'true';
+    let isCollapsed = false;
     let isDragging = false;
     let startX = 0;
     let startWidth = 0;
+    let savedWidth = 280;
     
+    // Función para colapsar/expandir el sidebar
     function toggleCollapse() {
-        if (window.innerWidth > 768) {
-            isCollapsed = !isCollapsed;
-            if (isCollapsed) {
-                sidebar.classList.add('collapsed');
-                document.body.classList.add('sidebar-collapsed');
+        if (window.innerWidth <= 768) return;
+        
+        if (isCollapsed) {
+            // Expandir
+            sidebar.classList.remove('collapsed');
+            document.body.classList.remove('sidebar-collapsed');
+            
+            // Restaurar el ancho guardado
+            const storedWidth = localStorage.getItem('sidebarWidth');
+            if (storedWidth && storedWidth > 70) {
+                sidebar.style.width = storedWidth + 'px';
+                savedWidth = storedWidth;
             } else {
-                sidebar.classList.remove('collapsed');
-                document.body.classList.remove('sidebar-collapsed');
+                sidebar.style.width = '280px';
+                savedWidth = 280;
             }
-            localStorage.setItem('sidebarCollapsed', isCollapsed);
-        }
-    }
-    
-    function toggleMobileSidebar() {
-        if (window.innerWidth <= 768) {
-            sidebar.classList.toggle('mobile-open');
-            mobileOverlay.classList.toggle('active');
-            document.body.classList.toggle('sidebar-open');
+            
+            isCollapsed = false;
+            localStorage.setItem('sidebarCollapsed', 'false');
         } else {
-            toggleCollapse();
+            // Colapsar
+            // Guardar el ancho actual antes de colapsar
+            const currentWidth = sidebar.offsetWidth;
+            if (currentWidth > 70) {
+                savedWidth = currentWidth;
+                localStorage.setItem('sidebarWidth', savedWidth);
+            }
+            
+            sidebar.classList.add('collapsed');
+            document.body.classList.add('sidebar-collapsed');
+            sidebar.style.width = '70px';
+            
+            isCollapsed = true;
+            localStorage.setItem('sidebarCollapsed', 'true');
         }
     }
     
-    function closeMobileSidebar() {
-        sidebar.classList.remove('mobile-open');
-        mobileOverlay.classList.remove('active');
-        document.body.classList.remove('sidebar-open');
-    }
-    
-    if (isCollapsed && window.innerWidth > 768) {
-        sidebar.classList.add('collapsed');
-        document.body.classList.add('sidebar-collapsed');
-    }
-    
+    // Función para manejar el redimensionamiento
     function initDragResize() {
         if (!dragHandle) return;
         
         dragHandle.addEventListener('mousedown', (e) => {
+            // No permitir redimensionar si está colapsado o en móvil
             if (window.innerWidth <= 768) return;
             if (isCollapsed) return;
             
             isDragging = true;
             startX = e.clientX;
-            startWidth = parseInt(window.getComputedStyle(sidebar).width, 10);
+            startWidth = sidebar.offsetWidth;
             
             document.body.style.cursor = 'ew-resize';
             document.body.style.userSelect = 'none';
@@ -629,18 +662,6 @@ body.sidebar-collapsed .main-content {
             let newWidth = startWidth + (e.clientX - startX);
             newWidth = Math.min(320, Math.max(200, newWidth));
             sidebar.style.width = newWidth + 'px';
-            
-            if (newWidth < 210 && !isCollapsed) {
-                sidebar.classList.add('collapsed');
-                document.body.classList.add('sidebar-collapsed');
-                isCollapsed = true;
-                localStorage.setItem('sidebarCollapsed', true);
-            } else if (newWidth >= 210 && isCollapsed) {
-                sidebar.classList.remove('collapsed');
-                document.body.classList.remove('sidebar-collapsed');
-                isCollapsed = false;
-                localStorage.setItem('sidebarCollapsed', false);
-            }
         });
         
         document.addEventListener('mouseup', () => {
@@ -649,50 +670,118 @@ body.sidebar-collapsed .main-content {
                 document.body.style.cursor = '';
                 document.body.style.userSelect = '';
                 
+                // Guardar el nuevo ancho
                 if (!isCollapsed && window.innerWidth > 768) {
-                    const currentWidth = parseInt(window.getComputedStyle(sidebar).width, 10);
+                    const currentWidth = sidebar.offsetWidth;
                     if (currentWidth >= 200 && currentWidth <= 320) {
-                        localStorage.setItem('sidebarWidth', currentWidth);
+                        savedWidth = currentWidth;
+                        localStorage.setItem('sidebarWidth', savedWidth);
                     }
                 }
             }
         });
     }
     
-    function restoreWidth() {
-        if (window.innerWidth <= 768) return;
-        const savedWidth = localStorage.getItem('sidebarWidth');
-        if (savedWidth && !isCollapsed) {
-            const width = parseInt(savedWidth, 10);
-            if (width >= 200 && width <= 320) {
-                sidebar.style.width = width + 'px';
-            }
+    // Función para manejar el sidebar en móvil
+    function toggleMobileSidebar() {
+        if (window.innerWidth <= 768) {
+            sidebar.classList.toggle('mobile-open');
+            mobileOverlay.classList.toggle('active');
+            document.body.classList.toggle('sidebar-open');
         }
     }
     
+    function closeMobileSidebar() {
+        sidebar.classList.remove('mobile-open');
+        mobileOverlay.classList.remove('active');
+        document.body.classList.remove('sidebar-open');
+    }
+    
+    // Función para manejar cambios de tamaño de pantalla
     function handleResize() {
         if (window.innerWidth <= 768) {
-            sidebar.classList.remove('collapsed');
-            document.body.classList.remove('sidebar-collapsed');
-            sidebar.style.width = '';
+            // Modo móvil
+            if (!isCollapsed && document.body.classList.contains('sidebar-collapsed')) {
+                document.body.classList.remove('sidebar-collapsed');
+            }
+            if (sidebar.classList.contains('collapsed')) {
+                sidebar.classList.remove('collapsed');
+                sidebar.style.width = '';
+            }
             closeMobileSidebar();
         } else {
+            // Modo desktop
             sidebar.classList.remove('mobile-open');
             mobileOverlay.classList.remove('active');
             document.body.classList.remove('sidebar-open');
-            if (isCollapsed) {
-                sidebar.classList.add('collapsed');
-                document.body.classList.add('sidebar-collapsed');
+            
+            // Restaurar estado colapsado desde localStorage
+            const storedCollapsed = localStorage.getItem('sidebarCollapsed');
+            const storedWidthVal = localStorage.getItem('sidebarWidth');
+            
+            if (storedCollapsed === 'true') {
+                if (!sidebar.classList.contains('collapsed')) {
+                    sidebar.classList.add('collapsed');
+                    document.body.classList.add('sidebar-collapsed');
+                    sidebar.style.width = '70px';
+                    isCollapsed = true;
+                }
             } else {
-                sidebar.classList.remove('collapsed');
-                document.body.classList.remove('sidebar-collapsed');
-                restoreWidth();
+                if (sidebar.classList.contains('collapsed')) {
+                    sidebar.classList.remove('collapsed');
+                    document.body.classList.remove('sidebar-collapsed');
+                }
+                if (storedWidthVal && storedWidthVal > 70) {
+                    sidebar.style.width = storedWidthVal + 'px';
+                    savedWidth = storedWidthVal;
+                } else {
+                    sidebar.style.width = '280px';
+                    savedWidth = 280;
+                }
+                isCollapsed = false;
             }
         }
     }
     
-    hamburgerBtn.addEventListener('click', toggleMobileSidebar);
-    mobileOverlay.addEventListener('click', closeMobileSidebar);
+    // Cargar estado inicial
+    const loadInitialState = () => {
+        if (window.innerWidth > 768) {
+            const storedCollapsed = localStorage.getItem('sidebarCollapsed');
+            const storedWidthVal = localStorage.getItem('sidebarWidth');
+            
+            if (storedCollapsed === 'true') {
+                sidebar.classList.add('collapsed');
+                document.body.classList.add('sidebar-collapsed');
+                sidebar.style.width = '70px';
+                isCollapsed = true;
+            } else {
+                sidebar.classList.remove('collapsed');
+                document.body.classList.remove('sidebar-collapsed');
+                if (storedWidthVal && storedWidthVal > 70) {
+                    sidebar.style.width = storedWidthVal + 'px';
+                    savedWidth = storedWidthVal;
+                } else {
+                    sidebar.style.width = '280px';
+                    savedWidth = 280;
+                }
+                isCollapsed = false;
+            }
+        }
+    };
+    
+    // Event listeners
+    if (sidebarCollapseBtn) {
+        sidebarCollapseBtn.addEventListener('click', toggleCollapse);
+    }
+    
+    if (hamburgerMobile) {
+        hamburgerMobile.addEventListener('click', toggleMobileSidebar);
+    }
+    
+    if (mobileOverlay) {
+        mobileOverlay.addEventListener('click', closeMobileSidebar);
+    }
+    
     window.addEventListener('resize', handleResize);
     
     document.querySelectorAll('.nav-link').forEach(link => {
@@ -704,7 +793,6 @@ body.sidebar-collapsed .main-content {
     });
     
     initDragResize();
-    handleResize();
-    restoreWidth();
+    loadInitialState();
 })();
 </script>

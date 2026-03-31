@@ -11,8 +11,14 @@ $error = '';
 $success = '';
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    // ... (mismo código de registro que antes) ...
-}
+    $default_password = "ego1";
+    $hashed_password = password_hash($default_password, PASSWORD_DEFAULT);
+
+    $query = "INSERT INTO usuarios (nombre, email, password, rol, password_change_required, estado) 
+            VALUES (?, ?, ?, ?, 1, 'activo')";
+    $stmt = $db->prepare($query);
+    $stmt->bind_param("ssss", $nombre, $email, $hashed_password, $rol);
+    }
 ?>
 <!DOCTYPE html>
 <html lang="es">
