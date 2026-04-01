@@ -84,20 +84,21 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action'])) {
             }
             
             $sql = "INSERT INTO productos (nombre, descripcion, categoria_id, proveedor_id, precio_compra, precio_venta, stock, stock_minimo, foto, estado) 
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'activo')";
-            
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'activo')";
+    
             $stmt = $conn->prepare($sql);
             $stmt->bind_param("ssiiddiis", $nombre, $descripcion, $categoria_id, $proveedor_id, $precio_compra, $precio_venta, $stock, $stock_minimo, $foto_ruta);
             
             if ($stmt->execute()) {
                 $producto_id = $stmt->insert_id;
+                $stmt->close();
                 
-                // Registrar movimiento inicial de stock (cantidad = stock inicial)
+                // PRIMERO: Registrar movimiento (stock anterior es 0 porque es nuevo)
                 $resultado_movimiento = registrarMovimientoStock(
                     $conn,
                     $producto_id,
                     'inicial',
-                    $stock,  // Cantidad inicial
+                    $stock,  // Stock inicial
                     'Stock inicial al crear producto',
                     $_SESSION['user_id'],
                     null,
@@ -105,18 +106,18 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action'])) {
                     'Producto registrado en el sistema con stock inicial: ' . $stock . ' unidades'
                 );
                 
-                if (!$resultado_movimiento['success']) {
-                    error_log("Error al registrar movimiento inicial: " . $resultado_movimiento['error']);
-                    $success = "Producto registrado exitosamente, pero hubo un error al registrar el movimiento de stock inicial.";
-                } else {
+                if ($resultado_movimiento['success']) {
                     $success = "Producto registrado exitosamente con stock inicial de " . $stock . " unidades";
+                } else {
+                    // Si falla el registro del movimiento, eliminamos el producto para mantener consistencia
+                    $conn->query("DELETE FROM productos WHERE id = $producto_id");
+                    $error = "Error al registrar movimiento de stock inicial: " . $resultado_movimiento['error'];
                 }
                 
                 $_POST = array();
             } else {
                 $error = "Error al registrar producto: " . $conn->error;
             }
-            $stmt->close();
         }
     }
     
@@ -128,7 +129,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action'])) {
         $observaciones = trim($_POST['observaciones']) ?: 'Agregado manualmente desde panel de productos';
         
         if ($cantidad > 0) {
-            // Primero obtener stock actual
+            // Obtener stock actual ANTES de actualizar
             $stmt = $conn->prepare("SELECT stock FROM productos WHERE id = ?");
             $stmt->bind_param("i", $id);
             $stmt->execute();
@@ -138,34 +139,34 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action'])) {
             $stock_nuevo = $stock_anterior + $cantidad;
             $stmt->close();
             
-            // Actualizar stock
-            $sql = "UPDATE productos SET stock = stock + ? WHERE id = ?";
-            $stmt = $conn->prepare($sql);
-            $stmt->bind_param("ii", $cantidad, $id);
+            // PRIMERO: Registrar movimiento
+            $resultado = registrarMovimientoStock(
+                $conn,
+                $id,
+                'entrada',
+                $cantidad,
+                $motivo,
+                $_SESSION['user_id'],
+                null,
+                null,
+                $observaciones . ' | Stock anterior: ' . $stock_anterior . ', nuevo: ' . $stock_nuevo
+            );
             
-            if ($stmt->execute()) {
-                // Registrar movimiento
-                $resultado = registrarMovimientoStock(
-                    $conn,
-                    $id,
-                    'entrada',
-                    $cantidad,  // Cantidad agregada
-                    $motivo,
-                    $_SESSION['user_id'],
-                    null,
-                    null,
-                    $observaciones . ' | Stock anterior: ' . $stock_anterior . ', nuevo: ' . $stock_nuevo
-                );
+            if ($resultado['success']) {
+                // SEGUNDO: Actualizar stock
+                $sql = "UPDATE productos SET stock = stock + ? WHERE id = ?";
+                $stmt = $conn->prepare($sql);
+                $stmt->bind_param("ii", $cantidad, $id);
                 
-                if ($resultado['success']) {
+                if ($stmt->execute()) {
                     $success = "Stock agregado exitosamente. Se añadieron $cantidad unidades. Nuevo stock: $stock_nuevo";
                 } else {
-                    $error = "Stock actualizado pero error al registrar movimiento: " . $resultado['error'];
+                    $error = "Movimiento registrado pero error al actualizar stock: " . $conn->error;
                 }
+                $stmt->close();
             } else {
-                $error = "Error al agregar stock: " . $conn->error;
+                $error = "Error al registrar movimiento: " . $resultado['error'];
             }
-            $stmt->close();
         } else {
             $error = "La cantidad debe ser mayor a 0";
         }
@@ -181,7 +182,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action'])) {
         if ($tipo_ajuste == 'stock_correccion') {
             $nuevo_stock = intval($_POST['stock_fisico']); // Este es el NUEVO STOCK
             
-            // Obtener stock actual
+            // Obtener stock actual ANTES de actualizar
             $stmt = $conn->prepare("SELECT stock FROM productos WHERE id = ?");
             $stmt->bind_param("i", $id);
             $stmt->execute();
@@ -191,26 +192,26 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action'])) {
             $diferencia = $nuevo_stock - $stock_anterior;
             $stmt->close();
             
-            // Actualizar stock con el NUEVO valor
-            $sql = "UPDATE productos SET stock = ? WHERE id = ?";
-            $stmt = $conn->prepare($sql);
-            $stmt->bind_param("ii", $nuevo_stock, $id);
+            // PRIMERO: Registrar el movimiento con el stock anterior
+            $resultado = registrarMovimientoStock(
+                $conn,
+                $id,
+                'correccion',
+                $nuevo_stock,  // Pasamos el NUEVO STOCK
+                $motivo,
+                $_SESSION['user_id'],
+                null,
+                null,
+                $observaciones . ' | Corrección de inventario: Stock anterior ' . $stock_anterior . ', nuevo ' . $nuevo_stock . ' | Variación: ' . ($diferencia > 0 ? '+' : '') . $diferencia
+            );
             
-            if ($stmt->execute()) {
-                // Registrar movimiento de corrección - PASAMOS EL NUEVO STOCK
-                $resultado = registrarMovimientoStock(
-                    $conn,
-                    $id,
-                    'correccion',
-                    $nuevo_stock,  // Pasamos el NUEVO STOCK, no la diferencia
-                    $motivo,
-                    $_SESSION['user_id'],
-                    null,
-                    null,
-                    $observaciones . ' | Corrección de inventario: Stock anterior ' . $stock_anterior . ', nuevo ' . $nuevo_stock . ' | Variación: ' . ($diferencia > 0 ? '+' : '') . $diferencia
-                );
+            if ($resultado['success']) {
+                // SEGUNDO: Actualizar el stock solo si el movimiento se registró correctamente
+                $sql = "UPDATE productos SET stock = ? WHERE id = ?";
+                $stmt = $conn->prepare($sql);
+                $stmt->bind_param("ii", $nuevo_stock, $id);
                 
-                if ($resultado['success']) {
+                if ($stmt->execute()) {
                     echo json_encode([
                         'success' => true, 
                         'message' => "Stock corregido de $stock_anterior a $nuevo_stock unidades",
@@ -219,12 +220,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action'])) {
                         'diferencia' => $diferencia
                     ]);
                 } else {
-                    echo json_encode(['success' => false, 'error' => 'Error al registrar movimiento: ' . $resultado['error']]);
+                    echo json_encode(['success' => false, 'error' => 'Movimiento registrado pero error al actualizar stock: ' . $conn->error]);
                 }
+                $stmt->close();
             } else {
-                echo json_encode(['success' => false, 'error' => 'Error al corregir stock: ' . $conn->error]);
+                echo json_encode(['success' => false, 'error' => 'Error al registrar movimiento: ' . $resultado['error']]);
             }
-            $stmt->close();
         } 
         elseif ($tipo_ajuste == 'stock_minimo') {
             $nuevo_stock_minimo = intval($_POST['nuevo_stock_minimo']);
@@ -236,36 +237,18 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action'])) {
             $result = $stmt->get_result();
             $producto = $result->fetch_assoc();
             $stock_minimo_anterior = $producto['stock_minimo'];
-            $diferencia_minimo = $nuevo_stock_minimo - $stock_minimo_anterior;
             $stmt->close();
             
-            // Actualizar stock mínimo
+            // Actualizar stock mínimo directamente SIN registrar movimiento
             $sql = "UPDATE productos SET stock_minimo = ? WHERE id = ?";
             $stmt = $conn->prepare($sql);
             $stmt->bind_param("ii", $nuevo_stock_minimo, $id);
             
             if ($stmt->execute()) {
-                // Registrar movimiento de ajuste de mínimo - PASAMOS LA DIFERENCIA
-                $resultado = registrarMovimientoStock(
-                    $conn,
-                    $id,
-                    'ajuste_minimo',
-                    $diferencia_minimo,  // Pasamos la diferencia
-                    $motivo,
-                    $_SESSION['user_id'],
-                    null,
-                    null,
-                    $observaciones . ' | Cambio de stock mínimo: de ' . $stock_minimo_anterior . ' a ' . $nuevo_stock_minimo
-                );
-                
-                if ($resultado['success']) {
-                    echo json_encode([
-                        'success' => true, 
-                        'message' => "Stock mínimo actualizado de $stock_minimo_anterior a $nuevo_stock_minimo unidades"
-                    ]);
-                } else {
-                    echo json_encode(['success' => false, 'error' => 'Error al registrar movimiento: ' . $resultado['error']]);
-                }
+                echo json_encode([
+                    'success' => true, 
+                    'message' => "Stock mínimo actualizado de $stock_minimo_anterior a $nuevo_stock_minimo unidades"
+                ]);
             } else {
                 echo json_encode(['success' => false, 'error' => 'Error al actualizar stock mínimo: ' . $conn->error]);
             }
@@ -461,6 +444,7 @@ while ($row = $result->fetch_assoc()) {
 }
 $stmt->close();
 ?>
+
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -1303,9 +1287,9 @@ $stmt->close();
                     const nuevoMinimo = parseInt($(this).val()) || 0;
                     if (nuevoMinimo !== ajusteData.stockMinimo) {
                         if (nuevoMinimo > ajusteData.stockMinimo) {
-                            $('#preview_stock_minimo').html('<span class="text-warning">⚠️ Stock mínimo aumentará de ' + ajusteData.stockMinimo + ' a ' + nuevoMinimo + ' unidades</span>');
+                            $('#preview_stock_minimo').html('<span class="text-warning">Stock mínimo aumentará de ' + ajusteData.stockMinimo + ' a ' + nuevoMinimo + ' unidades</span>');
                         } else {
-                            $('#preview_stock_minimo').html('<span class="text-info">📉 Stock mínimo disminuirá de ' + ajusteData.stockMinimo + ' a ' + nuevoMinimo + ' unidades</span>');
+                            $('#preview_stock_minimo').html('<span class="text-info">Stock mínimo disminuirá de ' + ajusteData.stockMinimo + ' a ' + nuevoMinimo + ' unidades</span>');
                         }
                     } else {
                         $('#preview_stock_minimo').html('<span class="text-muted">✓ Stock mínimo actual: ' + ajusteData.stockMinimo + ' unidades (sin cambios)</span>');
@@ -1356,7 +1340,7 @@ $stmt->close();
                             <p><strong>Producto:</strong> ${$('#ajuste_producto_nombre').text()}</p>
                             <p><strong>Stock actual:</strong> ${ajusteData.stock} unidades</p>
                             <p><strong>Stock físico:</strong> ${stockFisico} unidades</p>
-                            <p class="text-muted"><strong>⚠️ Sin cambios</strong></p>
+                            <p class="text-muted"><strong>Sin cambios</strong></p>
                         </div>
                     `;
                     confirmText = 'Sí, continuar';

@@ -19,48 +19,68 @@ if (!$conn) {
 $registros_por_pagina = isset($_GET['limite']) ? (int)$_GET['limite'] : 20;
 $pagina_actual = isset($_GET['pagina']) ? (int)$_GET['pagina'] : 1;
 $offset = ($pagina_actual - 1) * $registros_por_pagina;
-$busqueda = isset($_GET['busqueda']) ? $_GET['busqueda'] : '';
+$busqueda = isset($_GET['busqueda']) ? trim($_GET['busqueda']) : '';
 $tipo_filtro = isset($_GET['tipo']) ? $_GET['tipo'] : 'todos';
 $fecha_desde = isset($_GET['fecha_desde']) ? $_GET['fecha_desde'] : '';
 $fecha_hasta = isset($_GET['fecha_hasta']) ? $_GET['fecha_hasta'] : '';
 
-// Construir consulta WHERE
-$where = [];
+// Construir consulta WHERE para las consultas que necesitan JOIN con productos
+$where_con_join = [];
+// Construir consulta WHERE para las consultas que NO necesitan JOIN
+$where_sin_join = [];
+
 $params = [];
 $types = "";
 
+// Filtro de búsqueda (solo se aplica en consultas con JOIN)
 if (!empty($busqueda)) {
-    $where[] = "(p.nombre LIKE ? OR m.motivo LIKE ?)";
+    $where_con_join[] = "(p.nombre LIKE ? OR m.motivo LIKE ?)";
     $params[] = "%$busqueda%";
     $params[] = "%$busqueda%";
     $types .= "ss";
 }
 
+// Filtro de tipo (aplica para todas las consultas)
 if ($tipo_filtro != 'todos') {
-    $where[] = "m.tipo_movimiento = ?";
+    $where_con_join[] = "m.tipo_movimiento = ?";
+    $where_sin_join[] = "tipo_movimiento = ?";
     $params[] = $tipo_filtro;
     $types .= "s";
 }
 
-if (!empty($fecha_desde)) {
-    $where[] = "DATE(m.fecha_movimiento) >= ?";
+// Filtros de fecha - SOLO se aplican si AMBAS fechas están presentes o si solo una está presente
+if (!empty($fecha_desde) && !empty($fecha_hasta)) {
+    // Ambas fechas presentes: rango completo
+    $where_con_join[] = "DATE(m.fecha_movimiento) BETWEEN ? AND ?";
+    $where_sin_join[] = "DATE(fecha_movimiento) BETWEEN ? AND ?";
+    $params[] = $fecha_desde;
+    $params[] = $fecha_hasta;
+    $types .= "ss";
+} elseif (!empty($fecha_desde) && empty($fecha_hasta)) {
+    // Solo fecha desde
+    $where_con_join[] = "DATE(m.fecha_movimiento) >= ?";
+    $where_sin_join[] = "DATE(fecha_movimiento) >= ?";
     $params[] = $fecha_desde;
     $types .= "s";
-}
-
-if (!empty($fecha_hasta)) {
-    $where[] = "DATE(m.fecha_movimiento) <= ?";
+} elseif (empty($fecha_desde) && !empty($fecha_hasta)) {
+    // Solo fecha hasta
+    $where_con_join[] = "DATE(m.fecha_movimiento) <= ?";
+    $where_sin_join[] = "DATE(fecha_movimiento) <= ?";
     $params[] = $fecha_hasta;
     $types .= "s";
 }
 
-$where_sql = !empty($where) ? "WHERE " . implode(" AND ", $where) : "";
+$where_sql_con_join = !empty($where_con_join) ? "WHERE " . implode(" AND ", $where_con_join) : "";
+$where_sql_sin_join = !empty($where_sin_join) ? "WHERE " . implode(" AND ", $where_sin_join) : "";
 
-// Contar total de registros
+// Contar total de registros (con JOIN)
 $count_sql = "SELECT COUNT(*) as total FROM movimientos_stock m 
               JOIN productos p ON m.producto_id = p.id 
-              $where_sql";
+              $where_sql_con_join";
 $count_stmt = $conn->prepare($count_sql);
+if ($count_stmt === false) {
+    die("Error en la consulta COUNT: " . $conn->error);
+}
 if (!empty($params)) {
     $count_stmt->bind_param($types, ...$params);
 }
@@ -75,16 +95,23 @@ $sql = "SELECT m.*, p.nombre as producto_nombre, u.nombre as usuario_nombre
         FROM movimientos_stock m 
         JOIN productos p ON m.producto_id = p.id 
         JOIN usuarios u ON m.usuario_id = u.id 
-        $where_sql 
+        $where_sql_con_join 
         ORDER BY m.fecha_movimiento DESC 
         LIMIT ? OFFSET ?";
 
-$params[] = $registros_por_pagina;
-$params[] = $offset;
-$types .= "ii";
+$params_paginacion = $params;
+$types_paginacion = $types;
+$params_paginacion[] = $registros_por_pagina;
+$params_paginacion[] = $offset;
+$types_paginacion .= "ii";
 
 $stmt = $conn->prepare($sql);
-$stmt->bind_param($types, ...$params);
+if ($stmt === false) {
+    die("Error en la consulta principal: " . $conn->error);
+}
+if (!empty($params_paginacion)) {
+    $stmt->bind_param($types_paginacion, ...$params_paginacion);
+}
 $stmt->execute();
 $result = $stmt->get_result();
 $movimientos = [];
@@ -93,22 +120,20 @@ while ($row = $result->fetch_assoc()) {
 }
 $stmt->close();
 
-// Obtener resumen de movimientos para estadísticas
+// Obtener resumen de movimientos para estadísticas (SIN JOIN)
 $resumen_sql = "SELECT 
                     tipo_movimiento,
                     COUNT(*) as total,
-                    SUM(cantidad) as suma
+                    SUM(ABS(cantidad)) as suma_cantidad
                 FROM movimientos_stock m
-                $where_sql
+                $where_sql_sin_join
                 GROUP BY tipo_movimiento";
 $resumen_stmt = $conn->prepare($resumen_sql);
-if (!empty($params_original)) {
-    // Reconstruir parámetros sin los de paginación
-    $params_resumen = array_slice($params, 0, -2);
-    $types_resumen = substr($types, 0, -2);
-    if (!empty($params_resumen)) {
-        $resumen_stmt->bind_param($types_resumen, ...$params_resumen);
-    }
+if ($resumen_stmt === false) {
+    die("Error en la consulta de resumen: " . $conn->error);
+}
+if (!empty($params)) {
+    $resumen_stmt->bind_param($types, ...$params);
 }
 $resumen_stmt->execute();
 $resumen_result = $resumen_stmt->get_result();
@@ -129,7 +154,6 @@ $resumen_stmt->close();
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.0/dist/css/bootstrap.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/admin-lte@3.2/dist/css/adminlte.min.css">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css">
     <style>
         .main-content {
             margin-left: 280px;
@@ -203,6 +227,33 @@ $resumen_stmt->close();
             font-size: 16px;
             margin: 0;
         }
+        
+        .filter-input {
+            transition: all 0.3s ease;
+        }
+        
+        .filter-input:focus {
+            border-color: #007bff;
+            box-shadow: 0 0 0 0.2rem rgba(0,123,255,.25);
+        }
+        
+        .limit-selector {
+            display: inline-block;
+            margin-left: 10px;
+        }
+        
+        .limit-selector select {
+            width: auto;
+            display: inline-block;
+            width: 70px;
+            margin: 0 5px;
+        }
+        
+        .date-range-info {
+            font-size: 12px;
+            color: #6c757d;
+            margin-top: 5px;
+        }
     </style>
 </head>
 <body>
@@ -225,7 +276,7 @@ $resumen_stmt->close();
                     <div class="col-md-3">
                         <div class="small-box bg-info">
                             <div class="inner">
-                                <h3><?php echo $resumen['entrada']['total'] ?? 0; ?></h3>
+                                <h3><?php echo number_format($resumen['entrada']['total'] ?? 0); ?></h3>
                                 <p>Entradas de Stock</p>
                             </div>
                             <div class="icon">
@@ -236,7 +287,7 @@ $resumen_stmt->close();
                     <div class="col-md-3">
                         <div class="small-box bg-warning">
                             <div class="inner">
-                                <h3><?php echo $resumen['correccion']['total'] ?? 0; ?></h3>
+                                <h3><?php echo number_format($resumen['correccion']['total'] ?? 0); ?></h3>
                                 <p>Correcciones</p>
                             </div>
                             <div class="icon">
@@ -247,7 +298,7 @@ $resumen_stmt->close();
                     <div class="col-md-3">
                         <div class="small-box bg-secondary">
                             <div class="inner">
-                                <h3><?php echo $resumen['inicial']['total'] ?? 0; ?></h3>
+                                <h3><?php echo number_format($resumen['inicial']['total'] ?? 0); ?></h3>
                                 <p>Stock Inicial</p>
                             </div>
                             <div class="icon">
@@ -258,7 +309,7 @@ $resumen_stmt->close();
                     <div class="col-md-3">
                         <div class="small-box bg-primary">
                             <div class="inner">
-                                <h3><?php echo $total_registros; ?></h3>
+                                <h3><?php echo number_format($total_registros); ?></h3>
                                 <p>Total Movimientos</p>
                             </div>
                             <div class="icon">
@@ -268,7 +319,7 @@ $resumen_stmt->close();
                     </div>
                 </div>
 
-                <!-- Filtros -->
+                <!-- Filtros en tiempo real -->
                 <div class="card filter-card">
                     <div class="card-header">
                         <h3 class="card-title">
@@ -281,60 +332,58 @@ $resumen_stmt->close();
                         </div>
                     </div>
                     <div class="card-body">
-                        <form method="GET" id="filtrosForm">
+                        <form method="GET" id="filtrosForm" autocomplete="off">
                             <div class="row">
                                 <div class="col-md-3">
                                     <div class="form-group">
-                                        <label><i class="fas fa-search"></i> Buscar</label>
-                                        <input type="text" name="busqueda" class="form-control" 
-                                               placeholder="Producto o motivo..." 
-                                               value="<?php echo htmlspecialchars($busqueda); ?>">
+                                        <label><i class="fas fa-search"></i> Buscar producto o motivo</label>
+                                        <input type="text" name="busqueda" class="form-control filter-input" 
+                                            placeholder="Escribe para buscar..." 
+                                            value="<?php echo htmlspecialchars($busqueda); ?>"
+                                            id="busquedaInput">
                                     </div>
                                 </div>
-                                <div class="col-md-2">
+                                <div class="col-md-3">
                                     <div class="form-group">
-                                        <label><i class="fas fa-tag"></i> Tipo</label>
-                                        <select name="tipo" class="form-control">
+                                        <label><i class="fas fa-tag"></i> Tipo de movimiento</label>
+                                        <select name="tipo" class="form-control filter-input" id="tipoSelect">
                                             <option value="todos" <?php echo $tipo_filtro == 'todos' ? 'selected' : ''; ?>>Todos</option>
                                             <option value="inicial" <?php echo $tipo_filtro == 'inicial' ? 'selected' : ''; ?>>Stock Inicial</option>
                                             <option value="entrada" <?php echo $tipo_filtro == 'entrada' ? 'selected' : ''; ?>>Entradas</option>
                                             <option value="correccion" <?php echo $tipo_filtro == 'correccion' ? 'selected' : ''; ?>>Correcciones</option>
-                                            <option value="ajuste_minimo" <?php echo $tipo_filtro == 'ajuste_minimo' ? 'selected' : ''; ?>>Ajustes Mínimo</option>
                                         </select>
                                     </div>
                                 </div>
                                 <div class="col-md-2">
                                     <div class="form-group">
                                         <label><i class="fas fa-calendar"></i> Desde</label>
-                                        <input type="date" name="fecha_desde" class="form-control" 
-                                               value="<?php echo $fecha_desde; ?>">
+                                        <input type="date" name="fecha_desde" class="form-control filter-input" 
+                                            value="<?php echo $fecha_desde; ?>"
+                                            id="fechaDesde">
                                     </div>
                                 </div>
                                 <div class="col-md-2">
                                     <div class="form-group">
                                         <label><i class="fas fa-calendar"></i> Hasta</label>
-                                        <input type="date" name="fecha_hasta" class="form-control" 
-                                               value="<?php echo $fecha_hasta; ?>">
+                                        <input type="date" name="fecha_hasta" class="form-control filter-input" 
+                                            value="<?php echo $fecha_hasta; ?>"
+                                            id="fechaHasta">
                                     </div>
                                 </div>
                                 <div class="col-md-2">
                                     <div class="form-group">
-                                        <label><i class="fas fa-list"></i> Mostrar</label>
-                                        <select name="limite" class="form-control">
-                                            <option value="10" <?php echo $registros_por_pagina == 10 ? 'selected' : ''; ?>>10</option>
-                                            <option value="20" <?php echo $registros_por_pagina == 20 ? 'selected' : ''; ?>>20</option>
-                                            <option value="50" <?php echo $registros_por_pagina == 50 ? 'selected' : ''; ?>>50</option>
-                                            <option value="100" <?php echo $registros_por_pagina == 100 ? 'selected' : ''; ?>>100</option>
-                                        </select>
-                                    </div>
-                                </div>
-                                <div class="col-md-1">
-                                    <div class="form-group">
                                         <label>&nbsp;</label>
-                                        <button type="submit" class="btn btn-primary btn-block">
-                                            <i class="fas fa-search"></i>
+                                        <button type="button" class="btn btn-danger btn-block" id="borrarFiltrosBtn">
+                                            <i class="fas fa-trash-alt"></i> Borrar filtros
                                         </button>
                                     </div>
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-12">
+                                    <small class="text-muted">
+                                        <i class="fas fa-info-circle"></i> Los filtros de fecha solo se aplican cuando ambas fechas están seleccionadas
+                                    </small>
                                 </div>
                             </div>
                         </form>
@@ -342,11 +391,23 @@ $resumen_stmt->close();
                 </div>
 
                 <!-- Tabla de movimientos -->
-                <div class="card">
+                <div class="card" id="tablaContainer">
                     <div class="card-header">
-                        <h3 class="card-title">
-                            <i class="fas fa-list"></i> Movimientos Registrados
-                        </h3>
+                        <div class="d-flex justify-content-between align-items-center">
+                            <h3 class="card-title">
+                                <i class="fas fa-list"></i> Movimientos Registrados
+                            </h3>
+                            <div class="limit-selector">
+                                <label class="mb-0 mr-2">Mostrar:</label>
+                                <select name="limite" class="form-control form-control-sm" id="limiteSelect" style="width: auto; display: inline-block;">
+                                    <option value="10" <?php echo $registros_por_pagina == 10 ? 'selected' : ''; ?>>10</option>
+                                    <option value="20" <?php echo $registros_por_pagina == 20 ? 'selected' : ''; ?>>20</option>
+                                    <option value="50" <?php echo $registros_por_pagina == 50 ? 'selected' : ''; ?>>50</option>
+                                    <option value="100" <?php echo $registros_por_pagina == 100 ? 'selected' : ''; ?>>100</option>
+                                </select>
+                                <span class="ml-2">registros</span>
+                            </div>
+                        </div>
                     </div>
                     <div class="card-body p-0">
                         <div class="table-responsive">
@@ -444,23 +505,27 @@ $resumen_stmt->close();
                                 </div>
                             </div>
                             <div class="col-sm-12 col-md-6">
-                                <ul class="pagination pagination-sm m-0 float-right">
+                                <ul class="pagination pagination-sm m-0 float-right" id="pagination">
                                     <?php if ($pagina_actual > 1): ?>
                                         <li class="page-item">
-                                            <a class="page-link" href="?pagina=1&busqueda=<?php echo urlencode($busqueda); ?>&tipo=<?php echo $tipo_filtro; ?>&fecha_desde=<?php echo $fecha_desde; ?>&fecha_hasta=<?php echo $fecha_hasta; ?>&limite=<?php echo $registros_por_pagina; ?>">
+                                            <a class="page-link" href="#" data-page="1">
                                                 <i class="fas fa-angle-double-left"></i>
                                             </a>
                                         </li>
                                         <li class="page-item">
-                                            <a class="page-link" href="?pagina=<?php echo $pagina_actual - 1; ?>&busqueda=<?php echo urlencode($busqueda); ?>&tipo=<?php echo $tipo_filtro; ?>&fecha_desde=<?php echo $fecha_desde; ?>&fecha_hasta=<?php echo $fecha_hasta; ?>&limite=<?php echo $registros_por_pagina; ?>">
+                                            <a class="page-link" href="#" data-page="<?php echo $pagina_actual - 1; ?>">
                                                 <i class="fas fa-angle-left"></i>
                                             </a>
                                         </li>
                                     <?php endif; ?>
                                     
-                                    <?php for ($i = max(1, $pagina_actual - 2); $i <= min($total_paginas, $pagina_actual + 2); $i++): ?>
+                                    <?php 
+                                    $start_page = max(1, $pagina_actual - 2);
+                                    $end_page = min($total_paginas, $pagina_actual + 2);
+                                    for ($i = $start_page; $i <= $end_page; $i++): 
+                                    ?>
                                         <li class="page-item <?php echo $i == $pagina_actual ? 'active' : ''; ?>">
-                                            <a class="page-link" href="?pagina=<?php echo $i; ?>&busqueda=<?php echo urlencode($busqueda); ?>&tipo=<?php echo $tipo_filtro; ?>&fecha_desde=<?php echo $fecha_desde; ?>&fecha_hasta=<?php echo $fecha_hasta; ?>&limite=<?php echo $registros_por_pagina; ?>">
+                                            <a class="page-link" href="#" data-page="<?php echo $i; ?>">
                                                 <?php echo $i; ?>
                                             </a>
                                         </li>
@@ -468,12 +533,12 @@ $resumen_stmt->close();
                                     
                                     <?php if ($pagina_actual < $total_paginas): ?>
                                         <li class="page-item">
-                                            <a class="page-link" href="?pagina=<?php echo $pagina_actual + 1; ?>&busqueda=<?php echo urlencode($busqueda); ?>&tipo=<?php echo $tipo_filtro; ?>&fecha_desde=<?php echo $fecha_desde; ?>&fecha_hasta=<?php echo $fecha_hasta; ?>&limite=<?php echo $registros_por_pagina; ?>">
+                                            <a class="page-link" href="#" data-page="<?php echo $pagina_actual + 1; ?>">
                                                 <i class="fas fa-angle-right"></i>
                                             </a>
                                         </li>
                                         <li class="page-item">
-                                            <a class="page-link" href="?pagina=<?php echo $total_paginas; ?>&busqueda=<?php echo urlencode($busqueda); ?>&tipo=<?php echo $tipo_filtro; ?>&fecha_desde=<?php echo $fecha_desde; ?>&fecha_hasta=<?php echo $fecha_hasta; ?>&limite=<?php echo $registros_por_pagina; ?>">
+                                            <a class="page-link" href="#" data-page="<?php echo $total_paginas; ?>">
                                                 <i class="fas fa-angle-double-right"></i>
                                             </a>
                                         </li>
@@ -490,14 +555,108 @@ $resumen_stmt->close();
 
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.0/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     
     <script>
         $(document).ready(function() {
-            // Auto-submit al cambiar el límite
-            $('select[name="limite"]').on('change', function() {
-                $('#filtrosForm').submit();
+            let timeoutId = null;
+            
+            // Función para obtener los parámetros actuales de los filtros
+            function getCurrentFilters() {
+                const busqueda = $('#busquedaInput').val();
+                const tipo = $('#tipoSelect').val();
+                const fechaDesde = $('#fechaDesde').val();
+                const fechaHasta = $('#fechaHasta').val();
+                const limite = $('#limiteSelect').val();
+                
+                return { busqueda, tipo, fechaDesde, fechaHasta, limite };
+            }
+            
+            // Función para recargar la página con los filtros actuales
+            function aplicarFiltros(pagina = 1) {
+                const filters = getCurrentFilters();
+                
+                // Construir URL
+                let params = [];
+                if (filters.busqueda) params.push(`busqueda=${encodeURIComponent(filters.busqueda)}`);
+                if (filters.tipo !== 'todos') params.push(`tipo=${encodeURIComponent(filters.tipo)}`);
+                if (filters.fechaDesde) params.push(`fecha_desde=${encodeURIComponent(filters.fechaDesde)}`);
+                if (filters.fechaHasta) params.push(`fecha_hasta=${encodeURIComponent(filters.fechaHasta)}`);
+                if (filters.limite) params.push(`limite=${encodeURIComponent(filters.limite)}`);
+                params.push(`pagina=${pagina}`);
+                
+                const url = '?' + params.join('&');
+                window.location.href = url;
+            }
+            
+            // Función para borrar todos los filtros
+            function borrarFiltros() {
+                // Limpiar los valores de los inputs
+                $('#busquedaInput').val('');
+                $('#tipoSelect').val('todos');
+                $('#fechaDesde').val('');
+                $('#fechaHasta').val('');
+                $('#limiteSelect').val('20');
+                
+                // Redirigir sin filtros
+                window.location.href = '?pagina=1&limite=20';
+            }
+            
+            // Variable para controlar si ambas fechas están completas
+            let ambasFechasCompletas = false;
+            
+            // Función para verificar si ambas fechas están completas
+            function verificarFechas() {
+                const fechaDesde = $('#fechaDesde').val();
+                const fechaHasta = $('#fechaHasta').val();
+                
+                if (fechaDesde && fechaHasta) {
+                    ambasFechasCompletas = true;
+                } else {
+                    ambasFechasCompletas = false;
+                }
+            }
+            
+            // Aplicar filtros en tiempo real con debounce
+            $('.filter-input').on('input change', function() {
+                clearTimeout(timeoutId);
+                
+                // Para campos de fecha, verificar si ambas están completas
+                if ($(this).attr('id') === 'fechaDesde' || $(this).attr('id') === 'fechaHasta') {
+                    verificarFechas();
+                    // Solo aplicar si ambas fechas están completas O si es un cambio individual pero ya había ambas
+                    if (ambasFechasCompletas || (!$('#fechaDesde').val() && !$('#fechaHasta').val())) {
+                        timeoutId = setTimeout(function() {
+                            aplicarFiltros(1);
+                        }, 500);
+                    }
+                } else {
+                    timeoutId = setTimeout(function() {
+                        aplicarFiltros(1);
+                    }, 500);
+                }
             });
+            
+            // Manejar cambios en el select de límite
+            $('#limiteSelect').on('change', function() {
+                aplicarFiltros(1);
+            });
+            
+            // Botón borrar filtros
+            $('#borrarFiltrosBtn').on('click', function() {
+                borrarFiltros();
+            });
+            
+            // Paginación
+            $('#pagination').on('click', 'a.page-link', function(e) {
+                e.preventDefault();
+                const pagina = $(this).data('page');
+                if (pagina) {
+                    aplicarFiltros(pagina);
+                }
+            });
+            
+            // Inicializar verificación de fechas
+            verificarFechas();
         });
     </script>
 </body>
