@@ -2,25 +2,32 @@
 session_start();
 
 if (!isset($_SESSION['user_id'])) {
-    header('HTTP/1.1 401 Unauthorized');
+    header("Location: login.php");
     exit();
 }
 
 require_once 'config/database.php';
+require_once 'includes/stock_functions.php';
 
 $database = new Database();
 $conn = $database->getConnection();
 
-$action = isset($_GET['action']) ? $_GET['action'] : '';
+if (!$conn) {
+    die(json_encode(['success' => false, 'error' => 'Error de conexión a la base de datos']));
+}
+
+$action = isset($_GET['action']) ? $_GET['action'] : (isset($_POST['action']) ? $_POST['action'] : '');
 
 if ($action == 'list') {
+    // Configuración de paginación con límite personalizable
+    $registros_por_pagina = isset($_GET['limite']) ? (int)$_GET['limite'] : 10;
+    $pagina = isset($_GET['pagina']) ? (int)$_GET['pagina'] : 1;
+    $offset = ($pagina - 1) * $registros_por_pagina;
     $busqueda = isset($_GET['busqueda']) ? $_GET['busqueda'] : '';
     $categoria = isset($_GET['categoria']) ? (int)$_GET['categoria'] : 0;
     $estado = isset($_GET['estado']) ? $_GET['estado'] : 'todos';
-    $pagina = isset($_GET['pagina']) ? (int)$_GET['pagina'] : 1;
-    $registros_por_pagina = 10;
-    $offset = ($pagina - 1) * $registros_por_pagina;
     
+    // Construir consulta
     $where = [];
     $params = [];
     $types = "";
@@ -38,7 +45,7 @@ if ($action == 'list') {
         $types .= "i";
     }
     
-    if ($estado !== 'todos') {
+    if ($estado != 'todos') {
         $where[] = "p.estado = ?";
         $params[] = $estado;
         $types .= "s";
@@ -81,118 +88,20 @@ if ($action == 'list') {
     }
     $stmt->close();
     
-    // Generar HTML de la tabla
-    ?>
-    <div class="table-responsive">
-        <table class="table">
-            <thead>
-                <tr>
-                    <th>Foto</th>
-                    <th>Producto</th>
-                    <th>Categoría</th>
-                    <th>Proveedor</th>
-                    <th>P. Compra</th>
-                    <th>P. Venta</th>
-                    <th>Stock</th>
-                    <th>Estado</th>
-                    <th>Acciones</th>
-                </tr>
-            </thead>
-            <tbody>
-                <?php foreach ($productos as $producto): ?>
-                <tr>
-                    <td>
-                        <?php if ($producto['foto'] && file_exists($producto['foto'])): ?>
-                            <img src="<?php echo htmlspecialchars($producto['foto']); ?>" class="producto-imagen">
-                        <?php else: ?>
-                            <div style="width: 50px; height: 50px; background: #f0f2f5; border-radius: 8px; display: flex; align-items: center; justify-content: center;">
-                                <i class="fas fa-image" style="color: #adb5bd;"></i>
-                            </div>
-                        <?php endif; ?>
-                    </td>
-                    <td>
-                        <strong><?php echo htmlspecialchars($producto['nombre']); ?></strong>
-                        <?php if ($producto['descripcion']): ?>
-                            <br><small><?php echo htmlspecialchars(substr($producto['descripcion'], 0, 40)); ?></small>
-                        <?php endif; ?>
-                    </td>
-                    <td><?php echo htmlspecialchars($producto['categoria_nombre'] ?? 'N/A'); ?></td>
-                    <td><?php echo htmlspecialchars($producto['proveedor_nombre'] ?? 'N/A'); ?></td>
-                    <td>$<?php echo number_format($producto['precio_compra'], 2); ?></td>
-                    <td><strong>$<?php echo number_format($producto['precio_venta'], 2); ?></strong></td>
-                    <td>
-                        <?php if ($producto['stock'] <= $producto['stock_minimo']): ?>
-                            <span class="stock-bajo">
-                                <i class="fas fa-exclamation-triangle"></i> <?php echo $producto['stock']; ?>
-                            </span>
-                            <br><small>Mín: <?php echo $producto['stock_minimo']; ?></small>
-                        <?php else: ?>
-                            <span class="stock-normal"><?php echo $producto['stock']; ?></span>
-                        <?php endif; ?>
-                    </td>
-                    <td>
-                        <span class="badge badge-<?php echo $producto['estado'] == 'activo' ? 'success' : 'danger'; ?>">
-                            <?php echo ucfirst($producto['estado']); ?>
-                        </span>
-                    </td>
-                    <td>
-                        <div class="action-buttons">
-                            <button onclick="editProducto(<?php echo $producto['id']; ?>)" class="action-btn btn-primary" style="background: #1e3c72;">
-                                <i class="fas fa-edit"></i> Editar
-                            </button>
-                            <button onclick="openStockModal(<?php echo $producto['id']; ?>, '<?php echo addslashes($producto['nombre']); ?>')" class="action-btn btn-success">
-                                <i class="fas fa-plus-circle"></i> +Stock
-                            </button>
-                            <button onclick="openAjusteModal(<?php echo $producto['id']; ?>, '<?php echo addslashes($producto['nombre']); ?>', <?php echo $producto['precio_venta']; ?>, <?php echo $producto['precio_compra']; ?>, <?php echo $producto['stock']; ?>, <?php echo $producto['stock_minimo']; ?>)" class="action-btn btn-warning">
-                                <i class="fas fa-sliders-h"></i> Ajuste
-                            </button>
-                            <?php if ($producto['estado'] == 'activo'): ?>
-                                <button onclick="toggleStatus(<?php echo $producto['id']; ?>, 'inactivo')" class="action-btn btn-danger">
-                                    <i class="fas fa-ban"></i>
-                                </button>
-                            <?php else: ?>
-                                <button onclick="toggleStatus(<?php echo $producto['id']; ?>, 'activo')" class="action-btn btn-success">
-                                    <i class="fas fa-check-circle"></i>
-                                </button>
-                            <?php endif; ?>
-                        </div>
-                    </td>
-                </tr>
-                <?php endforeach; ?>
-            </tbody>
-        </table>
-    </div>
+    // Pasar variables para el template
+    $pagina_actual = $pagina;
+    $busqueda = $busqueda;
+    $categoria_filtro = $categoria;
+    $estado_filtro = $estado;
     
-    <?php if ($total_paginas > 1): ?>
-    <div class="pagination">
-        <?php for ($i = 1; $i <= $total_paginas; $i++): ?>
-            <span onclick="cambiarPagina(<?php echo $i; ?>)" class="page-link <?php echo $i == $pagina ? 'active' : ''; ?>">
-                <?php echo $i; ?>
-            </span>
-        <?php endfor; ?>
-    </div>
-    <?php endif; ?>
-    
-    <script>
-        function cambiarPagina(pagina) {
-            const busqueda = document.getElementById('searchInput').value;
-            const categoria = document.getElementById('categoriaFilter').value;
-            const estado = document.getElementById('estadoFilter').value;
-            
-            fetch(`productos_ajax.php?action=list&busqueda=${encodeURIComponent(busqueda)}&categoria=${categoria}&estado=${estado}&pagina=${pagina}`)
-                .then(response => response.text())
-                .then(data => {
-                    document.getElementById('tablaProductos').innerHTML = data;
-                });
-        }
-    </script>
-    <?php
+    // Incluir el template de tabla
+    include 'productos_table.php';
 }
 elseif ($action == 'get') {
     $id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
     
     if ($id > 0) {
-        $stmt = $conn->prepare("SELECT * FROM productos WHERE id = ?");
+        $stmt = $conn->prepare("SELECT id, nombre, categoria_id, proveedor_id, precio_compra, precio_venta, foto FROM productos WHERE id = ?");
         $stmt->bind_param("i", $id);
         $stmt->execute();
         $result = $stmt->get_result();
@@ -207,5 +116,196 @@ elseif ($action == 'get') {
     } else {
         echo json_encode(['success' => false, 'error' => 'ID inválido']);
     }
+}
+elseif ($action == 'update') {
+    // Procesar actualización de producto
+    $id = isset($_POST['producto_id']) ? (int)$_POST['producto_id'] : 0;
+    $nombre = trim($_POST['nombre']);
+    $categoria_id = $_POST['categoria_id'];
+    $proveedor_id = $_POST['proveedor_id'] ?: null;
+    $precio_compra = floatval($_POST['precio_compra']);
+    $precio_venta = floatval($_POST['precio_venta']);
+    $descripcion = isset($_POST['descripcion']) ? trim($_POST['descripcion']) : '';
+    
+    if (empty($nombre)) {
+        echo json_encode(['success' => false, 'error' => 'El nombre del producto es obligatorio']);
+        exit();
+    }
+    
+    // Procesar imagen
+    $foto_ruta = null;
+    if (isset($_FILES['foto']) && $_FILES['foto']['error'] == 0) {
+        $allowed_types = ['image/jpeg', 'image/png', 'image/jpg', 'image/webp'];
+        $max_size = 2 * 1024 * 1024;
+        
+        if (in_array($_FILES['foto']['type'], $allowed_types) && $_FILES['foto']['size'] <= $max_size) {
+            $upload_dir = 'uploads/productos/';
+            if (!file_exists($upload_dir)) {
+                mkdir($upload_dir, 0777, true);
+            }
+            
+            $extension = pathinfo($_FILES['foto']['name'], PATHINFO_EXTENSION);
+            $nombre_archivo = time() . '_' . uniqid() . '.' . $extension;
+            $foto_ruta = $upload_dir . $nombre_archivo;
+            move_uploaded_file($_FILES['foto']['tmp_name'], $foto_ruta);
+        }
+    }
+    
+    if ($foto_ruta) {
+        $sql = "UPDATE productos SET nombre=?, categoria_id=?, proveedor_id=?, precio_compra=?, precio_venta=?, descripcion=?, foto=? WHERE id=?";
+        $stmt = $conn->prepare($sql);
+        $stmt->bind_param("siiddssi", $nombre, $categoria_id, $proveedor_id, $precio_compra, $precio_venta, $descripcion, $foto_ruta, $id);
+    } else {
+        $sql = "UPDATE productos SET nombre=?, categoria_id=?, proveedor_id=?, precio_compra=?, precio_venta=?, descripcion=? WHERE id=?";
+        $stmt = $conn->prepare($sql);
+        $stmt->bind_param("siiddsi", $nombre, $categoria_id, $proveedor_id, $precio_compra, $precio_venta, $descripcion, $id);
+    }
+    
+    if ($stmt->execute()) {
+        echo json_encode(['success' => true, 'message' => 'Producto actualizado exitosamente']);
+    } else {
+        echo json_encode(['success' => false, 'error' => 'Error al actualizar producto: ' . $conn->error]);
+    }
+    $stmt->close();
+}
+elseif ($action == 'add_stock') {
+    $id = intval($_POST['producto_id']);
+    $cantidad = intval($_POST['cantidad']);
+    $observaciones = isset($_POST['observaciones']) ? trim($_POST['observaciones']) : 'Agregado manualmente';
+    
+    if ($cantidad > 0) {
+        // Obtener stock actual
+        $stmt = $conn->prepare("SELECT stock FROM productos WHERE id = ?");
+        $stmt->bind_param("i", $id);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $producto = $result->fetch_assoc();
+        $stock_anterior = $producto['stock'];
+        $stock_nuevo = $stock_anterior + $cantidad;
+        $stmt->close();
+        
+        // Actualizar stock
+        $sql = "UPDATE productos SET stock = stock + ? WHERE id = ?";
+        $stmt = $conn->prepare($sql);
+        $stmt->bind_param("ii", $cantidad, $id);
+        
+        if ($stmt->execute()) {
+            // Registrar movimiento
+            $resultado_mov = registrarMovimientoStock(
+                $conn,
+                $id,
+                'entrada',
+                $cantidad,
+                'Entrada de stock',
+                $_SESSION['user_id'],
+                null,
+                null,
+                $observaciones . ' | Stock anterior: ' . $stock_anterior . ', nuevo: ' . $stock_nuevo
+            );
+            
+            if ($resultado_mov['success']) {
+                echo json_encode(['success' => true, 'message' => "Stock agregado exitosamente. Se añadieron $cantidad unidades."]);
+            } else {
+                echo json_encode(['success' => false, 'error' => 'Stock actualizado pero error al registrar movimiento: ' . $resultado_mov['error']]);
+            }
+        } else {
+            echo json_encode(['success' => false, 'error' => 'Error al agregar stock: ' . $conn->error]);
+        }
+        $stmt->close();
+    } else {
+        echo json_encode(['success' => false, 'error' => 'La cantidad debe ser mayor a 0']);
+    }
+    exit();
+}
+elseif ($action == 'ajuste_stock') {
+    $id = intval($_POST['producto_id']);
+    $tipo_ajuste = $_POST['tipo_ajuste'];
+    $motivo = $_POST['motivo_ajuste'] ?? 'Ajuste manual';
+    $observaciones = isset($_POST['observaciones']) ? trim($_POST['observaciones']) : '';
+    
+    if ($tipo_ajuste == 'stock_correccion') {
+        $stock_fisico = intval($_POST['stock_fisico']);
+        
+        // Obtener stock actual
+        $stmt = $conn->prepare("SELECT stock FROM productos WHERE id = ?");
+        $stmt->bind_param("i", $id);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $producto = $result->fetch_assoc();
+        $stock_anterior = $producto['stock'];
+        $diferencia = $stock_fisico - $stock_anterior;
+        $stmt->close();
+        
+        // Actualizar stock
+        $sql = "UPDATE productos SET stock = ? WHERE id = ?";
+        $stmt = $conn->prepare($sql);
+        $stmt->bind_param("ii", $stock_fisico, $id);
+        
+        if ($stmt->execute()) {
+            // Registrar movimiento de corrección
+            $resultado_mov = registrarMovimientoStock(
+                $conn,
+                $id,
+                'correccion',
+                $diferencia,
+                $motivo,
+                $_SESSION['user_id'],
+                null,
+                null,
+                $observaciones . ' | Corrección de inventario: Stock anterior ' . $stock_anterior . ', nuevo ' . $stock_fisico
+            );
+            
+            if ($resultado_mov['success']) {
+                echo json_encode(['success' => true, 'message' => "Stock corregido a $stock_fisico unidades"]);
+            } else {
+                echo json_encode(['success' => false, 'error' => 'Error al registrar movimiento: ' . $resultado_mov['error']]);
+            }
+        } else {
+            echo json_encode(['success' => false, 'error' => 'Error al corregir stock: ' . $conn->error]);
+        }
+        $stmt->close();
+    } 
+    elseif ($tipo_ajuste == 'stock_minimo') {
+        $nuevo_stock_minimo = intval($_POST['nuevo_stock_minimo']);
+        
+        // Obtener stock mínimo actual
+        $stmt = $conn->prepare("SELECT stock_minimo FROM productos WHERE id = ?");
+        $stmt->bind_param("i", $id);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $producto = $result->fetch_assoc();
+        $stock_minimo_anterior = $producto['stock_minimo'];
+        $stmt->close();
+        
+        // Actualizar stock mínimo
+        $sql = "UPDATE productos SET stock_minimo = ? WHERE id = ?";
+        $stmt = $conn->prepare($sql);
+        $stmt->bind_param("ii", $nuevo_stock_minimo, $id);
+        
+        if ($stmt->execute()) {
+            // Registrar movimiento de ajuste de mínimo
+            $resultado_mov = registrarMovimientoStock(
+                $conn,
+                $id,
+                'ajuste_minimo',
+                $nuevo_stock_minimo - $stock_minimo_anterior,
+                $motivo,
+                $_SESSION['user_id'],
+                null,
+                null,
+                $observaciones . ' | Cambio de stock mínimo: de ' . $stock_minimo_anterior . ' a ' . $nuevo_stock_minimo
+            );
+            
+            if ($resultado_mov['success']) {
+                echo json_encode(['success' => true, 'message' => "Stock mínimo actualizado a $nuevo_stock_minimo unidades"]);
+            } else {
+                echo json_encode(['success' => false, 'error' => 'Error al registrar movimiento: ' . $resultado_mov['error']]);
+            }
+        } else {
+            echo json_encode(['success' => false, 'error' => 'Error al actualizar stock mínimo: ' . $conn->error]);
+        }
+        $stmt->close();
+    }
+    exit();
 }
 ?>

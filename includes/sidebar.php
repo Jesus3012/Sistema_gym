@@ -19,6 +19,7 @@ $active_module = '';
 
 if ($current_page == 'dashboard.php') $active_module = 'dashboard';
 if ($current_page == 'productos.php') $active_module = 'products';
+if ($current_page == 'historial_stock.php') $active_module = 'historial';
 if ($current_page == 'inscripciones.php') $active_module = 'inscriptions';
 if ($current_page == 'clases.php') $active_module = 'classes';
 if ($current_page == 'reportes.php') $active_module = 'reports';
@@ -547,6 +548,13 @@ body.sidebar-collapsed .main-content {
                 <a href="productos.php" class="nav-link <?php echo $active_module == 'products' ? 'active' : ''; ?>">
                     <i class="fas fa-box"></i>
                     <span class="nav-text">Productos</span>
+                </a>
+            </li>
+
+            <li class="nav-item">
+                <a href="historial_stock.php" class="nav-link <?php echo $active_module == 'historial' ? 'active' : ''; ?>">
+                    <i class="fas fa-box"></i>
+                    <span class="nav-text">Historial Stock</span>
                 </a>
             </li>
             <li class="nav-item">
