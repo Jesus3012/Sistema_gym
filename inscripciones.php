@@ -61,70 +61,95 @@ function verificarHuellaDigital($huella_data) {
 
 // Crear nuevo cliente e inscripción
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['action'] == 'crear_cliente_inscripcion') {
-    try {
-        $nombre = trim($_POST['nombre']);
-        $apellido = trim($_POST['apellido']);
-        $telefono = trim($_POST['telefono']);
-        $email = trim($_POST['email']);
-        $plan_id = $_POST['plan_id'];
-        $fecha_inicio = $_POST['fecha_inicio'];
-        $precio_pagado = $_POST['precio_pagado'];
-        $metodo_pago = $_POST['metodo_pago'];
-        $referencia = $_POST['referencia'] ?? null;
-        $huella_digital = $_POST['huella_digital'] ?? null;
-        
-        if (empty($nombre) || empty($apellido) || empty($telefono) || empty($plan_id)) {
-            throw new Exception('Por favor complete todos los campos requeridos');
+    // Verificar token CSRF para evitar doble envío
+    if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== $_SESSION['csrf_token']) {
+        $error = 'Token de seguridad inválido. Por favor, intente nuevamente.';
+    } else {
+        try {
+            $nombre = trim($_POST['nombre']);
+            $apellido = trim($_POST['apellido']);
+            $telefono = trim($_POST['telefono']);
+            $email = trim($_POST['email']);
+            $plan_id = $_POST['plan_id'];
+            $fecha_inicio = $_POST['fecha_inicio'];
+            $precio_pagado = $_POST['precio_pagado'];
+            $metodo_pago = $_POST['metodo_pago'];
+            $referencia = $_POST['referencia'] ?? null;
+            $huella_digital = $_POST['huella_digital'] ?? null;
+            
+            if (empty($nombre) || empty($apellido) || empty($telefono) || empty($plan_id)) {
+                throw new Exception('Por favor complete todos los campos requeridos');
+            }
+            
+            $stmt = $conn->prepare("SELECT id FROM clientes WHERE telefono = ? OR (email = ? AND email != '')");
+            $stmt->bind_param("ss", $telefono, $email);
+            $stmt->execute();
+            $result = $stmt->get_result();
+            
+            if ($result->num_rows > 0) {
+                throw new Exception('Ya existe un cliente con ese teléfono o email');
+            }
+            
+            $stmt = $conn->prepare("SELECT duracion_dias, precio, nombre as plan_nombre FROM planes WHERE id = ? AND estado = 'activo'");
+            $stmt->bind_param("i", $plan_id);
+            $stmt->execute();
+            $result = $stmt->get_result();
+            $plan = $result->fetch_assoc();
+            
+            if (!$plan) {
+                throw new Exception('Plan no válido');
+            }
+            
+            if ($plan['duracion_dias'] > 0) {
+                $fecha_fin = date('Y-m-d', strtotime($fecha_inicio . ' + ' . $plan['duracion_dias'] . ' days'));
+            } else {
+                $fecha_fin = null;
+            }
+            
+            $conn->begin_transaction();
+            
+            // Insertar cliente
+            $stmt = $conn->prepare("INSERT INTO clientes (nombre, apellido, telefono, email, huella_digital, estado) VALUES (?, ?, ?, ?, ?, 'activo')");
+            $stmt->bind_param("sssss", $nombre, $apellido, $telefono, $email, $huella_digital);
+            $stmt->execute();
+            $cliente_id = $conn->insert_id;
+            
+            // Insertar inscripción
+            $stmt = $conn->prepare("INSERT INTO inscripciones (cliente_id, plan_id, fecha_inicio, fecha_fin, precio_pagado, estado) VALUES (?, ?, ?, ?, ?, 'activa')");
+            $stmt->bind_param("iisss", $cliente_id, $plan_id, $fecha_inicio, $fecha_fin, $precio_pagado);
+            $stmt->execute();
+            $inscripcion_id = $conn->insert_id;
+            
+            // Insertar pago
+            $stmt = $conn->prepare("INSERT INTO pagos (inscripcion_id, cliente_id, monto, fecha_pago, metodo_pago, referencia, estado) VALUES (?, ?, ?, ?, ?, ?, 'completado')");
+            $stmt->bind_param("iidsss", $inscripcion_id, $cliente_id, $precio_pagado, date('Y-m-d'), $metodo_pago, $referencia);
+            $stmt->execute();
+            
+            // Registrar en historial_pagos
+            $stmt = $conn->prepare("INSERT INTO historial_pagos (inscripcion_id, cliente_id, monto, fecha_pago, metodo_pago, referencia, periodo_inicio, periodo_fin, plan_nombre, usuario_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            $stmt->bind_param("iidssssssi", $inscripcion_id, $cliente_id, $precio_pagado, date('Y-m-d'), $metodo_pago, $referencia, $fecha_inicio, $fecha_fin, $plan['plan_nombre'], $usuario_id);
+            $stmt->execute();
+            
+            $conn->commit();
+            
+            // Limpiar token después de uso exitoso
+            unset($_SESSION['csrf_token']);
+            
+            $mensaje = 'Cliente e inscripción creados exitosamente';
+            
+            // Redirigir para evitar doble envío
+            header('Location: inscripciones.php?success=1');
+            exit;
+        } catch (Exception $e) {
+            if (isset($conn)) $conn->rollback();
+            $error = $e->getMessage();
         }
-        
-        $stmt = $conn->prepare("SELECT id FROM clientes WHERE telefono = ? OR (email = ? AND email != '')");
-        $stmt->bind_param("ss", $telefono, $email);
-        $stmt->execute();
-        $result = $stmt->get_result();
-        
-        if ($result->num_rows > 0) {
-            throw new Exception('Ya existe un cliente con ese teléfono o email');
-        }
-        
-        $stmt = $conn->prepare("SELECT duracion_dias, precio FROM planes WHERE id = ? AND estado = 'activo'");
-        $stmt->bind_param("i", $plan_id);
-        $stmt->execute();
-        $result = $stmt->get_result();
-        $plan = $result->fetch_assoc();
-        
-        if (!$plan) {
-            throw new Exception('Plan no válido');
-        }
-        
-        if ($plan['duracion_dias'] > 0) {
-            $fecha_fin = date('Y-m-d', strtotime($fecha_inicio . ' + ' . $plan['duracion_dias'] . ' days'));
-        } else {
-            $fecha_fin = null;
-        }
-        
-        $conn->begin_transaction();
-        
-        $stmt = $conn->prepare("INSERT INTO clientes (nombre, apellido, telefono, email, huella_digital, estado) VALUES (?, ?, ?, ?, ?, 'activo')");
-        $stmt->bind_param("sssss", $nombre, $apellido, $telefono, $email, $huella_digital);
-        $stmt->execute();
-        $cliente_id = $conn->insert_id;
-        
-        $stmt = $conn->prepare("INSERT INTO inscripciones (cliente_id, plan_id, fecha_inicio, fecha_fin, precio_pagado, estado) VALUES (?, ?, ?, ?, ?, 'activa')");
-        $stmt->bind_param("iisss", $cliente_id, $plan_id, $fecha_inicio, $fecha_fin, $precio_pagado);
-        $stmt->execute();
-        $inscripcion_id = $conn->insert_id;
-        
-        $stmt = $conn->prepare("INSERT INTO pagos (inscripcion_id, cliente_id, monto, fecha_pago, metodo_pago, referencia, estado) VALUES (?, ?, ?, ?, ?, ?, 'completado')");
-        $stmt->bind_param("iidsss", $inscripcion_id, $cliente_id, $precio_pagado, date('Y-m-d'), $metodo_pago, $referencia);
-        $stmt->execute();
-        
-        $conn->commit();
-        
-        $mensaje = 'Cliente e inscripción creados exitosamente';
-    } catch (Exception $e) {
-        if (isset($conn)) $conn->rollback();
-        $error = $e->getMessage();
     }
+}
+
+// Generar token CSRF para el formulario
+if (!isset($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 }
 
 // Renovar inscripción
@@ -138,7 +163,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
         $metodo_pago = $_POST['metodo_pago'];
         $referencia = $_POST['referencia'] ?? null;
         
-        $stmt = $conn->prepare("SELECT duracion_dias FROM planes WHERE id = ? AND estado = 'activo'");
+        // Obtener datos del plan seleccionado
+        $stmt = $conn->prepare("SELECT duracion_dias, precio, nombre as plan_nombre FROM planes WHERE id = ? AND estado = 'activo'");
         $stmt->bind_param("i", $plan_id);
         $stmt->execute();
         $result = $stmt->get_result();
@@ -148,23 +174,33 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
             throw new Exception('Plan no válido');
         }
         
-        $fecha_fin = date('Y-m-d', strtotime($fecha_inicio . ' + ' . $plan['duracion_dias'] . ' days'));
+        // Calcular fecha fin
+        if ($plan['duracion_dias'] > 0) {
+            $fecha_fin = date('Y-m-d', strtotime($fecha_inicio . ' + ' . $plan['duracion_dias'] . ' days'));
+        } else {
+            $fecha_fin = null;
+        }
         
         $conn->begin_transaction();
         
-        // Actualizar la inscripción existente en lugar de crear una nueva
+        // ACTUALIZAR la inscripción existente con el NUEVO PLAN
         $stmt = $conn->prepare("UPDATE inscripciones SET plan_id = ?, fecha_inicio = ?, fecha_fin = ?, precio_pagado = ?, estado = 'activa' WHERE id = ?");
         $stmt->bind_param("isssi", $plan_id, $fecha_inicio, $fecha_fin, $precio_pagado, $inscripcion_id);
         $stmt->execute();
         
-        // Registrar el pago en el historial
+        // Registrar el pago en la tabla pagos
         $stmt = $conn->prepare("INSERT INTO pagos (inscripcion_id, cliente_id, monto, fecha_pago, metodo_pago, referencia, estado) VALUES (?, ?, ?, ?, ?, ?, 'completado')");
         $stmt->bind_param("iidsss", $inscripcion_id, $cliente_id, $precio_pagado, date('Y-m-d'), $metodo_pago, $referencia);
         $stmt->execute();
         
+        // Registrar en historial_pagos
+        $stmt = $conn->prepare("INSERT INTO historial_pagos (inscripcion_id, cliente_id, monto, fecha_pago, metodo_pago, referencia, periodo_inicio, periodo_fin, plan_nombre, usuario_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        $stmt->bind_param("iidssssssi", $inscripcion_id, $cliente_id, $precio_pagado, date('Y-m-d'), $metodo_pago, $referencia, $fecha_inicio, $fecha_fin, $plan['plan_nombre'], $usuario_id);
+        $stmt->execute();
+        
         $conn->commit();
         
-        $mensaje = 'Inscripción renovada exitosamente';
+        $mensaje = 'Inscripción renovada exitosamente con el plan ' . $plan['plan_nombre'];
     } catch (Exception $e) {
         if (isset($conn)) $conn->rollback();
         $error = $e->getMessage();
@@ -175,9 +211,23 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
 if (isset($_GET['cancelar']) && is_numeric($_GET['cancelar'])) {
     $id = $_GET['cancelar'];
     try {
+        // Obtener el cliente_id antes de cancelar
+        $stmt = $conn->prepare("SELECT cliente_id FROM inscripciones WHERE id = ?");
+        $stmt->bind_param("i", $id);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $inscripcion = $result->fetch_assoc();
+        $cliente_id = $inscripcion['cliente_id'];
+        
         $stmt = $conn->prepare("UPDATE inscripciones SET estado = 'cancelada' WHERE id = ?");
         $stmt->bind_param("i", $id);
         $stmt->execute();
+        
+        // Registrar cancelación en historial_pagos
+        $stmt = $conn->prepare("INSERT INTO historial_pagos (inscripcion_id, cliente_id, monto, fecha_pago, metodo_pago, referencia, periodo_inicio, periodo_fin, plan_nombre, usuario_id) VALUES (?, ?, 0, NOW(), NULL, NULL, NULL, NULL, 'CANCELACION', ?)");
+        $stmt->bind_param("iii", $id, $cliente_id, $usuario_id);
+        $stmt->execute();
+        
         $mensaje = 'Inscripción cancelada exitosamente';
     } catch (Exception $e) {
         $error = 'Error al cancelar la inscripción';
@@ -248,7 +298,9 @@ $types .= "ii";
 
 $stmt = $conn->prepare($query);
 if (!empty($params)) {
-    $stmt->bind_param($types, ...$params);
+    // CORRECCIÓN: Usar array_values para asegurar índices numéricos
+    $bind_params = array_values($params);
+    $stmt->bind_param($types, ...$bind_params);
 }
 $stmt->execute();
 $result = $stmt->get_result();
@@ -259,7 +311,9 @@ $count_params = array_slice($params, 0, count($params) - 2);
 $count_types = substr($types, 0, -2);
 $stmt_count = $conn->prepare($count_query);
 if (!empty($count_params)) {
-    $stmt_count->bind_param($count_types, ...$count_params);
+    // CORRECCIÓN: Usar array_values para asegurar índices numéricos
+    $bind_count_params = array_values($count_params);
+    $stmt_count->bind_param($count_types, ...$bind_count_params);
 }
 $stmt_count->execute();
 $total_result = $stmt_count->get_result();
@@ -340,6 +394,7 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
             padding: 12px;
             text-align: left;
             border-bottom: 1px solid #e0e0e0;
+            vertical-align: middle;
         }
         
         .tabla-simple th {
@@ -362,6 +417,70 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
         
         .tabla-simple tr:hover {
             background: #f8f9fa;
+        }
+        
+        /* Estilos para botones de acciones */
+        .acciones-container {
+            display: flex;
+            gap: 8px;
+            flex-wrap: nowrap;
+            align-items: center;
+        }
+        
+        .btn-accion {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 6px 12px;
+            border: none;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            white-space: nowrap;
+        }
+        
+        .btn-accion i {
+            font-size: 12px;
+        }
+        
+        .btn-accion:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .btn-detalle {
+            background: #3b82f6;
+            color: white;
+        }
+        
+        .btn-detalle:hover {
+            background: #2563eb;
+        }
+        
+        .btn-renovar {
+            background: #10b981;
+            color: white;
+        }
+        
+        .btn-renovar:hover {
+            background: #059669;
+        }
+        
+        .btn-renovar:disabled {
+            background: #9ca3af;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .btn-cancelar {
+            background: #dc2626;
+            color: white;
+        }
+        
+        .btn-cancelar:hover {
+            background: #b91c1c;
         }
         
         .badge-activa {
@@ -399,55 +518,6 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
         
         .btn-custom-primary:hover {
             background: #152c6b;
-        }
-        
-        .btn-detalle {
-            background: #3b82f6;
-            color: white;
-            border: none;
-            padding: 5px 12px;
-            border-radius: 4px;
-            font-size: 12px;
-            cursor: pointer;
-        }
-        
-        .btn-renovar {
-            background: #10b981;
-            color: white;
-            border: none;
-            padding: 5px 12px;
-            border-radius: 4px;
-            font-size: 12px;
-            cursor: pointer;
-        }
-        
-        .btn-cancelar {
-            background: #dc2626;
-            color: white;
-            border: none;
-            padding: 5px 12px;
-            border-radius: 4px;
-            font-size: 12px;
-            cursor: pointer;
-        }
-        
-        .btn-cancelar:hover {
-            background: #b91c1c;
-        }
-        
-        .btn-ver-pagos {
-            background: #8b5cf6;
-            color: white;
-            border: none;
-            padding: 5px 12px;
-            border-radius: 4px;
-            font-size: 12px;
-            cursor: pointer;
-        }
-        
-        .btn-renovar:disabled {
-            background: #9ca3af;
-            cursor: not-allowed;
         }
         
         .fingerprint-area {
@@ -503,48 +573,83 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
             100% { transform: rotate(360deg); }
         }
         
-        /* Estilos para la tabla de pagos dentro del modal */
-        .tabla-pagos {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 15px;
+        /* Estilos para el detalle con historial - Versión anterior que te gustaba */
+        .info-box {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 10px;
+            padding: 20px;
+            color: white;
+            margin-bottom: 20px;
         }
         
-        .tabla-pagos th,
-        .tabla-pagos td {
-            padding: 10px;
+        .info-box h6 {
+            margin-bottom: 15px;
+            font-weight: 600;
+            border-bottom: 2px solid rgba(255,255,255,0.3);
+            padding-bottom: 8px;
+        }
+        
+        .info-box p {
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+        
+        .info-box .badge {
+            font-size: 12px;
+            padding: 5px 10px;
+        }
+        
+        .historial-card {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .historial-card h6 {
+            color: #333;
+            margin-bottom: 20px;
+            font-weight: 600;
+        }
+        
+        .table-historial {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        .table-historial th,
+        .table-historial td {
+            padding: 12px;
             text-align: left;
             border-bottom: 1px solid #e0e0e0;
         }
         
-        .tabla-pagos th {
+        .table-historial th {
             background: #f8f9fa;
             font-weight: 600;
+            color: #555;
             cursor: pointer;
         }
         
-        .tabla-pagos th:hover {
+        .table-historial th:hover {
             background: #e9ecef;
         }
         
-        .tabla-pagos tr:hover {
+        .table-historial tr:hover {
             background: #f8f9fa;
         }
         
-        .pagos-pagination {
+        .search-box {
+            margin-bottom: 20px;
+        }
+        
+        .total-paid {
+            background: #10b981;
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
             margin-top: 20px;
-            justify-content: center;
-        }
-        
-        .search-pagos {
-            margin-bottom: 15px;
-        }
-        
-        .search-pagos input {
-            width: 100%;
-            padding: 8px 12px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
+            text-align: right;
         }
         
         @media (max-width: 768px) {
@@ -561,6 +666,20 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
                 padding: 8px;
                 font-size: 12px;
             }
+            
+            .btn-accion {
+                padding: 4px 8px;
+                font-size: 10px;
+            }
+            
+            .btn-accion span {
+                display: none;
+            }
+            
+            .btn-accion i {
+                font-size: 14px;
+                margin: 0;
+            }
         }
     </style>
 </head>
@@ -570,12 +689,23 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
     <div class="main-content">
         <!-- Título -->
         <div class="mb-4">
-            <h2><i class="fas fa-clipboard-list"></i> Gestión de Inscripciones</h2>
-            <p class="text-muted mb-0">Administra las inscripciones de tus clientes</p>
+            <h2>Gestión de Inscripciones</h2>
         </div>
         
         <!-- Alertas -->
-        <div id="alertas"></div>
+        <?php if(isset($_GET['success']) || $mensaje): ?>
+        <div class="alert alert-success alert-dismissible fade show" role="alert">
+            <?php echo isset($_GET['success']) ? 'Cliente e inscripción creados exitosamente' : $mensaje; ?>
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+        <?php endif; ?>
+        
+        <?php if($error): ?>
+        <div class="alert alert-danger alert-dismissible fade show" role="alert">
+            <?php echo $error; ?>
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+        <?php endif; ?>
         
         <!-- Botón Nuevo Cliente -->
         <div class="mb-3">
@@ -621,32 +751,89 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
             </div>
             <div class="card-body-custom" style="padding: 0;">
                 <div style="overflow-x: auto;">
-                    <table class="tabla-simple" id="tablaInscripciones">
+                    <table class="tabla-simple">
                         <thead>
                             <tr>
-                                <th data-sort="cliente">Cliente <i class="fas fa-sort"></i></th>
-                                <th data-sort="telefono">Teléfono <i class="fas fa-sort"></i></th>
-                                <th data-sort="plan">Plan <i class="fas fa-sort"></i></th>
-                                <th data-sort="fecha_inicio">Fecha Inicio <i class="fas fa-sort"></i></th>
-                                <th data-sort="fecha_fin">Fecha Fin <i class="fas fa-sort"></i></th>
-                                <th data-sort="precio">$ Precio <i class="fas fa-sort"></i></th>
-                                <th data-sort="estado">Estado <i class="fas fa-sort"></i></th>
+                                <th><a href="?sort=cliente&order=<?php echo ($sort == 'cliente' && $order == 'ASC') ? 'DESC' : 'ASC'; ?>&search=<?php echo urlencode($search); ?>&estado=<?php echo urlencode($estado); ?>">Cliente <i class="fas fa-sort"></i></a></th>
+                                <th><a href="?sort=telefono&order=<?php echo ($sort == 'telefono' && $order == 'ASC') ? 'DESC' : 'ASC'; ?>&search=<?php echo urlencode($search); ?>&estado=<?php echo urlencode($estado); ?>">Teléfono <i class="fas fa-sort"></i></a></th>
+                                <th><a href="?sort=plan&order=<?php echo ($sort == 'plan' && $order == 'ASC') ? 'DESC' : 'ASC'; ?>&search=<?php echo urlencode($search); ?>&estado=<?php echo urlencode($estado); ?>">Plan <i class="fas fa-sort"></i></a></th>
+                                <th><a href="?sort=fecha_inicio&order=<?php echo ($sort == 'fecha_inicio' && $order == 'ASC') ? 'DESC' : 'ASC'; ?>&search=<?php echo urlencode($search); ?>&estado=<?php echo urlencode($estado); ?>">Fecha Inicio <i class="fas fa-sort"></i></a></th>
+                                <th><a href="?sort=fecha_fin&order=<?php echo ($sort == 'fecha_fin' && $order == 'ASC') ? 'DESC' : 'ASC'; ?>&search=<?php echo urlencode($search); ?>&estado=<?php echo urlencode($estado); ?>">Fecha Fin <i class="fas fa-sort"></i></a></th>
+                                <th><a href="?sort=precio&order=<?php echo ($sort == 'precio' && $order == 'ASC') ? 'DESC' : 'ASC'; ?>&search=<?php echo urlencode($search); ?>&estado=<?php echo urlencode($estado); ?>">$ Precio <i class="fas fa-sort"></i></a></th>
+                                <th><a href="?sort=estado&order=<?php echo ($sort == 'estado' && $order == 'ASC') ? 'DESC' : 'ASC'; ?>&search=<?php echo urlencode($search); ?>&estado=<?php echo urlencode($estado); ?>">Estado <i class="fas fa-sort"></i></a></th>
                                 <th>Acciones</th>
                             </tr>
                         </thead>
-                        <tbody id="tablaBody">
+                        <tbody>
+                            <?php foreach($inscripciones as $ins): ?>
                             <tr>
-                                <td colspan="8" class="loading">
-                                    <div class="spinner"></div>
-                                    <p>Cargando datos...</p>
+                                <td><strong><?php echo htmlspecialchars($ins['cliente_nombre'] . ' ' . $ins['cliente_apellido']); ?></strong></td>
+                                <td><?php echo htmlspecialchars($ins['cliente_telefono']); ?></td>
+                                <td><?php echo htmlspecialchars($ins['plan_nombre']); ?></td>
+                                <td><?php echo date('d/m/Y', strtotime($ins['fecha_inicio'])); ?></td>
+                                <td><?php echo $ins['duracion_dias'] > 0 ? date('d/m/Y', strtotime($ins['fecha_fin'])) : 'Sin vencimiento'; ?></td>
+                                <td>$<?php echo number_format($ins['precio_pagado'], 2); ?></td>
+                                <td>
+                                    <?php if($ins['estado'] == 'activa'): ?>
+                                        <span class="badge-activa">Activa</span>
+                                    <?php elseif($ins['estado'] == 'vencida'): ?>
+                                        <span class="badge-vencida">Vencida</span>
+                                    <?php else: ?>
+                                        <span class="badge-cancelada">Cancelada</span>
+                                    <?php endif; ?>
+                                </td>
+                                <td class="acciones-cell">
+                                    <div class="acciones-container">
+                                        <button class="btn-accion btn-detalle" onclick="verDetalle(<?php echo $ins['id']; ?>)" title="Ver detalles completos de la inscripción y su historial de pagos">
+                                            <i class="fas fa-eye"></i> <span>Ver</span>
+                                        </button>
+                                        
+                                        <?php if($ins['estado'] == 'vencida'): ?>
+                                            <button class="btn-accion btn-renovar" onclick="abrirRenovar(<?php echo $ins['id']; ?>, <?php echo $ins['cliente_id']; ?>)" title="Renovar inscripción vencida">
+                                                <i class="fas fa-sync-alt"></i> <span>Renovar</span>
+                                            </button>
+                                        <?php elseif($ins['estado'] == 'activa'): ?>
+                                            <button class="btn-accion btn-renovar" disabled title="No se puede renovar una inscripción activa">
+                                                <i class="fas fa-sync-alt"></i> <span>Renovar</span>
+                                            </button>
+                                            <button class="btn-accion btn-cancelar" onclick="cancelarInscripcion(<?php echo $ins['id']; ?>)" title="Cancelar inscripción activa">
+                                                <i class="fas fa-times-circle"></i> <span>Cancelar</span>
+                                            </button>
+                                        <?php endif; ?>
+                                    </div>
                                 </td>
                             </tr>
+                            <?php endforeach; ?>
+                            <?php if(empty($inscripciones)): ?>
+                            <tr>
+                                <td colspan="8" style="text-align: center; padding: 40px;">
+                                    <i class="fas fa-inbox" style="font-size: 48px; color: #ccc;"></i>
+                                    <p class="mt-2">No hay inscripciones registradas</p>
+                                </td>
+                            </tr>
+                            <?php endif; ?>
                         </tbody>
                     </table>
                 </div>
                 
                 <!-- Paginación -->
-                <div id="paginationContainer" class="pagination"></div>
+                <?php if($total_pages > 1): ?>
+                <div class="pagination">
+                    <ul class="pagination">
+                        <li class="page-item <?php echo $page <= 1 ? 'disabled' : ''; ?>">
+                            <a class="page-link" href="?page=<?php echo $page-1; ?>&search=<?php echo urlencode($search); ?>&estado=<?php echo urlencode($estado); ?>&sort=<?php echo $sort; ?>&order=<?php echo $order; ?>">Anterior</a>
+                        </li>
+                        <?php for($i = 1; $i <= $total_pages; $i++): ?>
+                        <li class="page-item <?php echo $i == $page ? 'active' : ''; ?>">
+                            <a class="page-link" href="?page=<?php echo $i; ?>&search=<?php echo urlencode($search); ?>&estado=<?php echo urlencode($estado); ?>&sort=<?php echo $sort; ?>&order=<?php echo $order; ?>"><?php echo $i; ?></a>
+                        </li>
+                        <?php endfor; ?>
+                        <li class="page-item <?php echo $page >= $total_pages ? 'disabled' : ''; ?>">
+                            <a class="page-link" href="?page=<?php echo $page+1; ?>&search=<?php echo urlencode($search); ?>&estado=<?php echo urlencode($estado); ?>&sort=<?php echo $sort; ?>&order=<?php echo $order; ?>">Siguiente</a>
+                        </li>
+                    </ul>
+                </div>
+                <?php endif; ?>
             </div>
         </div>
     </div>
@@ -659,8 +846,9 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
                     <h5 class="modal-title"><i class="fas fa-user-plus"></i> Nuevo Cliente e Inscripción</h5>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
-                <form id="formNuevoCliente">
+                <form id="formNuevoCliente" method="POST">
                     <input type="hidden" name="action" value="crear_cliente_inscripcion">
+                    <input type="hidden" name="csrf_token" value="<?php echo $_SESSION['csrf_token']; ?>">
                     <input type="hidden" name="huella_digital" id="huella_digital" value="">
                     
                     <div class="modal-body">
@@ -748,7 +936,7 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
                     <h5 class="modal-title"><i class="fas fa-sync-alt"></i> Renovar Inscripción</h5>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
-                <form id="formRenovar">
+                <form id="formRenovar" method="POST">
                     <input type="hidden" name="action" value="renovar_inscripcion">
                     <input type="hidden" name="inscripcion_id" id="renovar_inscripcion_id">
                     <input type="hidden" name="cliente_id" id="renovar_cliente_id">
@@ -805,12 +993,12 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
         </div>
     </div>
     
-    <!-- Modal Detalle con Historial de Pagos -->
+    <!-- Modal Detalle con Historial de Pagos (Estilo renovado) -->
     <div class="modal fade" id="modalDetalle" tabindex="-1">
-        <div class="modal-dialog modal-lg">
+        <div class="modal-dialog modal-xl">
             <div class="modal-content">
                 <div class="modal-header" style="background: #1e3a8a; color: white;">
-                    <h5 class="modal-title"><i class="fas fa-info-circle"></i> Detalle de Inscripción</h5>
+                    <h5 class="modal-title"><i class="fas fa-info-circle"></i> Detalle de Inscripción e Historial de Pagos</h5>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body" id="detalleContenido">
@@ -828,204 +1016,6 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     
     <script>
-        let currentPage = <?php echo $page; ?>;
-        let currentSort = '<?php echo $sort; ?>';
-        let currentOrder = '<?php echo $order; ?>';
-        let currentSearch = '<?php echo $search; ?>';
-        let currentEstado = '<?php echo $estado; ?>';
-        let timeoutBusqueda;
-        
-        $(document).ready(function() {
-            cargarDatos();
-            
-            // Búsqueda en tiempo real
-            $('#searchInput').on('input', function() {
-                clearTimeout(timeoutBusqueda);
-                timeoutBusqueda = setTimeout(function() {
-                    currentSearch = $('#searchInput').val();
-                    currentPage = 1;
-                    cargarDatos();
-                }, 500);
-            });
-            
-            // Filtro por estado
-            $('#estadoSelect').on('change', function() {
-                currentEstado = $(this).val();
-                currentPage = 1;
-                cargarDatos();
-            });
-            
-            // Limpiar filtros
-            $('#limpiarFiltros').on('click', function() {
-                $('#searchInput').val('');
-                $('#estadoSelect').val('');
-                currentSearch = '';
-                currentEstado = '';
-                currentPage = 1;
-                cargarDatos();
-            });
-            
-            // Ordenamiento
-            $('th[data-sort]').on('click', function() {
-                const sort = $(this).data('sort');
-                if (currentSort === sort) {
-                    currentOrder = currentOrder === 'ASC' ? 'DESC' : 'ASC';
-                } else {
-                    currentSort = sort;
-                    currentOrder = 'ASC';
-                }
-                currentPage = 1;
-                cargarDatos();
-            });
-            
-            // Formulario nuevo cliente
-            $('#formNuevoCliente').on('submit', function(e) {
-                e.preventDefault();
-                $.ajax({
-                    url: window.location.pathname,
-                    method: 'POST',
-                    data: $(this).serialize(),
-                    success: function(response) {
-                        Swal.fire('Éxito', 'Cliente e inscripción creados exitosamente', 'success');
-                        $('#modalNuevoCliente').modal('hide');
-                        cargarDatos();
-                    },
-                    error: function() {
-                        Swal.fire('Error', 'Error al crear el cliente', 'error');
-                    }
-                });
-            });
-            
-            // Formulario renovar
-            $('#formRenovar').on('submit', function(e) {
-                e.preventDefault();
-                $.ajax({
-                    url: window.location.pathname,
-                    method: 'POST',
-                    data: $(this).serialize(),
-                    success: function(response) {
-                        Swal.fire('Éxito', 'Inscripción renovada exitosamente', 'success');
-                        $('#modalRenovar').modal('hide');
-                        cargarDatos();
-                    },
-                    error: function() {
-                        Swal.fire('Error', 'Error al renovar la inscripción', 'error');
-                    }
-                });
-            });
-        });
-        
-        function cargarDatos() {
-            $('#tablaBody').html('<tr><td colspan="8" class="loading"><div class="spinner"></div><p>Cargando datos...</p></td></tr>');
-            
-            $.ajax({
-                url: 'ajax_inscripciones.php',
-                method: 'GET',
-                data: {
-                    search: currentSearch,
-                    estado: currentEstado,
-                    page: currentPage,
-                    sort: currentSort,
-                    order: currentOrder
-                },
-                dataType: 'json',
-                success: function(data) {
-                    mostrarTabla(data.inscripciones);
-                    mostrarPaginacion(data.total_pages, data.current_page);
-                },
-                error: function() {
-                    $('#tablaBody').html('<tr><td colspan="8" class="loading"><p class="text-danger">Error al cargar los datos</p></td></tr>');
-                }
-            });
-        }
-        
-        function mostrarTabla(inscripciones) {
-            if (!inscripciones || inscripciones.length === 0) {
-                $('#tablaBody').html('<tr><td colspan="8" style="text-align: center; padding: 40px;"><i class="fas fa-inbox" style="font-size: 48px; color: #ccc;"></i><p class="mt-2">No hay inscripciones registradas</p></td></tr>');
-                return;
-            }
-            
-            let html = '';
-            for (let i = 0; i < inscripciones.length; i++) {
-                const ins = inscripciones[i];
-                let badgeClass = '';
-                let statusText = '';
-                
-                if (ins.estado === 'activa') {
-                    badgeClass = 'badge-activa';
-                    statusText = 'Activa';
-                } else if (ins.estado === 'vencida') {
-                    badgeClass = 'badge-vencida';
-                    statusText = 'Vencida';
-                } else {
-                    badgeClass = 'badge-cancelada';
-                    statusText = 'Cancelada';
-                }
-                
-                html += '<tr>';
-                html += '<td><strong>' + ins.cliente_nombre + ' ' + ins.cliente_apellido + '</strong></td>';
-                html += '<td>' + ins.cliente_telefono + '</td>';
-                html += '<td>' + ins.plan_nombre + '</td>';
-                html += '<td>' + ins.fecha_inicio_formateada + '</td>';
-                html += '<td>' + (ins.duracion_dias > 0 ? ins.fecha_fin_formateada : 'Sin vencimiento') + '</td>';
-                html += '<td>$' + parseFloat(ins.precio_pagado).toFixed(2) + '</td>';
-                html += '<td><span class="' + badgeClass + '">' + statusText + '</span></td>';
-                html += '<td>';
-                html += '<button class="btn-detalle" onclick="verDetalle(' + ins.id + ')"><i class="fas fa-eye"></i> Ver</button>';
-                
-                if (ins.estado === 'vencida') {
-                    html += '<button class="btn-renovar" onclick="abrirRenovar(' + ins.id + ', ' + ins.cliente_id + ')"><i class="fas fa-sync-alt"></i> Renovar</button>';
-                } else if (ins.estado === 'activa') {
-                    html += '<button class="btn-renovar" disabled><i class="fas fa-sync-alt"></i> Renovar</button>';
-                    html += '<button class="btn-cancelar" onclick="cancelarInscripcion(' + ins.id + ')"><i class="fas fa-times-circle"></i> Cancelar</button>';
-                }
-                
-                html += '</div>';
-                html += '</tr>';
-            }
-            $('#tablaBody').html(html);
-        }
-        
-        function mostrarPaginacion(totalPages, currentPage) {
-            if (totalPages <= 1) {
-                $('#paginationContainer').html('');
-                return;
-            }
-            
-            let html = '<ul class="pagination">';
-            html += '<li class="page-item ' + (currentPage <= 1 ? 'disabled' : '') + '">';
-            html += '<a class="page-link" onclick="cambiarPagina(' + (currentPage - 1) + ')">Anterior</a></li>';
-            
-            let startPage = Math.max(1, currentPage - 2);
-            let endPage = Math.min(totalPages, currentPage + 2);
-            
-            if (startPage > 1) {
-                html += '<li class="page-item"><a class="page-link" onclick="cambiarPagina(1)">1</a></li>';
-                if (startPage > 2) html += '<li class="page-item disabled"><span class="page-link">...</span></li>';
-            }
-            
-            for (let i = startPage; i <= endPage; i++) {
-                html += '<li class="page-item ' + (i === currentPage ? 'active' : '') + '">';
-                html += '<a class="page-link" onclick="cambiarPagina(' + i + ')">' + i + '</a></li>';
-            }
-            
-            if (endPage < totalPages) {
-                if (endPage < totalPages - 1) html += '<li class="page-item disabled"><span class="page-link">...</span></li>';
-                html += '<li class="page-item"><a class="page-link" onclick="cambiarPagina(' + totalPages + ')">' + totalPages + '</a></li>';
-            }
-            
-            html += '<li class="page-item ' + (currentPage >= totalPages ? 'disabled' : '') + '">';
-            html += '<a class="page-link" onclick="cambiarPagina(' + (currentPage + 1) + ')">Siguiente</a></li>';
-            html += '</ul>';
-            
-            $('#paginationContainer').html(html);
-        }
-        
-        function cambiarPagina(page) {
-            currentPage = page;
-            cargarDatos();
-        }
-        
         function actualizarPrecioNuevo() {
             const planSelect = document.getElementById('plan_id_nuevo');
             const selectedOption = planSelect.options[planSelect.selectedIndex];
@@ -1075,51 +1065,144 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
                         document.getElementById('renovar_cliente_nombre').value = data.nombre;
                         document.getElementById('renovar_fecha_inicio').value = new Date().toISOString().split('T')[0];
                         $('#modalRenovar').modal('show');
+                    } else {
+                        Swal.fire('Error', 'No se pudo obtener los datos del cliente', 'error');
                     }
+                },
+                error: function() {
+                    Swal.fire('Error', 'Error al cargar los datos del cliente', 'error');
                 }
             });
         }
         
+        let currentPageHistorial = 1;
+        let currentSortHistorial = 'fecha_pago';
+        let currentOrderHistorial = 'DESC';
+        let currentSearchHistorial = '';
+        
         function verDetalle(id) {
+            currentPageHistorial = 1;
+            currentSortHistorial = 'fecha_pago';
+            currentOrderHistorial = 'DESC';
+            currentSearchHistorial = '';
+            
             $('#modalDetalle').modal('show');
             $('#detalleContenido').html('<div class="text-center"><div class="spinner-border text-primary"></div><p>Cargando...</p></div>');
             
             $.ajax({
                 url: 'includes/inscripcion_detalle.php',
                 method: 'POST',
-                data: { id: id },
+                data: {
+                    id: id
+                },
                 success: function(response) {
                     $('#detalleContenido').html(response);
+                    // Inicializar los eventos después de cargar el contenido
+                    inicializarEventosHistorial(id);
                 },
                 error: function() {
                     $('#detalleContenido').html('<div class="alert alert-danger">Error al cargar los detalles</div>');
                 }
             });
         }
-        
-        function verHistorialPagos(inscripcionId, clienteNombre) {
-            Swal.fire({
-                title: 'Historial de Pagos - ' + clienteNombre,
-                html: '<div id="historialPagosContenido"><div class="text-center"><div class="spinner-border text-primary"></div><p>Cargando historial...</p></div></div>',
-                width: '900px',
-                showConfirmButton: false,
-                showCloseButton: true,
-                didOpen: () => {
-                    cargarHistorialPagos(inscripcionId);
+
+        function inicializarEventosHistorial(id) {
+            // Variables para el historial
+            window.currentPageHistorial = 1;
+            window.currentSortHistorial = 'fecha_pago';
+            window.currentOrderHistorial = 'DESC';
+            window.currentSearchHistorial = '';
+            window.inscripcionIdActual = id;
+            window.timeoutHistorial = null;
+            
+            // Función para cargar historial
+            window.cargarHistorialPagos = function() {
+                $('#tablaHistorialBody').html('<tr><td colspan="6" class="text-center"><div class="spinner-border text-primary"></div><p class="mt-2">Cargando...</p></td></tr>');
+                
+                $.ajax({
+                    url: 'includes/inscripcion_detalle_historial.php',
+                    method: 'POST',
+                    data: {
+                        id: window.inscripcionIdActual,
+                        page: window.currentPageHistorial,
+                        sort: window.currentSortHistorial,
+                        order: window.currentOrderHistorial,
+                        search: window.currentSearchHistorial
+                    },
+                    dataType: 'json',
+                    success: function(response) {
+                        if (response.error) {
+                            $('#tablaHistorialBody').html('<tr><td colspan="6" class="text-center text-danger">' + response.error + '</td></tr>');
+                            return;
+                        }
+                        $('#tablaHistorialBody').html(response.tbody);
+                        $('#paginacionHistorial').html(response.pagination);
+                        $('#totalPagadoSpan').html('$' + response.total_pagado);
+                    },
+                    error: function() {
+                        $('#tablaHistorialBody').html('<tr><td colspan="6" class="text-center text-danger">Error al cargar los datos</td></tr>');
+                    }
+                });
+            };
+            
+            // Función para buscar
+            window.buscarHistorial = function() {
+                window.currentSearchHistorial = $('#searchHistorialInput').val();
+                window.currentPageHistorial = 1;
+                window.cargarHistorialPagos();
+            };
+            
+            // Función para ordenar
+            window.ordenarHistorial = function(columna) {
+                if (window.currentSortHistorial === columna) {
+                    window.currentOrderHistorial = window.currentOrderHistorial === 'ASC' ? 'DESC' : 'ASC';
+                } else {
+                    window.currentSortHistorial = columna;
+                    window.currentOrderHistorial = 'ASC';
                 }
-            });
+                window.currentPageHistorial = 1;
+                window.cargarHistorialPagos();
+            };
+            
+            // Función para cambiar página
+            window.cambiarPaginaHistorial = function(page) {
+                window.currentPageHistorial = page;
+                window.cargarHistorialPagos();
+            };
+            
+            // Event listener para búsqueda en tiempo real
+            const searchInput = document.getElementById('searchHistorialInput');
+            if (searchInput) {
+                searchInput.addEventListener('input', function() {
+                    clearTimeout(window.timeoutHistorial);
+                    window.timeoutHistorial = setTimeout(function() {
+                        window.buscarHistorial();
+                    }, 500);
+                });
+            }
+            
+            // Cargar historial inicial
+            window.cargarHistorialPagos();
         }
         
-        function cargarHistorialPagos(inscripcionId) {
+        function cargarDetalleCompleto(id) {
+            $('#detalleContenido').html('<div class="text-center"><div class="spinner-border text-primary"></div><p>Cargando...</p></div>');
+            
             $.ajax({
-                url: 'includes/historial_pagos.php',
+                url: 'includes/inscripcion_detalle.php',
                 method: 'POST',
-                data: { inscripcion_id: inscripcionId },
+                data: {
+                    id: id,
+                    page: currentPageHistorial,
+                    sort: currentSortHistorial,
+                    order: currentOrderHistorial,
+                    search: currentSearchHistorial
+                },
                 success: function(response) {
-                    $('#historialPagosContenido').html(response);
+                    $('#detalleContenido').html(response);
                 },
                 error: function() {
-                    $('#historialPagosContenido').html('<div class="alert alert-danger">Error al cargar el historial de pagos</div>');
+                    $('#detalleContenido').html('<div class="alert alert-danger">Error al cargar los detalles</div>');
                 }
             });
         }
@@ -1140,6 +1223,33 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
                 }
             });
         }
+        
+        // Filtros en tiempo real
+        let timeoutBusqueda;
+        $('#searchInput').on('input', function() {
+            clearTimeout(timeoutBusqueda);
+            timeoutBusqueda = setTimeout(function() {
+                const search = $('#searchInput').val();
+                const estado = $('#estadoSelect').val();
+                window.location.href = '?search=' + encodeURIComponent(search) + '&estado=' + encodeURIComponent(estado);
+            }, 500);
+        });
+        
+        $('#estadoSelect').on('change', function() {
+            const search = $('#searchInput').val();
+            const estado = $(this).val();
+            window.location.href = '?search=' + encodeURIComponent(search) + '&estado=' + encodeURIComponent(estado);
+        });
+        
+        $('#limpiarFiltros').on('click', function() {
+            window.location.href = '?';
+        });
+        
+        // Prevenir doble envío del formulario
+        $('#formNuevoCliente').on('submit', function() {
+            const $btn = $(this).find('button[type="submit"]');
+            $btn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> Guardando...');
+        });
     </script>
 </body>
 </html>

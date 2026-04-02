@@ -95,6 +95,7 @@ $total_pagado = $total_pagado_result->fetch_assoc()['total'] ?? 0;
         background: #f8f9fa;
         font-weight: 600;
         cursor: pointer;
+        user-select: none;
     }
     .tabla-pagos th:hover {
         background: #e9ecef;
@@ -138,10 +139,15 @@ $total_pagado = $total_pagado_result->fetch_assoc()['total'] ?? 0;
     .page-link {
         cursor: pointer;
     }
+    .page-item.active .page-link {
+        background-color: #1e3a8a;
+        border-color: #1e3a8a;
+        color: white;
+    }
 </style>
 
 <div class="search-pagos">
-    <input type="text" id="searchPagos" placeholder="Buscar por método, referencia o monto..." value="<?php echo htmlspecialchars($search); ?>">
+    <input type="text" id="searchPagosInput" placeholder="Buscar por método, referencia o monto..." value="<?php echo htmlspecialchars($search); ?>">
     <button onclick="buscarPagos()"><i class="fas fa-search"></i> Buscar</button>
 </div>
 
@@ -167,7 +173,7 @@ $total_pagado = $total_pagado_result->fetch_assoc()['total'] ?? 0;
             <?php foreach($pagos as $pago): ?>
             <tr>
                 <td><?php echo $pago['fecha_pago_formateada']; ?></td>
-                <td>$<?php echo number_format($pago['monto'], 2); ?></td>
+                <td><strong>$<?php echo number_format($pago['monto'], 2); ?></strong></td>
                 <td>
                     <?php 
                     if($pago['metodo_pago'] == 'efectivo') echo '<i class="fas fa-money-bill"></i> Efectivo';
@@ -225,14 +231,16 @@ $total_pagado = $total_pagado_result->fetch_assoc()['total'] ?? 0;
 <?php endif; ?>
 
 <script>
+// Variables globales para el historial de pagos
 let currentPagePagos = <?php echo $page; ?>;
 let currentSortPagos = '<?php echo $sort; ?>';
 let currentOrderPagos = '<?php echo $order; ?>';
 let currentSearchPagos = '<?php echo $search; ?>';
 let timeoutPagos;
+const inscripcionIdPagos = <?php echo $inscripcion_id; ?>;
 
 function buscarPagos() {
-    currentSearchPagos = document.getElementById('searchPagos').value;
+    currentSearchPagos = document.getElementById('searchPagosInput').value;
     currentPagePagos = 1;
     cargarHistorialPagos();
 }
@@ -254,32 +262,49 @@ function cambiarPaginaPagos(page) {
 }
 
 function cargarHistorialPagos() {
-    const inscripcionId = <?php echo $inscripcion_id; ?>;
+    // Mostrar loading
+    const container = $('#historialPagosContenido');
+    if (container.length) {
+        container.html('<div class="text-center"><div class="spinner-border text-primary"></div><p>Cargando...</p></div>');
+    }
     
     $.ajax({
         url: 'includes/historial_pagos.php',
         method: 'POST',
         data: {
-            inscripcion_id: inscripcionId,
+            inscripcion_id: inscripcionIdPagos,
             page: currentPagePagos,
             sort: currentSortPagos,
             order: currentOrderPagos,
             search: currentSearchPagos
         },
         success: function(response) {
-            $('#historialPagosContenido').html(response);
+            if (container.length) {
+                container.html(response);
+            } else {
+                // Si no existe el contenedor, mostrar en el body del modal
+                $('#detalleContenido').html(response);
+            }
         },
-        error: function() {
-            $('#historialPagosContenido').html('<div class="alert alert-danger">Error al cargar el historial de pagos</div>');
+        error: function(xhr, status, error) {
+            console.error('Error:', error);
+            if (container.length) {
+                container.html('<div class="alert alert-danger">Error al cargar el historial de pagos</div>');
+            } else {
+                $('#detalleContenido').html('<div class="alert alert-danger">Error al cargar el historial de pagos</div>');
+            }
         }
     });
 }
 
-// Búsqueda en tiempo real para el historial de pagos
-document.getElementById('searchPagos').addEventListener('input', function() {
-    clearTimeout(timeoutPagos);
-    timeoutPagos = setTimeout(function() {
-        buscarPagos();
-    }, 500);
-});
+// Búsqueda en tiempo real
+const searchInput = document.getElementById('searchPagosInput');
+if (searchInput) {
+    searchInput.addEventListener('input', function() {
+        clearTimeout(timeoutPagos);
+        timeoutPagos = setTimeout(function() {
+            buscarPagos();
+        }, 500);
+    });
+}
 </script>
