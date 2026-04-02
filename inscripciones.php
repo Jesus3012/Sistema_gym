@@ -29,8 +29,6 @@ $error = '';
 
 // ==================== FUNCIONES PARA LECTOR DE HUELLAS ====================
 function capturarHuellaDigital() {
-    // INTEGRACIÓN REAL CON LECTOR USB
-    // SIMULACIÓN (para pruebas)
     $huella_simulada = 'FP_' . date('YmdHis') . '_' . uniqid();
     
     return [
@@ -75,12 +73,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
         $referencia = $_POST['referencia'] ?? null;
         $huella_digital = $_POST['huella_digital'] ?? null;
         
-        // Validaciones
         if (empty($nombre) || empty($apellido) || empty($telefono) || empty($plan_id)) {
             throw new Exception('Por favor complete todos los campos requeridos');
         }
         
-        // Verificar si ya existe cliente con ese teléfono o email
         $stmt = $conn->prepare("SELECT id FROM clientes WHERE telefono = ? OR (email = ? AND email != '')");
         $stmt->bind_param("ss", $telefono, $email);
         $stmt->execute();
@@ -90,7 +86,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
             throw new Exception('Ya existe un cliente con ese teléfono o email');
         }
         
-        // Obtener duración del plan
         $stmt = $conn->prepare("SELECT duracion_dias, precio FROM planes WHERE id = ? AND estado = 'activo'");
         $stmt->bind_param("i", $plan_id);
         $stmt->execute();
@@ -101,29 +96,24 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
             throw new Exception('Plan no válido');
         }
         
-        // Calcular fecha fin
         if ($plan['duracion_dias'] > 0) {
             $fecha_fin = date('Y-m-d', strtotime($fecha_inicio . ' + ' . $plan['duracion_dias'] . ' days'));
         } else {
             $fecha_fin = null;
         }
         
-        // Iniciar transacción
         $conn->begin_transaction();
         
-        // Insertar cliente
         $stmt = $conn->prepare("INSERT INTO clientes (nombre, apellido, telefono, email, huella_digital, estado) VALUES (?, ?, ?, ?, ?, 'activo')");
         $stmt->bind_param("sssss", $nombre, $apellido, $telefono, $email, $huella_digital);
         $stmt->execute();
         $cliente_id = $conn->insert_id;
         
-        // Crear inscripción
         $stmt = $conn->prepare("INSERT INTO inscripciones (cliente_id, plan_id, fecha_inicio, fecha_fin, precio_pagado, estado) VALUES (?, ?, ?, ?, ?, 'activa')");
         $stmt->bind_param("iisss", $cliente_id, $plan_id, $fecha_inicio, $fecha_fin, $precio_pagado);
         $stmt->execute();
         $inscripcion_id = $conn->insert_id;
         
-        // Registrar pago
         $stmt = $conn->prepare("INSERT INTO pagos (inscripcion_id, cliente_id, monto, fecha_pago, metodo_pago, referencia, estado) VALUES (?, ?, ?, ?, ?, ?, 'completado')");
         $stmt->bind_param("iidsss", $inscripcion_id, $cliente_id, $precio_pagado, date('Y-m-d'), $metodo_pago, $referencia);
         $stmt->execute();
@@ -148,7 +138,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
         $metodo_pago = $_POST['metodo_pago'];
         $referencia = $_POST['referencia'] ?? null;
         
-        // Obtener duración del plan
         $stmt = $conn->prepare("SELECT duracion_dias FROM planes WHERE id = ? AND estado = 'activo'");
         $stmt->bind_param("i", $plan_id);
         $stmt->execute();
@@ -159,21 +148,18 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
             throw new Exception('Plan no válido');
         }
         
-        // Calcular fecha fin
         $fecha_fin = date('Y-m-d', strtotime($fecha_inicio . ' + ' . $plan['duracion_dias'] . ' days'));
         
-        // Iniciar transacción
         $conn->begin_transaction();
         
-        // Crear nueva inscripción (renovación)
-        $stmt = $conn->prepare("INSERT INTO inscripciones (cliente_id, plan_id, fecha_inicio, fecha_fin, precio_pagado, estado) VALUES (?, ?, ?, ?, ?, 'activa')");
-        $stmt->bind_param("iisss", $cliente_id, $plan_id, $fecha_inicio, $fecha_fin, $precio_pagado);
+        // Actualizar la inscripción existente en lugar de crear una nueva
+        $stmt = $conn->prepare("UPDATE inscripciones SET plan_id = ?, fecha_inicio = ?, fecha_fin = ?, precio_pagado = ?, estado = 'activa' WHERE id = ?");
+        $stmt->bind_param("isssi", $plan_id, $fecha_inicio, $fecha_fin, $precio_pagado, $inscripcion_id);
         $stmt->execute();
-        $nueva_inscripcion_id = $conn->insert_id;
         
-        // Registrar pago
+        // Registrar el pago en el historial
         $stmt = $conn->prepare("INSERT INTO pagos (inscripcion_id, cliente_id, monto, fecha_pago, metodo_pago, referencia, estado) VALUES (?, ?, ?, ?, ?, ?, 'completado')");
-        $stmt->bind_param("iidsss", $nueva_inscripcion_id, $cliente_id, $precio_pagado, date('Y-m-d'), $metodo_pago, $referencia);
+        $stmt->bind_param("iidsss", $inscripcion_id, $cliente_id, $precio_pagado, date('Y-m-d'), $metodo_pago, $referencia);
         $stmt->execute();
         
         $conn->commit();
@@ -202,29 +188,45 @@ if (isset($_GET['cancelar']) && is_numeric($_GET['cancelar'])) {
 $update_vencidas = "UPDATE inscripciones SET estado = 'vencida' WHERE fecha_fin IS NOT NULL AND fecha_fin < CURDATE() AND estado = 'activa'";
 $conn->query($update_vencidas);
 
-// Obtener listado de inscripciones (con filtros para la carga inicial)
+// Obtener listado de inscripciones
 $search = isset($_GET['search']) ? $_GET['search'] : '';
 $estado = isset($_GET['estado']) ? $_GET['estado'] : '';
+$page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
+$sort = isset($_GET['sort']) ? $_GET['sort'] : 'id';
+$order = isset($_GET['order']) ? $_GET['order'] : 'DESC';
+$limit = 10;
+$offset = ($page - 1) * $limit;
+
+// Mapeo de columnas para ordenamiento
+$sort_columns = [
+    'cliente' => 'c.nombre',
+    'telefono' => 'c.telefono',
+    'plan' => 'p.nombre',
+    'fecha_inicio' => 'i.fecha_inicio',
+    'fecha_fin' => 'i.fecha_fin',
+    'precio' => 'i.precio_pagado',
+    'estado' => 'i.estado'
+];
+
+$order_by = isset($sort_columns[$sort]) ? $sort_columns[$sort] : 'i.id';
+$order_dir = ($order == 'ASC') ? 'ASC' : 'DESC';
 
 $query = "SELECT i.*, c.nombre as cliente_nombre, c.apellido as cliente_apellido, c.telefono as cliente_telefono,
-          p.nombre as plan_nombre, p.duracion_dias,
-          CASE 
-              WHEN p.duracion_dias = 0 THEN 'Visitas'
-              WHEN p.duracion_dias = 1 THEN 'Diario'
-              WHEN p.duracion_dias = 7 THEN 'Semanal'
-              WHEN p.duracion_dias = 15 THEN 'Quincenal'
-              WHEN p.duracion_dias = 30 THEN 'Mensual'
-              ELSE CONCAT(p.duracion_dias, ' días')
-          END as tipo_plan
+          p.nombre as plan_nombre, p.duracion_dias
           FROM inscripciones i 
           INNER JOIN clientes c ON i.cliente_id = c.id 
           INNER JOIN planes p ON i.plan_id = p.id 
           WHERE 1=1";
+$count_query = "SELECT COUNT(*) as total FROM inscripciones i 
+                INNER JOIN clientes c ON i.cliente_id = c.id 
+                INNER JOIN planes p ON i.plan_id = p.id 
+                WHERE 1=1";
 $params = [];
 $types = "";
 
 if (!empty($search)) {
     $query .= " AND (c.nombre LIKE ? OR c.apellido LIKE ? OR c.telefono LIKE ?)";
+    $count_query .= " AND (c.nombre LIKE ? OR c.apellido LIKE ? OR c.telefono LIKE ?)";
     $search_param = "%$search%";
     $params[] = $search_param;
     $params[] = $search_param;
@@ -234,11 +236,15 @@ if (!empty($search)) {
 
 if (!empty($estado)) {
     $query .= " AND i.estado = ?";
+    $count_query .= " AND i.estado = ?";
     $params[] = $estado;
     $types .= "s";
 }
 
-$query .= " ORDER BY i.fecha_registro DESC";
+$query .= " ORDER BY $order_by $order_dir LIMIT ? OFFSET ?";
+$params[] = $limit;
+$params[] = $offset;
+$types .= "ii";
 
 $stmt = $conn->prepare($query);
 if (!empty($params)) {
@@ -248,16 +254,20 @@ $stmt->execute();
 $result = $stmt->get_result();
 $inscripciones = $result->fetch_all(MYSQLI_ASSOC);
 
-// Obtener planes activos para el formulario
-$result = $conn->query("SELECT * FROM planes WHERE estado = 'activo' ORDER BY 
-                        CASE 
-                            WHEN duracion_dias = 0 THEN 1
-                            WHEN duracion_dias = 1 THEN 2
-                            WHEN duracion_dias = 7 THEN 3
-                            WHEN duracion_dias = 15 THEN 4
-                            WHEN duracion_dias = 30 THEN 5
-                            ELSE 6
-                        END");
+// Obtener total de registros para paginación
+$count_params = array_slice($params, 0, count($params) - 2);
+$count_types = substr($types, 0, -2);
+$stmt_count = $conn->prepare($count_query);
+if (!empty($count_params)) {
+    $stmt_count->bind_param($count_types, ...$count_params);
+}
+$stmt_count->execute();
+$total_result = $stmt_count->get_result();
+$total_rows = $total_result->fetch_assoc()['total'];
+$total_pages = ceil($total_rows / $limit);
+
+// Obtener planes activos
+$result = $conn->query("SELECT * FROM planes WHERE estado = 'activo' ORDER BY duracion_dias ASC");
 $planes = $result->fetch_all(MYSQLI_ASSOC);
 ?>
 
@@ -265,320 +275,292 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Inscripciones - Sistema Gimnasio</title>
-    <!-- Bootstrap CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <!-- Font Awesome -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <!-- SweetAlert2 -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css">
     <style>
         * {
+            margin: 0;
+            padding: 0;
             box-sizing: border-box;
         }
         
-        :root {
-            --primary-blue: #1e3a8a;
-            --primary-dark: #1e2a3a;
-            --primary-light: #3b82f6;
-            --bg-light: #f8fafc;
-        }
-        
         body {
-            background: var(--bg-light);
-            overflow-x: hidden;
+            background: #f4f6f9;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         }
         
-        .content-wrapper {
+        .sidebar {
+            position: fixed;
+            left: 0;
+            top: 0;
+            width: 260px;
+            height: 100vh;
+            background: #1e3a8a;
+            color: white;
+            z-index: 1000;
+            overflow-y: auto;
+        }
+        
+        .main-content {
+            margin-left: 260px;
             padding: 20px;
             min-height: 100vh;
-            width: 100%;
         }
         
-        .card {
-            border-radius: 10px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.08);
+        .card-custom {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
             margin-bottom: 20px;
-            border: none;
         }
         
-        .card-header {
-            background: var(--primary-blue);
+        .card-header-custom {
+            background: #1e3a8a;
             color: white;
-            border-radius: 10px 10px 0 0;
-            padding: 15px 20px;
-            border: none;
-        }
-        
-        .card-header h5 {
-            margin: 0;
+            padding: 12px 20px;
+            border-radius: 8px 8px 0 0;
             font-weight: 600;
-            font-size: 1.1rem;
         }
         
-        .btn-primary {
-            background: var(--primary-blue);
-            border: none;
-            padding: 8px 20px;
+        .card-body-custom {
+            padding: 20px;
         }
         
-        .btn-primary:hover {
-            background: var(--primary-dark);
-            transform: translateY(-1px);
+        .tabla-simple {
+            width: 100%;
+            background: white;
+            border-collapse: collapse;
         }
         
-        .btn-info {
-            background: var(--primary-light);
-            border: none;
-            color: white;
+        .tabla-simple th,
+        .tabla-simple td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #e0e0e0;
         }
         
-        .btn-info:hover {
-            background: var(--primary-blue);
-            color: white;
+        .tabla-simple th {
+            background: #f8f9fa;
+            font-weight: 600;
+            color: #333;
+            font-size: 14px;
+            cursor: pointer;
+            user-select: none;
         }
         
-        .btn-success {
-            background: #10b981;
-            border: none;
+        .tabla-simple th:hover {
+            background: #e9ecef;
         }
         
-        .btn-success:hover {
-            background: #059669;
+        .tabla-simple th i {
+            margin-left: 5px;
+            font-size: 12px;
         }
         
-        .btn-warning {
-            background: #f59e0b;
-            border: none;
-            color: white;
-        }
-        
-        .btn-warning:hover {
-            background: #d97706;
-            color: white;
+        .tabla-simple tr:hover {
+            background: #f8f9fa;
         }
         
         .badge-activa {
             background: #10b981;
             color: white;
-            padding: 5px 10px;
-            border-radius: 5px;
-            font-size: 0.85rem;
-            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 12px;
         }
         
         .badge-vencida {
             background: #ef4444;
             color: white;
-            padding: 5px 10px;
-            border-radius: 5px;
-            font-size: 0.85rem;
-            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 12px;
         }
         
         .badge-cancelada {
             background: #6b7280;
             color: white;
-            padding: 5px 10px;
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+        
+        .btn-custom-primary {
+            background: #1e3a8a;
+            color: white;
+            border: none;
+            padding: 8px 20px;
             border-radius: 5px;
-            font-size: 0.85rem;
-            display: inline-block;
+            cursor: pointer;
         }
         
-        /* Tabla responsiva */
-        .table-responsive-wrapper {
-            width: 100%;
-            overflow-x: auto;
-            -webkit-overflow-scrolling: touch;
-            position: relative;
+        .btn-custom-primary:hover {
+            background: #152c6b;
         }
         
-        .table {
-            width: 100%;
-            margin-bottom: 0;
-            min-width: 800px;
-        }
-        
-        .table thead th {
-            background-color: #f8f9fa;
-            font-weight: 600;
-            white-space: nowrap;
-            padding: 12px;
-        }
-        
-        .table tbody td {
-            padding: 12px;
-            vertical-align: middle;
-        }
-        
-        .btn-action {
-            margin: 2px;
-            white-space: nowrap;
-        }
-        
-        .btn-cancelar, .btn-renovar {
+        .btn-detalle {
+            background: #3b82f6;
+            color: white;
+            border: none;
             padding: 5px 12px;
-            font-size: 0.875rem;
-            white-space: nowrap;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        
+        .btn-renovar {
+            background: #10b981;
+            color: white;
+            border: none;
+            padding: 5px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        
+        .btn-cancelar {
+            background: #dc2626;
+            color: white;
+            border: none;
+            padding: 5px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        
+        .btn-cancelar:hover {
+            background: #b91c1c;
+        }
+        
+        .btn-ver-pagos {
+            background: #8b5cf6;
+            color: white;
+            border: none;
+            padding: 5px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
         }
         
         .btn-renovar:disabled {
-            opacity: 0.5;
+            background: #9ca3af;
             cursor: not-allowed;
         }
         
-        .filtros-card {
-            background: white;
-        }
-        
-        .modal-header {
-            background: var(--primary-blue);
-            color: white;
-        }
-        
-        .modal-header .btn-close {
-            color: white;
-            filter: brightness(0) invert(1);
-        }
-        
-        .main-content {
-            margin-left: 0;
-            transition: margin-left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-            width: 100%;
-        }
-        
-        @media (min-width: 769px) {
-            .main-content {
-                margin-left: 280px;
-            }
-            body.sidebar-collapsed .main-content {
-                margin-left: 70px;
-            }
-        }
-        
-        /* Estilos para captura de huella */
-        .fingerprint-card {
-            background: #f1f5f9;
-            border: 2px dashed var(--primary-light);
-            border-radius: 10px;
+        .fingerprint-area {
+            border: 2px dashed #3b82f6;
+            border-radius: 8px;
             padding: 20px;
             text-align: center;
             cursor: pointer;
-            transition: all 0.3s ease;
+            background: #f8f9fa;
         }
         
-        .fingerprint-card:hover {
-            border-color: var(--primary-blue);
-            background: #e2e8f0;
+        .fingerprint-area:hover {
+            background: #e8f0fe;
         }
         
-        .fingerprint-card i {
-            font-size: 48px;
-            color: var(--primary-blue);
-            margin-bottom: 10px;
-        }
-        
-        .fingerprint-card .status {
-            font-size: 12px;
-            color: #64748b;
-            margin-top: 5px;
-        }
-        
-        .fingerprint-captured {
-            border-color: #10b981;
-            background: #d1fae5;
-        }
-        
-        .fingerprint-captured i {
-            color: #10b981;
-        }
-        
-        /* Empty state mejorado */
-        .empty-state {
-            text-align: center;
-            padding: 60px 20px;
-            background: #f9fafb;
-            border-radius: 10px;
-        }
-        
-        .empty-state i {
-            font-size: 64px;
-            margin-bottom: 20px;
-            color: #cbd5e1;
-        }
-        
-        .empty-state p {
-            font-size: 18px;
-            color: #6c757d;
-            margin-bottom: 10px;
-        }
-        
-        .empty-state .small-text {
-            font-size: 14px;
-            color: #9ca3af;
-        }
-        
-        /* Input group para búsqueda */
-        .input-group .input-group-text {
-            background-color: #e9ecef;
-        }
-        
-        /* Responsive para móviles */
-        @media (max-width: 768px) {
-            .content-wrapper {
-                padding: 15px;
-            }
-            
-            .table thead th,
-            .table tbody td {
-                padding: 8px;
-                font-size: 13px;
-            }
-            
-            .btn-action {
-                font-size: 12px;
-                padding: 4px 8px;
-            }
-            
-            .empty-state {
-                padding: 40px 15px;
-            }
-            
-            .empty-state i {
-                font-size: 48px;
-            }
-            
-            .empty-state p {
-                font-size: 16px;
-            }
-        }
-        
-        /* Loading spinner */
-        .loading-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(0,0,0,0.5);
-            display: flex;
-            align-items: center;
+        .pagination {
+            margin-top: 20px;
             justify-content: center;
-            z-index: 9999;
         }
         
-        .loading-spinner {
-            width: 50px;
-            height: 50px;
-            border: 4px solid rgba(255,255,255,0.3);
+        .page-link {
+            color: #1e3a8a;
+            cursor: pointer;
+        }
+        
+        .page-item.active .page-link {
+            background-color: #1e3a8a;
+            border-color: #1e3a8a;
+        }
+        
+        .precio-disabled {
+            background-color: #e9ecef;
+            cursor: not-allowed;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 20px;
+        }
+        
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #1e3a8a;
             border-radius: 50%;
-            border-top-color: white;
-            animation: spin 0.8s linear infinite;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
         }
         
         @keyframes spin {
-            to { transform: rotate(360deg); }
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        /* Estilos para la tabla de pagos dentro del modal */
+        .tabla-pagos {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+        
+        .tabla-pagos th,
+        .tabla-pagos td {
+            padding: 10px;
+            text-align: left;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        
+        .tabla-pagos th {
+            background: #f8f9fa;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        
+        .tabla-pagos th:hover {
+            background: #e9ecef;
+        }
+        
+        .tabla-pagos tr:hover {
+            background: #f8f9fa;
+        }
+        
+        .pagos-pagination {
+            margin-top: 20px;
+            justify-content: center;
+        }
+        
+        .search-pagos {
+            margin-bottom: 15px;
+        }
+        
+        .search-pagos input {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        
+        @media (max-width: 768px) {
+            .sidebar {
+                transform: translateX(-100%);
+            }
+            
+            .main-content {
+                margin-left: 0;
+            }
+            
+            .tabla-simple th,
+            .tabla-simple td {
+                padding: 8px;
+                font-size: 12px;
+            }
         }
     </style>
 </head>
@@ -586,405 +568,464 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
     <?php include 'includes/sidebar.php'; ?>
     
     <div class="main-content">
-        <div class="content-wrapper">
-            <!-- Título -->
-            <div class="row mb-4">
-                <div class="col-12">
-                    <h2><i class="fas fa-clipboard-list"></i> Gestión de Inscripciones</h2>
-                    <hr>
-                </div>
+        <!-- Título -->
+        <div class="mb-4">
+            <h2><i class="fas fa-clipboard-list"></i> Gestión de Inscripciones</h2>
+            <p class="text-muted mb-0">Administra las inscripciones de tus clientes</p>
+        </div>
+        
+        <!-- Alertas -->
+        <div id="alertas"></div>
+        
+        <!-- Botón Nuevo Cliente -->
+        <div class="mb-3">
+            <button class="btn-custom-primary" data-bs-toggle="modal" data-bs-target="#modalNuevoCliente">
+                <i class="fas fa-user-plus"></i> Nuevo Cliente + Inscripción
+            </button>
+        </div>
+        
+        <!-- Filtros -->
+        <div class="card-custom">
+            <div class="card-header-custom">
+                <i class="fas fa-filter"></i> Filtros de Búsqueda
             </div>
-
-            <!-- Alertas -->
-            <?php if($mensaje): ?>
-            <div class="alert alert-success alert-dismissible fade show" role="alert">
-                <i class="fas fa-check-circle"></i> <?php echo $mensaje; ?>
-                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-            </div>
-            <?php endif; ?>
-
-            <?php if($error): ?>
-            <div class="alert alert-danger alert-dismissible fade show" role="alert">
-                <i class="fas fa-exclamation-triangle"></i> <?php echo $error; ?>
-                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-            </div>
-            <?php endif; ?>
-
-            <!-- Botón Nuevo Cliente -->
-            <div class="row">
-                <div class="col-12 mb-3">
-                    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#modalNuevoCliente">
-                        <i class="fas fa-user-plus"></i> Nuevo Cliente + Inscripción
-                    </button>
-                </div>
-            </div>
-
-            <!-- Filtros -->
-            <div class="card filtros-card">
-                <div class="card-header">
-                    <h5><i class="fas fa-filter"></i> Filtros de Búsqueda</h5>
-                </div>
-                <div class="card-body">
-                    <div class="row g-3">
-                        <div class="col-md-6">
-                            <label class="form-label"><i class="fas fa-search"></i> Buscar por nombre, apellido o teléfono</label>
-                            <div class="input-group">
-                                <span class="input-group-text"><i class="fas fa-search"></i></span>
-                                <input type="text" class="form-control" id="searchInput" placeholder="Escriba para buscar..." value="<?php echo htmlspecialchars($search); ?>">
-                            </div>
-                        </div>
-                        <div class="col-md-4">
-                            <label class="form-label"><i class="fas fa-tag"></i> Estado de inscripción</label>
-                            <select class="form-select" id="estadoSelect">
-                                <option value="">Todos los estados</option>
-                                <option value="activa" <?php echo $estado == 'activa' ? 'selected' : ''; ?>>Activa</option>
-                                <option value="vencida" <?php echo $estado == 'vencida' ? 'selected' : ''; ?>>Vencida</option>
-                                <option value="cancelada" <?php echo $estado == 'cancelada' ? 'selected' : ''; ?>>Cancelada</option>
-                            </select>
-                        </div>
-                        <div class="col-md-2">
-                            <label class="form-label">&nbsp;</label>
-                            <button type="button" class="btn btn-secondary w-100" id="limpiarFiltros">
-                                <i class="fas fa-eraser"></i> Limpiar filtros
-                            </button>
-                        </div>
+            <div class="card-body-custom">
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Buscar</label>
+                        <input type="text" class="form-control" id="searchInput" placeholder="Nombre, apellido o teléfono..." value="<?php echo htmlspecialchars($search); ?>">
                     </div>
-                </div>
-            </div>
-
-            <!-- Tabla de Inscripciones -->
-            <div class="card">
-                <div class="card-header">
-                    <h5><i class="fas fa-list"></i> Listado de Inscripciones</h5>
-                </div>
-                <div class="card-body">
-                    <div class="table-responsive-wrapper">
-                        <table class="table table-hover" id="tablaInscripciones">
-                            <thead>
-                                <tr>
-                                    <th style="min-width: 60px;"><i class="fas fa-hashtag"></i> ID</th>
-                                    <th style="min-width: 180px;"><i class="fas fa-user"></i> Cliente</th>
-                                    <th style="min-width: 130px;"><i class="fas fa-phone"></i> Teléfono</th>
-                                    <th style="min-width: 150px;"><i class="fas fa-calendar-alt"></i> Plan</th>
-                                    <th style="min-width: 110px;"><i class="fas fa-calendar-check"></i> Fecha Inicio</th>
-                                    <th style="min-width: 110px;"><i class="fas fa-calendar-times"></i> Fecha Fin</th>
-                                    <th style="min-width: 90px;"><i class="fas fa-dollar-sign"></i> Precio</th>
-                                    <th style="min-width: 100px;"><i class="fas fa-info-circle"></i> Estado</th>
-                                    <th style="min-width: 220px;"><i class="fas fa-cogs"></i> Acciones</th>
-                                </tr>
-                            </thead>
-                            <tbody id="tablaBody">
-                                <?php if(empty($inscripciones)): ?>
-                                <tr>
-                                    <td colspan="9">
-                                        <div class="empty-state">
-                                            <i class="fas fa-inbox"></i>
-                                            <p><strong>No hay inscripciones registradas</strong></p>
-                                            <p class="small-text">Utilice el botón "Nuevo Cliente + Inscripción" para comenzar</p>
-                                        </div>
-                                    </td>
-                                </tr>
-                                <?php else: ?>
-                                <?php foreach($inscripciones as $inscripcion): 
-                                    // Determinar si la inscripción está vencida
-                                    $estaVencida = ($inscripcion['estado'] == 'activa' && $inscripcion['fecha_fin'] && strtotime($inscripcion['fecha_fin']) < time());
-                                    if ($estaVencida) {
-                                        $updateStmt = $conn->prepare("UPDATE inscripciones SET estado = 'vencida' WHERE id = ?");
-                                        $updateStmt->bind_param("i", $inscripcion['id']);
-                                        $updateStmt->execute();
-                                        $inscripcion['estado'] = 'vencida';
-                                    }
-                                ?>
-                                <tr>
-                                    <td><?php echo $inscripcion['id']; ?></td>
-                                    <td><?php echo htmlspecialchars($inscripcion['cliente_nombre'] . ' ' . $inscripcion['cliente_apellido']); ?></td>
-                                    <td><?php echo htmlspecialchars($inscripcion['cliente_telefono']); ?></td>
-                                    <td><?php echo htmlspecialchars($inscripcion['plan_nombre']); ?></td>
-                                    <td><?php echo date('d/m/Y', strtotime($inscripcion['fecha_inicio'])); ?></td>
-                                    <td><?php echo $inscripcion['duracion_dias'] > 0 ? date('d/m/Y', strtotime($inscripcion['fecha_fin'])) : 'Sin vencimiento'; ?></td>
-                                    <td>$<?php echo number_format($inscripcion['precio_pagado'], 2); ?></td>
-                                    <td>
-                                        <?php
-                                        $badgeClass = '';
-                                        $statusText = '';
-                                        if($inscripcion['estado'] == 'activa') {
-                                            $badgeClass = 'badge-activa';
-                                            $statusText = 'Activa';
-                                        } elseif($inscripcion['estado'] == 'vencida') {
-                                            $badgeClass = 'badge-vencida';
-                                            $statusText = 'Vencida';
-                                        } else {
-                                            $badgeClass = 'badge-cancelada';
-                                            $statusText = 'Cancelada';
-                                        }
-                                        ?>
-                                        <span class="<?php echo $badgeClass; ?>"><?php echo $statusText; ?></span>
-                                    </td>
-                                    <td>
-                                        <button class="btn btn-sm btn-info btn-action" onclick="verDetalle(<?php echo $inscripcion['id']; ?>)" title="Ver detalles">
-                                            <i class="fas fa-eye"></i> Detalle
-                                        </button>
-                                        <?php if($inscripcion['estado'] == 'vencida'): ?>
-                                        <button class="btn btn-sm btn-success btn-renovar" onclick="abrirRenovar(<?php echo $inscripcion['id']; ?>, <?php echo $inscripcion['cliente_id']; ?>)" title="Renovar inscripción vencida">
-                                            <i class="fas fa-sync-alt"></i> Renovar
-                                        </button>
-                                        <?php elseif($inscripcion['estado'] == 'activa'): ?>
-                                        <button class="btn btn-sm btn-success btn-renovar" disabled title="La inscripción aún está activa, no requiere renovación">
-                                            <i class="fas fa-sync-alt"></i> Renovar
-                                        </button>
-                                        <?php endif; ?>
-                                        <?php if($inscripcion['estado'] == 'activa'): ?>
-                                        <button class="btn btn-sm btn-warning btn-cancelar" onclick="cancelarInscripcion(<?php echo $inscripcion['id']; ?>)" title="Cancelar inscripción">
-                                            <i class="fas fa-times-circle"></i> Cancelar
-                                        </button>
-                                        <?php endif; ?>
-                                    </td>
-                                </tr>
-                                <?php endforeach; ?>
-                                <?php endif; ?>
-                            </tbody>
-                        </table>
+                    <div class="col-md-4 mb-3">
+                        <label class="form-label">Estado</label>
+                        <select class="form-select" id="estadoSelect">
+                            <option value="">Todos</option>
+                            <option value="activa" <?php echo $estado == 'activa' ? 'selected' : ''; ?>>Activa</option>
+                            <option value="vencida" <?php echo $estado == 'vencida' ? 'selected' : ''; ?>>Vencida</option>
+                            <option value="cancelada" <?php echo $estado == 'cancelada' ? 'selected' : ''; ?>>Cancelada</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2 mb-3">
+                        <label class="form-label">&nbsp;</label>
+                        <button class="btn btn-secondary w-100" id="limpiarFiltros">
+                            <i class="fas fa-eraser"></i> Limpiar
+                        </button>
                     </div>
                 </div>
             </div>
         </div>
+        
+        <!-- Tabla de Inscripciones -->
+        <div class="card-custom">
+            <div class="card-header-custom">
+                <i class="fas fa-list"></i> Listado de Inscripciones
+            </div>
+            <div class="card-body-custom" style="padding: 0;">
+                <div style="overflow-x: auto;">
+                    <table class="tabla-simple" id="tablaInscripciones">
+                        <thead>
+                            <tr>
+                                <th data-sort="cliente">Cliente <i class="fas fa-sort"></i></th>
+                                <th data-sort="telefono">Teléfono <i class="fas fa-sort"></i></th>
+                                <th data-sort="plan">Plan <i class="fas fa-sort"></i></th>
+                                <th data-sort="fecha_inicio">Fecha Inicio <i class="fas fa-sort"></i></th>
+                                <th data-sort="fecha_fin">Fecha Fin <i class="fas fa-sort"></i></th>
+                                <th data-sort="precio">$ Precio <i class="fas fa-sort"></i></th>
+                                <th data-sort="estado">Estado <i class="fas fa-sort"></i></th>
+                                <th>Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tablaBody">
+                            <tr>
+                                <td colspan="8" class="loading">
+                                    <div class="spinner"></div>
+                                    <p>Cargando datos...</p>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                
+                <!-- Paginación -->
+                <div id="paginationContainer" class="pagination"></div>
+            </div>
+        </div>
     </div>
-
-    <!-- Modal: Nuevo Cliente + Inscripción -->
-    <div class="modal fade" id="modalNuevoCliente" tabindex="-1" data-bs-backdrop="static">
+    
+    <!-- Modal Nuevo Cliente -->
+    <div class="modal fade" id="modalNuevoCliente" tabindex="-1">
         <div class="modal-dialog modal-lg">
             <div class="modal-content">
-                <div class="modal-header">
+                <div class="modal-header" style="background: #1e3a8a; color: white;">
                     <h5 class="modal-title"><i class="fas fa-user-plus"></i> Nuevo Cliente e Inscripción</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
-                <form method="POST" action="" id="formNuevoCliente">
+                <form id="formNuevoCliente">
                     <input type="hidden" name="action" value="crear_cliente_inscripcion">
                     <input type="hidden" name="huella_digital" id="huella_digital" value="">
                     
                     <div class="modal-body">
                         <div class="row">
                             <div class="col-md-6 mb-3">
-                                <label class="form-label"><i class="fas fa-user"></i> Nombre *</label>
+                                <label class="form-label">Nombre *</label>
                                 <input type="text" class="form-control" name="nombre" required>
                             </div>
                             <div class="col-md-6 mb-3">
-                                <label class="form-label"><i class="fas fa-user"></i> Apellido *</label>
+                                <label class="form-label">Apellido *</label>
                                 <input type="text" class="form-control" name="apellido" required>
                             </div>
                         </div>
                         
                         <div class="row">
                             <div class="col-md-6 mb-3">
-                                <label class="form-label"><i class="fas fa-phone"></i> Teléfono *</label>
+                                <label class="form-label">Teléfono *</label>
                                 <input type="tel" class="form-control" name="telefono" required>
                             </div>
                             <div class="col-md-6 mb-3">
-                                <label class="form-label"><i class="fas fa-envelope"></i> Email</label>
+                                <label class="form-label">Email</label>
                                 <input type="email" class="form-control" name="email">
                             </div>
                         </div>
                         
                         <div class="row">
                             <div class="col-md-6 mb-3">
-                                <label class="form-label"><i class="fas fa-dumbbell"></i> Plan *</label>
+                                <label class="form-label">Plan *</label>
                                 <select class="form-select" name="plan_id" id="plan_id_nuevo" required onchange="actualizarPrecioNuevo()">
                                     <option value="">Seleccionar plan</option>
                                     <?php foreach($planes as $plan): ?>
-                                    <option value="<?php echo $plan['id']; ?>" data-precio="<?php echo $plan['precio']; ?>" data-duracion="<?php echo $plan['duracion_dias']; ?>">
-                                        <?php 
-                                        $tipo = '';
-                                        if($plan['duracion_dias'] == 0) $tipo = 'Paquete de Visitas';
-                                        elseif($plan['duracion_dias'] == 1) $tipo = 'Por Día';
-                                        elseif($plan['duracion_dias'] == 7) $tipo = 'Semanal';
-                                        elseif($plan['duracion_dias'] == 15) $tipo = 'Quincenal';
-                                        elseif($plan['duracion_dias'] == 30) $tipo = 'Mensual';
-                                        else $tipo = $plan['duracion_dias'] . ' días';
-                                        echo htmlspecialchars($plan['nombre'] . ' - ' . $tipo . ' - $' . number_format($plan['precio'], 2)); ?>
+                                    <option value="<?php echo $plan['id']; ?>" data-precio="<?php echo $plan['precio']; ?>">
+                                        <?php echo htmlspecialchars($plan['nombre'] . ' - $' . number_format($plan['precio'], 2)); ?>
                                     </option>
                                     <?php endforeach; ?>
                                 </select>
                             </div>
                             <div class="col-md-6 mb-3">
-                                <label class="form-label"><i class="fas fa-calendar-alt"></i> Fecha de Inicio *</label>
+                                <label class="form-label">Fecha Inicio *</label>
                                 <input type="date" class="form-control" name="fecha_inicio" value="<?php echo date('Y-m-d'); ?>" required>
                             </div>
                         </div>
                         
                         <div class="row">
                             <div class="col-md-6 mb-3">
-                                <label class="form-label"><i class="fas fa-dollar-sign"></i> Precio Pagado *</label>
-                                <input type="number" class="form-control" name="precio_pagado" id="precio_pagado_nuevo" step="0.01" required>
+                                <label class="form-label">Precio Pagado *</label>
+                                <input type="number" class="form-control precio-disabled" name="precio_pagado" id="precio_pagado_nuevo" step="0.01" readonly required>
                             </div>
                             <div class="col-md-6 mb-3">
-                                <label class="form-label"><i class="fas fa-credit-card"></i> Método de Pago *</label>
+                                <label class="form-label">Método Pago *</label>
                                 <select class="form-select" name="metodo_pago" required>
                                     <option value="efectivo">Efectivo</option>
-                                    <option value="tarjeta">Tarjeta de crédito/débito</option>
-                                    <option value="transferencia">Transferencia bancaria</option>
+                                    <option value="tarjeta">Tarjeta</option>
+                                    <option value="transferencia">Transferencia</option>
                                 </select>
                             </div>
                         </div>
                         
-                        <div class="row">
-                            <div class="col-12 mb-3">
-                                <label class="form-label"><i class="fas fa-hashtag"></i> Referencia</label>
-                                <input type="text" class="form-control" name="referencia" placeholder="Número de referencia (opcional)">
-                            </div>
+                        <div class="mb-3">
+                            <label class="form-label">Referencia</label>
+                            <input type="text" class="form-control" name="referencia" placeholder="Número de referencia (opcional)">
                         </div>
                         
-                        <!-- Captura de Huella Digital -->
-                        <div class="mb-3">
-                            <label class="form-label"><i class="fas fa-fingerprint"></i> Registro de Huella Digital</label>
-                            <div class="fingerprint-card" id="fingerprintCard" onclick="capturarHuella()">
-                                <i class="fas fa-fingerprint"></i>
-                                <div>Capturar Huella Digital</div>
-                                <div class="status" id="huellaStatus">No registrada</div>
-                            </div>
-                            <small class="text-muted"><i class="fas fa-info-circle"></i> Coloque su dedo en el lector USB y presione para capturar</small>
+                        <div class="fingerprint-area" onclick="capturarHuella()">
+                            <i class="fas fa-fingerprint" style="font-size: 48px; color: #1e3a8a;"></i>
+                            <div class="mt-2">Capturar Huella Digital</div>
+                            <div class="small text-muted" id="huellaStatus">No registrada</div>
                         </div>
                     </div>
                     
                     <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal"><i class="fas fa-times"></i> Cancelar</button>
-                        <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Guardar Cliente e Inscribir</button>
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                        <button type="submit" class="btn btn-primary">Guardar</button>
                     </div>
                 </form>
             </div>
         </div>
     </div>
-
-    <!-- Modal: Renovar Inscripción -->
+    
+    <!-- Modal Renovar -->
     <div class="modal fade" id="modalRenovar" tabindex="-1">
         <div class="modal-dialog">
             <div class="modal-content">
-                <div class="modal-header">
+                <div class="modal-header" style="background: #1e3a8a; color: white;">
                     <h5 class="modal-title"><i class="fas fa-sync-alt"></i> Renovar Inscripción</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
-                <form method="POST" action="" id="formRenovar">
+                <form id="formRenovar">
                     <input type="hidden" name="action" value="renovar_inscripcion">
                     <input type="hidden" name="inscripcion_id" id="renovar_inscripcion_id">
                     <input type="hidden" name="cliente_id" id="renovar_cliente_id">
                     
                     <div class="modal-body">
                         <div class="mb-3">
-                            <label class="form-label"><i class="fas fa-user"></i> Cliente</label>
+                            <label class="form-label">Cliente</label>
                             <input type="text" class="form-control" id="renovar_cliente_nombre" readonly disabled>
                         </div>
                         
                         <div class="mb-3">
-                            <label class="form-label"><i class="fas fa-dumbbell"></i> Plan *</label>
+                            <label class="form-label">Plan *</label>
                             <select class="form-select" name="plan_id" id="renovar_plan_id" required onchange="actualizarPrecioRenovar()">
                                 <option value="">Seleccionar plan</option>
                                 <?php foreach($planes as $plan): ?>
-                                <option value="<?php echo $plan['id']; ?>" data-precio="<?php echo $plan['precio']; ?>" data-duracion="<?php echo $plan['duracion_dias']; ?>">
-                                    <?php 
-                                    $tipo = '';
-                                    if($plan['duracion_dias'] == 0) $tipo = 'Paquete de Visitas';
-                                    elseif($plan['duracion_dias'] == 1) $tipo = 'Por Día';
-                                    elseif($plan['duracion_dias'] == 7) $tipo = 'Semanal';
-                                    elseif($plan['duracion_dias'] == 15) $tipo = 'Quincenal';
-                                    elseif($plan['duracion_dias'] == 30) $tipo = 'Mensual';
-                                    else $tipo = $plan['duracion_dias'] . ' días';
-                                    echo htmlspecialchars($plan['nombre'] . ' - ' . $tipo . ' - $' . number_format($plan['precio'], 2)); ?>
+                                <option value="<?php echo $plan['id']; ?>" data-precio="<?php echo $plan['precio']; ?>">
+                                    <?php echo htmlspecialchars($plan['nombre'] . ' - $' . number_format($plan['precio'], 2)); ?>
                                 </option>
                                 <?php endforeach; ?>
                             </select>
                         </div>
                         
                         <div class="mb-3">
-                            <label class="form-label"><i class="fas fa-calendar-alt"></i> Fecha de Inicio *</label>
-                            <input type="date" class="form-control" name="fecha_inicio" id="renovar_fecha_inicio" value="<?php echo date('Y-m-d'); ?>" required>
+                            <label class="form-label">Fecha Inicio *</label>
+                            <input type="date" class="form-control" name="fecha_inicio" id="renovar_fecha_inicio" required>
                         </div>
                         
                         <div class="mb-3">
-                            <label class="form-label"><i class="fas fa-dollar-sign"></i> Precio Pagado *</label>
+                            <label class="form-label">Precio Pagado *</label>
                             <input type="number" class="form-control" name="precio_pagado" id="renovar_precio_pagado" step="0.01" required>
                         </div>
                         
                         <div class="mb-3">
-                            <label class="form-label"><i class="fas fa-credit-card"></i> Método de Pago *</label>
+                            <label class="form-label">Método Pago *</label>
                             <select class="form-select" name="metodo_pago" required>
                                 <option value="efectivo">Efectivo</option>
-                                <option value="tarjeta">Tarjeta de crédito/débito</option>
-                                <option value="transferencia">Transferencia bancaria</option>
+                                <option value="tarjeta">Tarjeta</option>
+                                <option value="transferencia">Transferencia</option>
                             </select>
                         </div>
                         
                         <div class="mb-3">
-                            <label class="form-label"><i class="fas fa-hashtag"></i> Referencia</label>
+                            <label class="form-label">Referencia</label>
                             <input type="text" class="form-control" name="referencia" placeholder="Número de referencia (opcional)">
                         </div>
                     </div>
                     
                     <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal"><i class="fas fa-times"></i> Cancelar</button>
-                        <button type="submit" class="btn btn-success"><i class="fas fa-sync-alt"></i> Renovar Inscripción</button>
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                        <button type="submit" class="btn btn-success">Renovar</button>
                     </div>
                 </form>
             </div>
         </div>
     </div>
-
-    <!-- Modal Detalle -->
+    
+    <!-- Modal Detalle con Historial de Pagos -->
     <div class="modal fade" id="modalDetalle" tabindex="-1">
-        <div class="modal-dialog">
+        <div class="modal-dialog modal-lg">
             <div class="modal-content">
-                <div class="modal-header">
+                <div class="modal-header" style="background: #1e3a8a; color: white;">
                     <h5 class="modal-title"><i class="fas fa-info-circle"></i> Detalle de Inscripción</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body" id="detalleContenido">
                     <div class="text-center">
-                        <i class="fas fa-spinner fa-spin"></i> Cargando...
+                        <div class="spinner-border text-primary"></div>
+                        <p>Cargando...</p>
                     </div>
                 </div>
             </div>
         </div>
     </div>
-
-    <!-- Scripts -->
+    
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     
     <script>
-        // Variables
-        let huellaCapturada = '';
+        let currentPage = <?php echo $page; ?>;
+        let currentSort = '<?php echo $sort; ?>';
+        let currentOrder = '<?php echo $order; ?>';
+        let currentSearch = '<?php echo $search; ?>';
+        let currentEstado = '<?php echo $estado; ?>';
+        let timeoutBusqueda;
         
         $(document).ready(function() {
-            // Filtros en tiempo real - Recargar página con los filtros
+            cargarDatos();
+            
+            // Búsqueda en tiempo real
             $('#searchInput').on('input', function() {
-                aplicarFiltros();
+                clearTimeout(timeoutBusqueda);
+                timeoutBusqueda = setTimeout(function() {
+                    currentSearch = $('#searchInput').val();
+                    currentPage = 1;
+                    cargarDatos();
+                }, 500);
             });
             
+            // Filtro por estado
             $('#estadoSelect').on('change', function() {
-                aplicarFiltros();
+                currentEstado = $(this).val();
+                currentPage = 1;
+                cargarDatos();
             });
             
-            // Botón limpiar filtros
+            // Limpiar filtros
             $('#limpiarFiltros').on('click', function() {
                 $('#searchInput').val('');
                 $('#estadoSelect').val('');
-                aplicarFiltros();
+                currentSearch = '';
+                currentEstado = '';
+                currentPage = 1;
+                cargarDatos();
+            });
+            
+            // Ordenamiento
+            $('th[data-sort]').on('click', function() {
+                const sort = $(this).data('sort');
+                if (currentSort === sort) {
+                    currentOrder = currentOrder === 'ASC' ? 'DESC' : 'ASC';
+                } else {
+                    currentSort = sort;
+                    currentOrder = 'ASC';
+                }
+                currentPage = 1;
+                cargarDatos();
+            });
+            
+            // Formulario nuevo cliente
+            $('#formNuevoCliente').on('submit', function(e) {
+                e.preventDefault();
+                $.ajax({
+                    url: window.location.pathname,
+                    method: 'POST',
+                    data: $(this).serialize(),
+                    success: function(response) {
+                        Swal.fire('Éxito', 'Cliente e inscripción creados exitosamente', 'success');
+                        $('#modalNuevoCliente').modal('hide');
+                        cargarDatos();
+                    },
+                    error: function() {
+                        Swal.fire('Error', 'Error al crear el cliente', 'error');
+                    }
+                });
+            });
+            
+            // Formulario renovar
+            $('#formRenovar').on('submit', function(e) {
+                e.preventDefault();
+                $.ajax({
+                    url: window.location.pathname,
+                    method: 'POST',
+                    data: $(this).serialize(),
+                    success: function(response) {
+                        Swal.fire('Éxito', 'Inscripción renovada exitosamente', 'success');
+                        $('#modalRenovar').modal('hide');
+                        cargarDatos();
+                    },
+                    error: function() {
+                        Swal.fire('Error', 'Error al renovar la inscripción', 'error');
+                    }
+                });
             });
         });
         
-        function aplicarFiltros() {
-            const search = $('#searchInput').val();
-            const estado = $('#estadoSelect').val();
+        function cargarDatos() {
+            $('#tablaBody').html('<tr><td colspan="8" class="loading"><div class="spinner"></div><p>Cargando datos...</p></td></tr>');
             
-            // Construir URL con los filtros
-            let url = window.location.pathname + '?';
-            if (search) url += 'search=' + encodeURIComponent(search) + '&';
-            if (estado) url += 'estado=' + encodeURIComponent(estado);
-            
-            // Redirigir a la página con los filtros aplicados
-            window.location.href = url;
+            $.ajax({
+                url: 'ajax_inscripciones.php',
+                method: 'GET',
+                data: {
+                    search: currentSearch,
+                    estado: currentEstado,
+                    page: currentPage,
+                    sort: currentSort,
+                    order: currentOrder
+                },
+                dataType: 'json',
+                success: function(data) {
+                    mostrarTabla(data.inscripciones);
+                    mostrarPaginacion(data.total_pages, data.current_page);
+                },
+                error: function() {
+                    $('#tablaBody').html('<tr><td colspan="8" class="loading"><p class="text-danger">Error al cargar los datos</p></td></tr>');
+                }
+            });
         }
-
-        // Actualizar precio nuevo cliente
+        
+        function mostrarTabla(inscripciones) {
+            if (!inscripciones || inscripciones.length === 0) {
+                $('#tablaBody').html('<tr><td colspan="8" style="text-align: center; padding: 40px;"><i class="fas fa-inbox" style="font-size: 48px; color: #ccc;"></i><p class="mt-2">No hay inscripciones registradas</p></td></tr>');
+                return;
+            }
+            
+            let html = '';
+            for (let i = 0; i < inscripciones.length; i++) {
+                const ins = inscripciones[i];
+                let badgeClass = '';
+                let statusText = '';
+                
+                if (ins.estado === 'activa') {
+                    badgeClass = 'badge-activa';
+                    statusText = 'Activa';
+                } else if (ins.estado === 'vencida') {
+                    badgeClass = 'badge-vencida';
+                    statusText = 'Vencida';
+                } else {
+                    badgeClass = 'badge-cancelada';
+                    statusText = 'Cancelada';
+                }
+                
+                html += '<tr>';
+                html += '<td><strong>' + ins.cliente_nombre + ' ' + ins.cliente_apellido + '</strong></td>';
+                html += '<td>' + ins.cliente_telefono + '</td>';
+                html += '<td>' + ins.plan_nombre + '</td>';
+                html += '<td>' + ins.fecha_inicio_formateada + '</td>';
+                html += '<td>' + (ins.duracion_dias > 0 ? ins.fecha_fin_formateada : 'Sin vencimiento') + '</td>';
+                html += '<td>$' + parseFloat(ins.precio_pagado).toFixed(2) + '</td>';
+                html += '<td><span class="' + badgeClass + '">' + statusText + '</span></td>';
+                html += '<td>';
+                html += '<button class="btn-detalle" onclick="verDetalle(' + ins.id + ')"><i class="fas fa-eye"></i> Ver</button>';
+                
+                if (ins.estado === 'vencida') {
+                    html += '<button class="btn-renovar" onclick="abrirRenovar(' + ins.id + ', ' + ins.cliente_id + ')"><i class="fas fa-sync-alt"></i> Renovar</button>';
+                } else if (ins.estado === 'activa') {
+                    html += '<button class="btn-renovar" disabled><i class="fas fa-sync-alt"></i> Renovar</button>';
+                    html += '<button class="btn-cancelar" onclick="cancelarInscripcion(' + ins.id + ')"><i class="fas fa-times-circle"></i> Cancelar</button>';
+                }
+                
+                html += '</div>';
+                html += '</tr>';
+            }
+            $('#tablaBody').html(html);
+        }
+        
+        function mostrarPaginacion(totalPages, currentPage) {
+            if (totalPages <= 1) {
+                $('#paginationContainer').html('');
+                return;
+            }
+            
+            let html = '<ul class="pagination">';
+            html += '<li class="page-item ' + (currentPage <= 1 ? 'disabled' : '') + '">';
+            html += '<a class="page-link" onclick="cambiarPagina(' + (currentPage - 1) + ')">Anterior</a></li>';
+            
+            let startPage = Math.max(1, currentPage - 2);
+            let endPage = Math.min(totalPages, currentPage + 2);
+            
+            if (startPage > 1) {
+                html += '<li class="page-item"><a class="page-link" onclick="cambiarPagina(1)">1</a></li>';
+                if (startPage > 2) html += '<li class="page-item disabled"><span class="page-link">...</span></li>';
+            }
+            
+            for (let i = startPage; i <= endPage; i++) {
+                html += '<li class="page-item ' + (i === currentPage ? 'active' : '') + '">';
+                html += '<a class="page-link" onclick="cambiarPagina(' + i + ')">' + i + '</a></li>';
+            }
+            
+            if (endPage < totalPages) {
+                if (endPage < totalPages - 1) html += '<li class="page-item disabled"><span class="page-link">...</span></li>';
+                html += '<li class="page-item"><a class="page-link" onclick="cambiarPagina(' + totalPages + ')">' + totalPages + '</a></li>';
+            }
+            
+            html += '<li class="page-item ' + (currentPage >= totalPages ? 'disabled' : '') + '">';
+            html += '<a class="page-link" onclick="cambiarPagina(' + (currentPage + 1) + ')">Siguiente</a></li>';
+            html += '</ul>';
+            
+            $('#paginationContainer').html(html);
+        }
+        
+        function cambiarPagina(page) {
+            currentPage = page;
+            cargarDatos();
+        }
+        
         function actualizarPrecioNuevo() {
             const planSelect = document.getElementById('plan_id_nuevo');
             const selectedOption = planSelect.options[planSelect.selectedIndex];
@@ -993,8 +1034,7 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
                 document.getElementById('precio_pagado_nuevo').value = precio;
             }
         }
-
-        // Actualizar precio renovación
+        
         function actualizarPrecioRenovar() {
             const planSelect = document.getElementById('renovar_plan_id');
             const selectedOption = planSelect.options[planSelect.selectedIndex];
@@ -1003,46 +1043,25 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
                 document.getElementById('renovar_precio_pagado').value = precio;
             }
         }
-
-        // Captura de huella digital
+        
         function capturarHuella() {
-            const fingerprintCard = document.getElementById('fingerprintCard');
-            const huellaStatus = document.getElementById('huellaStatus');
-            
             Swal.fire({
-                title: 'Capturando huella digital',
-                text: 'Por favor, coloque su dedo en el lector USB...',
+                title: 'Capturando huella',
+                text: 'Coloque su dedo en el lector...',
                 icon: 'info',
                 showConfirmButton: false,
-                allowOutsideClick: false,
-                didOpen: () => {
-                    Swal.showLoading();
-                }
+                didOpen: () => Swal.showLoading()
             });
             
-            // SIMULACIÓN (para pruebas)
             setTimeout(() => {
                 Swal.close();
-                
-                const huellaData = 'FP_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-                huellaCapturada = huellaData;
+                const huellaData = 'FP_' + Date.now();
                 document.getElementById('huella_digital').value = huellaData;
-                
-                fingerprintCard.classList.add('fingerprint-captured');
-                huellaStatus.innerHTML = '<i class="fas fa-check-circle"></i> Huella registrada correctamente';
-                huellaStatus.style.color = '#10b981';
-                
-                Swal.fire({
-                    title: '¡Huella capturada!',
-                    text: 'La huella digital ha sido registrada exitosamente.',
-                    icon: 'success',
-                    timer: 1500,
-                    showConfirmButton: false
-                });
+                document.getElementById('huellaStatus').innerHTML = '<i class="fas fa-check-circle"></i> Huella registrada';
+                Swal.fire('Éxito', 'Huella registrada correctamente', 'success');
             }, 2000);
         }
-
-        // Abrir modal de renovación
+        
         function abrirRenovar(inscripcionId, clienteId) {
             $.ajax({
                 url: 'includes/obtener_cliente.php',
@@ -1055,17 +1074,15 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
                         document.getElementById('renovar_cliente_id').value = clienteId;
                         document.getElementById('renovar_cliente_nombre').value = data.nombre;
                         document.getElementById('renovar_fecha_inicio').value = new Date().toISOString().split('T')[0];
-                        
                         $('#modalRenovar').modal('show');
                     }
                 }
             });
         }
-
-        // Ver detalle de inscripción
+        
         function verDetalle(id) {
             $('#modalDetalle').modal('show');
-            $('#detalleContenido').html('<div class="text-center"><i class="fas fa-spinner fa-spin"></i> Cargando...</div>');
+            $('#detalleContenido').html('<div class="text-center"><div class="spinner-border text-primary"></div><p>Cargando...</p></div>');
             
             $.ajax({
                 url: 'includes/inscripcion_detalle.php',
@@ -1075,37 +1092,54 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
                     $('#detalleContenido').html(response);
                 },
                 error: function() {
-                    $('#detalleContenido').html('<div class="alert alert-danger"><i class="fas fa-exclamation-triangle"></i> Error al cargar los detalles</div>');
+                    $('#detalleContenido').html('<div class="alert alert-danger">Error al cargar los detalles</div>');
                 }
             });
         }
-
-        // Cancelar inscripción
+        
+        function verHistorialPagos(inscripcionId, clienteNombre) {
+            Swal.fire({
+                title: 'Historial de Pagos - ' + clienteNombre,
+                html: '<div id="historialPagosContenido"><div class="text-center"><div class="spinner-border text-primary"></div><p>Cargando historial...</p></div></div>',
+                width: '900px',
+                showConfirmButton: false,
+                showCloseButton: true,
+                didOpen: () => {
+                    cargarHistorialPagos(inscripcionId);
+                }
+            });
+        }
+        
+        function cargarHistorialPagos(inscripcionId) {
+            $.ajax({
+                url: 'includes/historial_pagos.php',
+                method: 'POST',
+                data: { inscripcion_id: inscripcionId },
+                success: function(response) {
+                    $('#historialPagosContenido').html(response);
+                },
+                error: function() {
+                    $('#historialPagosContenido').html('<div class="alert alert-danger">Error al cargar el historial de pagos</div>');
+                }
+            });
+        }
+        
         function cancelarInscripcion(id) {
             Swal.fire({
-                title: '¿Estás seguro?',
-                text: "Esta acción cancelará la inscripción del cliente",
+                title: '¿Cancelar inscripción?',
+                text: "Esta acción no se puede deshacer",
                 icon: 'warning',
                 showCancelButton: true,
-                confirmButtonColor: '#d33',
-                cancelButtonColor: '#3085d6',
+                confirmButtonColor: '#dc2626',
+                cancelButtonColor: '#6b7280',
                 confirmButtonText: 'Sí, cancelar',
-                cancelButtonText: 'No, mantener'
+                cancelButtonText: 'No'
             }).then((result) => {
                 if (result.isConfirmed) {
                     window.location.href = '?cancelar=' + id;
                 }
             });
         }
-
-        // Auto cerrar alertas
-        setTimeout(() => {
-            const alerts = document.querySelectorAll('.alert');
-            alerts.forEach(alert => {
-                const bsAlert = new bootstrap.Alert(alert);
-                setTimeout(() => bsAlert.close(), 3000);
-            });
-        }, 3000);
     </script>
 </body>
 </html>
