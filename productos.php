@@ -1035,7 +1035,6 @@ $stmt->close();
                                 <option value="merma">Merma / Pérdida</option>
                                 <option value="sobrante">Sobrante encontrado</option>
                                 <option value="error_sistema">Error de sistema</option>
-                                <option value="reajuste_minimo">Reajuste de stock mínimo</option>
                                 <option value="otros">Otros</option>
                             </select>
                         </div>

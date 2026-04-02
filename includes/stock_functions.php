@@ -1,7 +1,4 @@
 <?php
-/**
- * Funciones para manejar movimientos de stock
- */
 
 function registrarMovimientoStock($conn, $producto_id, $tipo_movimiento, $cantidad, $motivo, $usuario_id, $referencia_id = null, $referencia_tipo = null, $observaciones = null) {
     try {
