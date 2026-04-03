@@ -22,6 +22,7 @@ if ($current_page == 'productos.php') $active_module = 'products';
 if ($current_page == 'historial_stock.php') $active_module = 'historial';
 if ($current_page == 'inscripciones.php') $active_module = 'inscriptions';
 if ($current_page == 'clases.php') $active_module = 'classes';
+if ($current_page == 'inscripciones_clases.php') $active_module = 'clases_inscriptions';
 if ($current_page == 'reportes.php') $active_module = 'reports';
 if ($current_page == 'configuracion.php') $active_module = 'settings';
 
@@ -567,6 +568,13 @@ body.sidebar-collapsed .main-content {
                 <a href="clases.php" class="nav-link <?php echo $active_module == 'classes' ? 'active' : ''; ?>">
                     <i class="fas fa-calendar-alt"></i>
                     <span class="nav-text">Clases</span>
+                </a>
+            </li>
+
+            <li class="nav-item">
+                <a href="inscripciones_clases.php" class="nav-link"<?php echo $active_module == 'clases_inscriptions' ? 'active' : ''; ?>">
+                    <i class="fas fa-chalkboard-user"></i>
+                    <p>Inscripciones a Clases</p>
                 </a>
             </li>
             <li class="nav-item">

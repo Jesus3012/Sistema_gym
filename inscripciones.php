@@ -63,7 +63,9 @@ function verificarHuellaDigital($huella_data) {
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['action'] == 'crear_cliente_inscripcion') {
     // Verificar token CSRF para evitar doble envío
     if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== $_SESSION['csrf_token']) {
-        $error = 'Token de seguridad inválido. Por favor, intente nuevamente.';
+        $_SESSION['error'] = 'Token de seguridad inválido. Por favor, intente nuevamente.';
+        header('Location: inscripciones.php');
+        exit;
     } else {
         try {
             $nombre = trim($_POST['nombre']);
@@ -115,6 +117,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
             $cliente_id = $conn->insert_id;
             
             // Insertar inscripción
+            $fecha_actual_db = date('Y-m-d');
             $stmt = $conn->prepare("INSERT INTO inscripciones (cliente_id, plan_id, fecha_inicio, fecha_fin, precio_pagado, estado) VALUES (?, ?, ?, ?, ?, 'activa')");
             $stmt->bind_param("iisss", $cliente_id, $plan_id, $fecha_inicio, $fecha_fin, $precio_pagado);
             $stmt->execute();
@@ -122,27 +125,63 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
             
             // Insertar pago
             $stmt = $conn->prepare("INSERT INTO pagos (inscripcion_id, cliente_id, monto, fecha_pago, metodo_pago, referencia, estado) VALUES (?, ?, ?, ?, ?, ?, 'completado')");
-            $stmt->bind_param("iidsss", $inscripcion_id, $cliente_id, $precio_pagado, date('Y-m-d'), $metodo_pago, $referencia);
+            $stmt->bind_param("iidsss", $inscripcion_id, $cliente_id, $precio_pagado, $fecha_actual_db, $metodo_pago, $referencia);
             $stmt->execute();
             
             // Registrar en historial_pagos
             $stmt = $conn->prepare("INSERT INTO historial_pagos (inscripcion_id, cliente_id, monto, fecha_pago, metodo_pago, referencia, periodo_inicio, periodo_fin, plan_nombre, usuario_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-            $stmt->bind_param("iidssssssi", $inscripcion_id, $cliente_id, $precio_pagado, date('Y-m-d'), $metodo_pago, $referencia, $fecha_inicio, $fecha_fin, $plan['plan_nombre'], $usuario_id);
+            $stmt->bind_param("iidssssssi", $inscripcion_id, $cliente_id, $precio_pagado, $fecha_actual_db, $metodo_pago, $referencia, $fecha_inicio, $fecha_fin, $plan['plan_nombre'], $usuario_id);
             $stmt->execute();
             
+            // Después de $conn->commit(); en la creación de nuevo cliente
             $conn->commit();
-            
+
+            // Obtener el email del cliente recién creado
+            $email_cliente = $email; // El email ya lo tienes de $_POST['email']
+
+            // Enviar correo solo si el cliente proporcionó un email
+            if (!empty($email_cliente)) {
+                require_once 'includes/enviar_correo_phpmailer.php';
+                $nombre_completo = $nombre . ' ' . $apellido;
+                $envio_correo = enviarTicketInscripcion(
+                    $email_cliente,
+                    $nombre_completo,
+                    $plan['plan_nombre'],
+                    $fecha_inicio,
+                    $fecha_fin,
+                    $precio_pagado,
+                    $metodo_pago,
+                    $referencia
+                );
+                
+                if (!$envio_correo) {
+                    // Log de error pero no detenemos el proceso
+                    error_log("Error al enviar correo a: " . $email_cliente);
+                }
+            }
+
             // Limpiar token después de uso exitoso
             unset($_SESSION['csrf_token']);
-            
-            $mensaje = 'Cliente e inscripción creados exitosamente';
-            
+            unset($_POST);
+
+            // Guardar mensaje en sesión
+            if (!empty($email_cliente) && $envio_correo) {
+                $_SESSION['mensaje_exito'] = 'Cliente e inscripción creados exitosamente. Se ha enviado un ticket a su correo electrónico.';
+            } elseif (!empty($email_cliente) && !$envio_correo) {
+                $_SESSION['mensaje_exito'] = 'Cliente e inscripción creados exitosamente. No se pudo enviar el correo electrónico.';
+            } else {
+                $_SESSION['mensaje_exito'] = 'Cliente e inscripción creados exitosamente. No se envió correo porque no proporcionó email.';
+            }
+
             // Redirigir para evitar doble envío
-            header('Location: inscripciones.php?success=1');
+            header('Location: inscripciones.php');
             exit;
+            
         } catch (Exception $e) {
             if (isset($conn)) $conn->rollback();
-            $error = $e->getMessage();
+            $_SESSION['error'] = $e->getMessage();
+            header('Location: inscripciones.php');
+            exit;
         }
     }
 }
@@ -162,6 +201,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
         $precio_pagado = $_POST['precio_pagado'];
         $metodo_pago = $_POST['metodo_pago'];
         $referencia = $_POST['referencia'] ?? null;
+        
+        // Verificar si ya se procesó esta renovación (evitar duplicados por doble clic)
+        if (isset($_SESSION['last_renewal_' . $inscripcion_id]) && 
+            $_SESSION['last_renewal_' . $inscripcion_id] > time() - 5) {
+            throw new Exception('Ya se está procesando una renovación para esta inscripción');
+        }
+        $_SESSION['last_renewal_' . $inscripcion_id] = time();
         
         // Obtener datos del plan seleccionado
         $stmt = $conn->prepare("SELECT duracion_dias, precio, nombre as plan_nombre FROM planes WHERE id = ? AND estado = 'activo'");
@@ -189,27 +235,87 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
         $stmt->execute();
         
         // Registrar el pago en la tabla pagos
+        $fecha_actual = date('Y-m-d');
         $stmt = $conn->prepare("INSERT INTO pagos (inscripcion_id, cliente_id, monto, fecha_pago, metodo_pago, referencia, estado) VALUES (?, ?, ?, ?, ?, ?, 'completado')");
-        $stmt->bind_param("iidsss", $inscripcion_id, $cliente_id, $precio_pagado, date('Y-m-d'), $metodo_pago, $referencia);
+        $stmt->bind_param("iidsss", $inscripcion_id, $cliente_id, $precio_pagado, $fecha_actual, $metodo_pago, $referencia);
         $stmt->execute();
-        
+
         // Registrar en historial_pagos
         $stmt = $conn->prepare("INSERT INTO historial_pagos (inscripcion_id, cliente_id, monto, fecha_pago, metodo_pago, referencia, periodo_inicio, periodo_fin, plan_nombre, usuario_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-        $stmt->bind_param("iidssssssi", $inscripcion_id, $cliente_id, $precio_pagado, date('Y-m-d'), $metodo_pago, $referencia, $fecha_inicio, $fecha_fin, $plan['plan_nombre'], $usuario_id);
+        $stmt->bind_param("iidssssssi", $inscripcion_id, $cliente_id, $precio_pagado, $fecha_actual, $metodo_pago, $referencia, $fecha_inicio, $fecha_fin, $plan['plan_nombre'], $usuario_id);
         $stmt->execute();
         
+        // Después de $conn->commit(); en la renovación
         $conn->commit();
+
+        // Obtener el email del cliente
+        $stmt_email = $conn->prepare("SELECT email, nombre, apellido FROM clientes WHERE id = ?");
+        $stmt_email->bind_param("i", $cliente_id);
+        $stmt_email->execute();
+        $result_email = $stmt_email->get_result();
+        $cliente_data = $result_email->fetch_assoc();
+        $email_cliente = $cliente_data['email'];
+        $nombre_completo = $cliente_data['nombre'] . ' ' . $cliente_data['apellido'];
+
+        // Enviar correo solo si el cliente tiene email
+        if (!empty($email_cliente)) {
+            require_once 'includes/enviar_correo_phpmailer.php';
+            $envio_correo = enviarTicketRenovacion(
+                $email_cliente,
+                $nombre_completo,
+                $plan['plan_nombre'],
+                $fecha_inicio,
+                $fecha_fin,
+                $precio_pagado,
+                $metodo_pago,
+                $referencia
+            );
+            
+            if (!$envio_correo) {
+                error_log("Error al enviar correo de renovación a: " . $email_cliente);
+            }
+        }
+
+        // Limpiar la marca de tiempo después de procesar
+        unset($_SESSION['last_renewal_' . $inscripcion_id]);
+
+        // Guardar mensaje en sesión
+        if (!empty($email_cliente) && $envio_correo) {
+            $_SESSION['mensaje_exito'] = 'Inscripción renovada exitosamente con el plan ' . $plan['plan_nombre'] . '. Se ha enviado un ticket a su correo electrónico.';
+        } elseif (!empty($email_cliente) && !$envio_correo) {
+            $_SESSION['mensaje_exito'] = 'Inscripción renovada exitosamente con el plan ' . $plan['plan_nombre'] . '. No se pudo enviar el correo electrónico.';
+        } else {
+            $_SESSION['mensaje_exito'] = 'Inscripción renovada exitosamente con el plan ' . $plan['plan_nombre'] . '. No se envió correo porque el cliente no tiene email registrado.';
+        }
+
+        // REDIRIGIR para evitar reenvío del formulario
+        header('Location: inscripciones.php');
+        exit;
         
-        $mensaje = 'Inscripción renovada exitosamente con el plan ' . $plan['plan_nombre'];
     } catch (Exception $e) {
         if (isset($conn)) $conn->rollback();
-        $error = $e->getMessage();
+        // Limpiar la marca de tiempo en caso de error
+        if (isset($inscripcion_id)) {
+            unset($_SESSION['last_renewal_' . $inscripcion_id]);
+        }
+        $_SESSION['error'] = $e->getMessage();
+        header('Location: inscripciones.php');
+        exit;
     }
 }
 
 // Cancelar inscripción
 if (isset($_GET['cancelar']) && is_numeric($_GET['cancelar'])) {
     $id = $_GET['cancelar'];
+    
+    // Verificar si ya se procesó esta cancelación
+    if (isset($_SESSION['last_cancel_' . $id]) && $_SESSION['last_cancel_' . $id] > time() - 5) {
+        $_SESSION['error'] = 'Ya se está procesando esta cancelación';
+        header('Location: inscripciones.php');
+        exit;
+    }
+    $_SESSION['last_cancel_' . $id] = time();
+    
     try {
         // Obtener el cliente_id antes de cancelar
         $stmt = $conn->prepare("SELECT cliente_id FROM inscripciones WHERE id = ?");
@@ -228,9 +334,19 @@ if (isset($_GET['cancelar']) && is_numeric($_GET['cancelar'])) {
         $stmt->bind_param("iii", $id, $cliente_id, $usuario_id);
         $stmt->execute();
         
-        $mensaje = 'Inscripción cancelada exitosamente';
+        $_SESSION['mensaje_exito'] = 'Inscripción cancelada exitosamente';
+        
+        // Limpiar marca de tiempo
+        unset($_SESSION['last_cancel_' . $id]);
+        
+        header('Location: inscripciones.php');
+        exit;
+        
     } catch (Exception $e) {
-        $error = 'Error al cancelar la inscripción';
+        unset($_SESSION['last_cancel_' . $id]);
+        $_SESSION['error'] = 'Error al cancelar la inscripción: ' . $e->getMessage();
+        header('Location: inscripciones.php');
+        exit;
     }
 }
 
@@ -693,20 +809,33 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
         </div>
         
         <!-- Alertas -->
-        <?php if(isset($_GET['success']) || $mensaje): ?>
+        <?php if(isset($_SESSION['mensaje_exito'])): ?>
         <div class="alert alert-success alert-dismissible fade show" role="alert">
-            <?php echo isset($_GET['success']) ? 'Cliente e inscripción creados exitosamente' : $mensaje; ?>
+            <?php 
+            echo $_SESSION['mensaje_exito'];
+            unset($_SESSION['mensaje_exito']);
+            ?>
             <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
         </div>
         <?php endif; ?>
-        
-        <?php if($error): ?>
+
+        <?php if(isset($_SESSION['error'])): ?>
         <div class="alert alert-danger alert-dismissible fade show" role="alert">
-            <?php echo $error; ?>
+            <?php 
+            echo $_SESSION['error'];
+            unset($_SESSION['error']);
+            ?>
             <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
         </div>
         <?php endif; ?>
-        
+
+        <?php if(isset($_GET['success'])): ?>
+        <div class="alert alert-success alert-dismissible fade show" role="alert">
+            Cliente e inscripción creados exitosamente
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+        <?php endif; ?>
+                
         <!-- Botón Nuevo Cliente -->
         <div class="mb-3">
             <button class="btn-custom-primary" data-bs-toggle="modal" data-bs-target="#modalNuevoCliente">
