@@ -24,6 +24,7 @@ if ($current_page == 'inscripciones.php') $active_module = 'inscriptions';
 if ($current_page == 'clases.php') $active_module = 'classes';
 if ($current_page == 'inscripciones_clases.php') $active_module = 'clases_inscriptions';
 if ($current_page == 'reportes.php') $active_module = 'reports';
+if ($current_page == 'notificaciones.php') $active_module = 'notificaciones';
 if ($current_page == 'configuracion.php') $active_module = 'settings';
 
 // Obtener datos del usuario desde la sesión
@@ -317,7 +318,7 @@ body {
 }
 
 .nav-item {
-    margin-bottom: 4px;
+    margin-bottom: 6px;
 }
 
 .nav-link {
@@ -572,15 +573,21 @@ body.sidebar-collapsed .main-content {
             </li>
 
             <li class="nav-item">
-                <a href="inscripciones_clases.php" class="nav-link"<?php echo $active_module == 'clases_inscriptions' ? 'active' : ''; ?>">
+                <a href="inscripciones_clases.php" class="nav-link <?php echo $active_module == 'clases_inscriptions' ? 'active' : ''; ?>">
                     <i class="fas fa-chalkboard-user"></i>
-                    <p>Inscripciones a Clases</p>
+                    <span class="nav-text">Inscripciones a Clases</span>
                 </a>
             </li>
             <li class="nav-item">
                 <a href="reportes.php" class="nav-link <?php echo $active_module == 'reports' ? 'active' : ''; ?>">
                     <i class="fas fa-chart-bar"></i>
                     <span class="nav-text">Reportes</span>
+                </a>
+            </li>
+            <li class="nav-item">
+                <a href="notificaciones.php" class="nav-link <?php echo $active_module == 'notificaciones' ? 'active' : ''; ?>">
+                    <i class="fas fa-chalkboard-user"></i>
+                    <span class="nav-text">Notificaciones</span>
                 </a>
             </li>
             <li class="nav-divider"></li>

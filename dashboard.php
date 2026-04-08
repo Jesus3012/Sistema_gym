@@ -534,7 +534,6 @@ include 'includes/sidebar.php';
                     <div class="card-body p-0">
                         <table class="table table-striped">
                             <thead>
-                                葩
                                     <th>Nombre</th>
                                     <th>Teléfono</th>
                                     <th>Fecha</th>

@@ -102,8 +102,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
                 throw new Exception('Plan no válido');
             }
             
+            // Calcular fecha fin según el plan
             if ($plan['duracion_dias'] > 0) {
-                $fecha_fin = date('Y-m-d', strtotime($fecha_inicio . ' + ' . $plan['duracion_dias'] . ' days'));
+                // Para plan Visita (duración 1 día), la fecha fin es la misma fecha de inicio (solo dura el día actual)
+                if ($plan['plan_nombre'] == 'Visita' || $plan['duracion_dias'] == 1) {
+                    $fecha_fin = $fecha_inicio; // Misma fecha de inicio
+                } else {
+                    $fecha_fin = date('Y-m-d', strtotime($fecha_inicio . ' + ' . $plan['duracion_dias'] . ' days'));
+                }
             } else {
                 $fecha_fin = null;
             }
@@ -133,11 +139,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
             $stmt->bind_param("iidssssssi", $inscripcion_id, $cliente_id, $precio_pagado, $fecha_actual_db, $metodo_pago, $referencia, $fecha_inicio, $fecha_fin, $plan['plan_nombre'], $usuario_id);
             $stmt->execute();
             
-            // Después de $conn->commit(); en la creación de nuevo cliente
             $conn->commit();
 
             // Obtener el email del cliente recién creado
-            $email_cliente = $email; // El email ya lo tienes de $_POST['email']
+            $email_cliente = $email;
 
             // Enviar correo solo si el cliente proporcionó un email
             if (!empty($email_cliente)) {
@@ -155,14 +160,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
                 );
                 
                 if (!$envio_correo) {
-                    // Log de error pero no detenemos el proceso
                     error_log("Error al enviar correo a: " . $email_cliente);
                 }
             }
 
             // Limpiar token después de uso exitoso
             unset($_SESSION['csrf_token']);
-            unset($_POST);
 
             // Guardar mensaje en sesión
             if (!empty($email_cliente) && $envio_correo) {
@@ -173,7 +176,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
                 $_SESSION['mensaje_exito'] = 'Cliente e inscripción creados exitosamente. No se envió correo porque no proporcionó email.';
             }
 
-            // Redirigir para evitar doble envío
             header('Location: inscripciones.php');
             exit;
             
@@ -202,12 +204,17 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
         $metodo_pago = $_POST['metodo_pago'];
         $referencia = $_POST['referencia'] ?? null;
         
-        // Verificar si ya se procesó esta renovación (evitar duplicados por doble clic)
+        // Verificar si ya se procesó esta renovación
         if (isset($_SESSION['last_renewal_' . $inscripcion_id]) && 
             $_SESSION['last_renewal_' . $inscripcion_id] > time() - 5) {
             throw new Exception('Ya se está procesando una renovación para esta inscripción');
         }
         $_SESSION['last_renewal_' . $inscripcion_id] = time();
+        
+        // Validar que la fecha de inicio no sea anterior a hoy
+        if (strtotime($fecha_inicio) < strtotime(date('Y-m-d'))) {
+            throw new Exception('La fecha de inicio no puede ser anterior a hoy');
+        }
         
         // Obtener datos del plan seleccionado
         $stmt = $conn->prepare("SELECT duracion_dias, precio, nombre as plan_nombre FROM planes WHERE id = ? AND estado = 'activo'");
@@ -220,9 +227,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
             throw new Exception('Plan no válido');
         }
         
-        // Calcular fecha fin
+        // Calcular fecha fin según el plan
         if ($plan['duracion_dias'] > 0) {
-            $fecha_fin = date('Y-m-d', strtotime($fecha_inicio . ' + ' . $plan['duracion_dias'] . ' days'));
+            // Para plan Visita (duración 1 día), la fecha fin es la misma fecha de inicio
+            if ($plan['plan_nombre'] == 'Visita' || $plan['duracion_dias'] == 1) {
+                $fecha_fin = $fecha_inicio; // Misma fecha de inicio (solo dura el día actual)
+            } else {
+                $fecha_fin = date('Y-m-d', strtotime($fecha_inicio . ' + ' . $plan['duracion_dias'] . ' days'));
+            }
         } else {
             $fecha_fin = null;
         }
@@ -245,7 +257,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
         $stmt->bind_param("iidssssssi", $inscripcion_id, $cliente_id, $precio_pagado, $fecha_actual, $metodo_pago, $referencia, $fecha_inicio, $fecha_fin, $plan['plan_nombre'], $usuario_id);
         $stmt->execute();
         
-        // Después de $conn->commit(); en la renovación
         $conn->commit();
 
         // Obtener el email del cliente
@@ -258,6 +269,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
         $nombre_completo = $cliente_data['nombre'] . ' ' . $cliente_data['apellido'];
 
         // Enviar correo solo si el cliente tiene email
+        $envio_correo = false;
         if (!empty($email_cliente)) {
             require_once 'includes/enviar_correo_phpmailer.php';
             $envio_correo = enviarTicketRenovacion(
@@ -288,13 +300,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
             $_SESSION['mensaje_exito'] = 'Inscripción renovada exitosamente con el plan ' . $plan['plan_nombre'] . '. No se envió correo porque el cliente no tiene email registrado.';
         }
 
-        // REDIRIGIR para evitar reenvío del formulario
         header('Location: inscripciones.php');
         exit;
         
     } catch (Exception $e) {
         if (isset($conn)) $conn->rollback();
-        // Limpiar la marca de tiempo en caso de error
         if (isset($inscripcion_id)) {
             unset($_SESSION['last_renewal_' . $inscripcion_id]);
         }
@@ -336,7 +346,6 @@ if (isset($_GET['cancelar']) && is_numeric($_GET['cancelar'])) {
         
         $_SESSION['mensaje_exito'] = 'Inscripción cancelada exitosamente';
         
-        // Limpiar marca de tiempo
         unset($_SESSION['last_cancel_' . $id]);
         
         header('Location: inscripciones.php');
@@ -351,7 +360,12 @@ if (isset($_GET['cancelar']) && is_numeric($_GET['cancelar'])) {
 }
 
 // Actualizar estados de inscripciones vencidas
-$update_vencidas = "UPDATE inscripciones SET estado = 'vencida' WHERE fecha_fin IS NOT NULL AND fecha_fin < CURDATE() AND estado = 'activa'";
+$update_vencidas = "UPDATE inscripciones i 
+                    INNER JOIN planes p ON i.plan_id = p.id 
+                    SET i.estado = 'vencida' 
+                    WHERE i.estado = 'activa' 
+                    AND i.fecha_fin IS NOT NULL 
+                    AND i.fecha_fin < CURDATE()";
 $conn->query($update_vencidas);
 
 // Obtener listado de inscripciones
@@ -414,7 +428,6 @@ $types .= "ii";
 
 $stmt = $conn->prepare($query);
 if (!empty($params)) {
-    // CORRECCIÓN: Usar array_values para asegurar índices numéricos
     $bind_params = array_values($params);
     $stmt->bind_param($types, ...$bind_params);
 }
@@ -427,7 +440,6 @@ $count_params = array_slice($params, 0, count($params) - 2);
 $count_types = substr($types, 0, -2);
 $stmt_count = $conn->prepare($count_query);
 if (!empty($count_params)) {
-    // CORRECCIÓN: Usar array_values para asegurar índices numéricos
     $bind_count_params = array_values($count_params);
     $stmt_count->bind_param($count_types, ...$bind_count_params);
 }
@@ -535,7 +547,6 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
             background: #f8f9fa;
         }
         
-        /* Estilos para botones de acciones */
         .acciones-container {
             display: flex;
             gap: 8px;
@@ -623,6 +634,14 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
             font-size: 12px;
         }
         
+        .badge-visita {
+            background: #f59e0b;
+            color: white;
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+        
         .btn-custom-primary {
             background: #1e3a8a;
             color: white;
@@ -689,7 +708,6 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
             100% { transform: rotate(360deg); }
         }
         
-        /* Estilos para el detalle con historial - Versión anterior que te gustaba */
         .info-box {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             border-radius: 10px;
@@ -803,12 +821,10 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
     <?php include 'includes/sidebar.php'; ?>
     
     <div class="main-content">
-        <!-- Título -->
         <div class="mb-4">
             <h2>Gestión de Inscripciones</h2>
         </div>
         
-        <!-- Alertas -->
         <?php if(isset($_SESSION['mensaje_exito'])): ?>
         <div class="alert alert-success alert-dismissible fade show" role="alert">
             <?php 
@@ -828,22 +844,13 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
             <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
         </div>
         <?php endif; ?>
-
-        <?php if(isset($_GET['success'])): ?>
-        <div class="alert alert-success alert-dismissible fade show" role="alert">
-            Cliente e inscripción creados exitosamente
-            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-        </div>
-        <?php endif; ?>
                 
-        <!-- Botón Nuevo Cliente -->
         <div class="mb-3">
             <button class="btn-custom-primary" data-bs-toggle="modal" data-bs-target="#modalNuevoCliente">
                 <i class="fas fa-user-plus"></i> Nuevo Cliente + Inscripción
             </button>
         </div>
         
-        <!-- Filtros -->
         <div class="card-custom">
             <div class="card-header-custom">
                 <i class="fas fa-filter"></i> Filtros de Búsqueda
@@ -873,7 +880,6 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
             </div>
         </div>
         
-        <!-- Tabla de Inscripciones -->
         <div class="card-custom">
             <div class="card-header-custom">
                 <i class="fas fa-list"></i> Listado de Inscripciones
@@ -898,9 +904,23 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
                             <tr>
                                 <td><strong><?php echo htmlspecialchars($ins['cliente_nombre'] . ' ' . $ins['cliente_apellido']); ?></strong></td>
                                 <td><?php echo htmlspecialchars($ins['cliente_telefono']); ?></td>
-                                <td><?php echo htmlspecialchars($ins['plan_nombre']); ?></td>
+                                <td>
+                                    <?php if($ins['plan_nombre'] == 'Visita'): ?>
+                                        <span class="badge-visita"><?php echo htmlspecialchars($ins['plan_nombre']); ?></span>
+                                    <?php else: ?>
+                                        <?php echo htmlspecialchars($ins['plan_nombre']); ?>
+                                    <?php endif; ?>
+                                </td>
                                 <td><?php echo date('d/m/Y', strtotime($ins['fecha_inicio'])); ?></td>
-                                <td><?php echo $ins['duracion_dias'] > 0 ? date('d/m/Y', strtotime($ins['fecha_fin'])) : 'Sin vencimiento'; ?></td>
+                                <td>
+                                    <?php 
+                                    if($ins['plan_nombre'] == 'Visita') {
+                                        echo '<span class="text-warning">' . date('d/m/Y', strtotime($ins['fecha_fin'])) . ' (Solo hoy)</span>';
+                                    } else {
+                                        echo $ins['duracion_dias'] > 0 ? date('d/m/Y', strtotime($ins['fecha_fin'])) : 'Sin vencimiento';
+                                    }
+                                    ?>
+                                </td>
                                 <td>$<?php echo number_format($ins['precio_pagado'], 2); ?></td>
                                 <td>
                                     <?php if($ins['estado'] == 'activa'): ?>
@@ -913,20 +933,20 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
                                 </td>
                                 <td class="acciones-cell">
                                     <div class="acciones-container">
-                                        <button class="btn-accion btn-detalle" onclick="verDetalle(<?php echo $ins['id']; ?>)" title="Ver detalles completos de la inscripción y su historial de pagos">
+                                        <button class="btn-accion btn-detalle" onclick="verDetalle(<?php echo $ins['id']; ?>)" title="Ver detalles completos">
                                             <i class="fas fa-eye"></i> <span>Ver</span>
                                         </button>
                                         
-                                        <?php if($ins['estado'] == 'vencida'): ?>
+                                        <?php if($ins['estado'] == 'activa'): ?>
+                                            <button class="btn-accion btn-renovar" onclick="abrirRenovar(<?php echo $ins['id']; ?>, <?php echo $ins['cliente_id']; ?>)" title="Renovar inscripción">
+                                                <i class="fas fa-sync-alt"></i> <span>Renovar</span>
+                                            </button>
+                                            <button class="btn-accion btn-cancelar" onclick="cancelarInscripcion(<?php echo $ins['id']; ?>)" title="Cancelar inscripción">
+                                                <i class="fas fa-times-circle"></i> <span>Cancelar</span>
+                                            </button>
+                                        <?php elseif($ins['estado'] == 'vencida'): ?>
                                             <button class="btn-accion btn-renovar" onclick="abrirRenovar(<?php echo $ins['id']; ?>, <?php echo $ins['cliente_id']; ?>)" title="Renovar inscripción vencida">
                                                 <i class="fas fa-sync-alt"></i> <span>Renovar</span>
-                                            </button>
-                                        <?php elseif($ins['estado'] == 'activa'): ?>
-                                            <button class="btn-accion btn-renovar" disabled title="No se puede renovar una inscripción activa">
-                                                <i class="fas fa-sync-alt"></i> <span>Renovar</span>
-                                            </button>
-                                            <button class="btn-accion btn-cancelar" onclick="cancelarInscripcion(<?php echo $ins['id']; ?>)" title="Cancelar inscripción activa">
-                                                <i class="fas fa-times-circle"></i> <span>Cancelar</span>
                                             </button>
                                         <?php endif; ?>
                                     </div>
@@ -945,7 +965,6 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
                     </table>
                 </div>
                 
-                <!-- Paginación -->
                 <?php if($total_pages > 1): ?>
                 <div class="pagination">
                     <ul class="pagination">
@@ -1122,7 +1141,7 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
         </div>
     </div>
     
-    <!-- Modal Detalle con Historial de Pagos (Estilo renovado) -->
+    <!-- Modal Detalle -->
     <div class="modal fade" id="modalDetalle" tabindex="-1">
         <div class="modal-dialog modal-xl">
             <div class="modal-content">
@@ -1174,9 +1193,9 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
             
             setTimeout(() => {
                 Swal.close();
-                const huellaData = 'FP_' + Date.now();
+                const huellaData = 'FP_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
                 document.getElementById('huella_digital').value = huellaData;
-                document.getElementById('huellaStatus').innerHTML = '<i class="fas fa-check-circle"></i> Huella registrada';
+                document.getElementById('huellaStatus').innerHTML = '<i class="fas fa-check-circle text-success"></i> Huella registrada';
                 Swal.fire('Éxito', 'Huella registrada correctamente', 'success');
             }, 2000);
         }
@@ -1221,12 +1240,9 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
             $.ajax({
                 url: 'includes/inscripcion_detalle.php',
                 method: 'POST',
-                data: {
-                    id: id
-                },
+                data: { id: id },
                 success: function(response) {
                     $('#detalleContenido').html(response);
-                    // Inicializar los eventos después de cargar el contenido
                     inicializarEventosHistorial(id);
                 },
                 error: function() {
@@ -1236,7 +1252,6 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
         }
 
         function inicializarEventosHistorial(id) {
-            // Variables para el historial
             window.currentPageHistorial = 1;
             window.currentSortHistorial = 'fecha_pago';
             window.currentOrderHistorial = 'DESC';
@@ -1244,7 +1259,6 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
             window.inscripcionIdActual = id;
             window.timeoutHistorial = null;
             
-            // Función para cargar historial
             window.cargarHistorialPagos = function() {
                 $('#tablaHistorialBody').html('<tr><td colspan="6" class="text-center"><div class="spinner-border text-primary"></div><p class="mt-2">Cargando...</p></td></tr>');
                 
@@ -1274,14 +1288,12 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
                 });
             };
             
-            // Función para buscar
             window.buscarHistorial = function() {
                 window.currentSearchHistorial = $('#searchHistorialInput').val();
                 window.currentPageHistorial = 1;
                 window.cargarHistorialPagos();
             };
             
-            // Función para ordenar
             window.ordenarHistorial = function(columna) {
                 if (window.currentSortHistorial === columna) {
                     window.currentOrderHistorial = window.currentOrderHistorial === 'ASC' ? 'DESC' : 'ASC';
@@ -1293,13 +1305,11 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
                 window.cargarHistorialPagos();
             };
             
-            // Función para cambiar página
             window.cambiarPaginaHistorial = function(page) {
                 window.currentPageHistorial = page;
                 window.cargarHistorialPagos();
             };
             
-            // Event listener para búsqueda en tiempo real
             const searchInput = document.getElementById('searchHistorialInput');
             if (searchInput) {
                 searchInput.addEventListener('input', function() {
@@ -1310,30 +1320,7 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
                 });
             }
             
-            // Cargar historial inicial
             window.cargarHistorialPagos();
-        }
-        
-        function cargarDetalleCompleto(id) {
-            $('#detalleContenido').html('<div class="text-center"><div class="spinner-border text-primary"></div><p>Cargando...</p></div>');
-            
-            $.ajax({
-                url: 'includes/inscripcion_detalle.php',
-                method: 'POST',
-                data: {
-                    id: id,
-                    page: currentPageHistorial,
-                    sort: currentSortHistorial,
-                    order: currentOrderHistorial,
-                    search: currentSearchHistorial
-                },
-                success: function(response) {
-                    $('#detalleContenido').html(response);
-                },
-                error: function() {
-                    $('#detalleContenido').html('<div class="alert alert-danger">Error al cargar los detalles</div>');
-                }
-            });
         }
         
         function cancelarInscripcion(id) {
@@ -1353,7 +1340,6 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
             });
         }
         
-        // Filtros en tiempo real
         let timeoutBusqueda;
         $('#searchInput').on('input', function() {
             clearTimeout(timeoutBusqueda);
@@ -1374,7 +1360,6 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
             window.location.href = '?';
         });
         
-        // Prevenir doble envío del formulario
         $('#formNuevoCliente').on('submit', function() {
             const $btn = $(this).find('button[type="submit"]');
             $btn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> Guardando...');
