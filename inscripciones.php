@@ -1,4 +1,6 @@
 <?php
+date_default_timezone_set('America/Mexico_City');
+
 // inscripciones.php
 session_start();
 require_once 'config/database.php';

@@ -1,4 +1,6 @@
 <?php
+
+date_default_timezone_set('America/Mexico_City');
 // includes/enviar_correo_phpmailer.php
 
 require_once __DIR__ . '/../PHPMailer/PHPMailer.php';
@@ -137,7 +139,7 @@ function enviarTicketInscripcion($email, $nombre_cliente, $plan_nombre, $fecha_i
     <body>
         <div class="container">
             <div class="header">
-                <h1>🏋️ SISTEMA GIMNASIO</h1>
+                <h1>SISTEMA GIMNASIO</h1>
                 <p>Comprobante Oficial de Pago</p>
             </div>
             <div class="content">
@@ -192,7 +194,7 @@ function enviarTicketInscripcion($email, $nombre_cliente, $plan_nombre, $fecha_i
                 
                 <div style="text-align: center; margin-top: 20px;">
                     <p style="font-size: 13px; color: #666;">
-                        <strong>📎 Adjunto a este correo encontraras tu ticket en formato PDF.</strong>
+                        <strong>Adjunto a este correo encontraras tu ticket en formato PDF.</strong>
                     </p>
                 </div>
             </div>
@@ -326,7 +328,7 @@ function enviarTicketRenovacion($email, $nombre_cliente, $plan_nombre, $fecha_in
     <body>
         <div class="container">
             <div class="header">
-                <h1>🔄 SISTEMA GIMNASIO</h1>
+                <h1>SISTEMA GIMNASIO</h1>
                 <p>Comprobante de Renovacion</p>
             </div>
             <div class="content">
@@ -372,7 +374,7 @@ function enviarTicketRenovacion($email, $nombre_cliente, $plan_nombre, $fecha_in
                 
                 <div style="text-align: center; margin-top: 20px;">
                     <div style="background: #f0fdf4; padding: 15px; border-radius: 10px; border-left: 4px solid #10b981;">
-                        <strong style="color: #166534;">✅ RENOVACION EXITOSA</strong>
+                        <strong style="color: #166534;">RENOVACION EXITOSA</strong>
                         <p style="margin: 8px 0 0; font-size: 13px; color: #166534;">
                             Tu membresia ha sido renovada exitosamente. Disfruta de tus nuevos beneficios.
                         </p>
@@ -381,7 +383,7 @@ function enviarTicketRenovacion($email, $nombre_cliente, $plan_nombre, $fecha_in
                 
                 <div style="text-align: center; margin-top: 20px;">
                     <p style="font-size: 13px; color: #666;">
-                        <strong>📎 Adjunto a este correo encontraras tu ticket en formato PDF.</strong>
+                        <strong>Adjunto a este correo encontraras tu ticket en formato PDF.</strong>
                     </p>
                 </div>
             </div>

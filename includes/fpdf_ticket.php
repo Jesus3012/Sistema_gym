@@ -1,4 +1,6 @@
 <?php
+date_default_timezone_set('America/Mexico_City');
+
 // includes/fpdf_ticket.php
 require_once __DIR__ . '/../fpdf/fpdf.php';
 
@@ -216,7 +218,7 @@ class PDF_Ticket extends FPDF
         $this->SetFont('Arial', '', 8);
         $this->SetTextColor(80, 80, 80);
         $this->SetY($y_start + 14);
-        $this->MultiCell(0, 5, 'Presente este comprobante en la recepcion del gimnasio junto con su identificacion oficial. Este documento es personal e intransferible.', 0, 'C');
+        $this->MultiCell(0, 5, 'Este comprobante es un documento personal e intransferible.', 0, 'C');
         
         $this->SetY($y_start + 38);
     }
