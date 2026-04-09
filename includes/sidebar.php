@@ -166,6 +166,34 @@ body {
     transform: rotate(180deg);
 }
 
+/* WebKit (Chrome, Safari, Edge) */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+/* Fondo del scrollbar - color del sidebar */
+::-webkit-scrollbar-track {
+    background: #0a2540;  /* Mismo color que el sidebar */
+    border-radius: 10px;
+}
+
+/* Barra del scroll - gris */
+::-webkit-scrollbar-thumb {
+    background: #adb5bd;
+    border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #6c757d;
+}
+
+/* Firefox */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: #adb5bd #0a2540;
+}
+
 /* Botón Hamburguesa para móvil - Solo visible en móvil */
 .hamburger-mobile {
     position: fixed;

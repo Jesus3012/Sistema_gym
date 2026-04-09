@@ -109,7 +109,6 @@ if ($error == 'campos_vacios') {
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     
     <style>
-        /* Estilos exclusivos para el login */
         * {
             margin: 0;
             padding: 0;
@@ -117,110 +116,112 @@ if ($error == 'campos_vacios') {
         }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background-color: #e6f0fa;
+            font-family: 'Segoe UI', 'Poppins', 'Roboto', sans-serif;
             min-height: 100vh;
+            background: #d1d4fe; /* Azul sólido como antes */
             display: flex;
             align-items: center;
             justify-content: center;
             padding: 20px;
+            position: relative;
         }
 
         .container {
             width: 100%;
             max-width: 450px;
             margin: 0 auto;
+            position: relative;
+            z-index: 1;
         }
 
         /* Login Card */
         .login-container {
             background: white;
-            border-radius: 16px;
-            box-shadow: 0 8px 20px rgba(0, 51, 102, 0.12);
-            padding: 20px 18px 30px 18px;
-            border: 1px solid rgba(0, 51, 102, 0.1);
-            width: 100%;
+            border-radius: 20px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            padding: 40px 35px;
+            transition: transform 0.3s ease;
         }
 
-        /* Header con logo y título juntos */
+        .login-container:hover {
+            transform: translateY(-5px);
+        }
+
+        /* Header con logo y título */
         .login-header {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 20px;
-            margin-bottom: 40px;
-            padding-bottom: 15px;
-            border-bottom: 2px solid #eef2f6;
+            text-align: center;
+            margin-bottom: 35px;
+        }
+
+        .logo-wrapper {
+            margin-bottom: 20px;
         }
 
         .logo-img {
-            width: 70px;
-            height: 50px;
+            width: 80px;
+            height: 80px;
             object-fit: cover;
-            border-radius: 12px;
+            border-radius: 20px;
+            box-shadow: 0 5px 15px rgba(0, 51, 102, 0.2);
+            transition: transform 0.3s ease;
         }
 
-        .header-text {
-            text-align: left;
+        .logo-img:hover {
+            transform: scale(1.05);
         }
 
         .header-text h1 {
             color: #003366;
-            font-size: 24px;
+            font-size: 28px;
             font-weight: 700;
-            margin: 0;
+            margin-bottom: 8px;
             letter-spacing: -0.5px;
         }
 
         .header-text p {
             color: #666;
-            font-size: 13px;
-            margin: 5px 0 0 0;
-        }
-
-        /* Alertas */
-        .alert {
-            padding: 10px 14px;
-            border-radius: 10px;
-            margin-bottom: 20px;
-            font-size: 12px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .alert i {
             font-size: 14px;
         }
 
         /* Formulario */
         .form-group {
-            margin-bottom: 20px;
+            margin-bottom: 25px;
         }
 
         .form-group label {
             display: block;
-            margin-bottom: 6px;
+            margin-bottom: 8px;
             color: #003366;
             font-size: 13px;
-            font-weight: 500;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
 
-        /* Input con icono de contraseña */
-        .password-wrapper {
+        /* Input con icono */
+        .input-wrapper {
             position: relative;
             width: 100%;
         }
 
+        .input-icon {
+            position: absolute;
+            left: 15px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #003366;
+            font-size: 16px;
+        }
+
         .form-group input {
             width: 100%;
-            padding: 12px 14px;
+            padding: 14px 15px 14px 45px;
             font-size: 14px;
             color: #333;
-            background-color: #f8fafd;
-            border: 1.2px solid #dde7f0;
-            border-radius: 10px;
-            transition: all 0.2s;
+            background-color: #f8f9fa;
+            border: 2px solid #e1e8ed;
+            border-radius: 12px;
+            transition: all 0.3s ease;
         }
 
         .password-wrapper input {
@@ -231,199 +232,205 @@ if ($error == 'campos_vacios') {
             outline: none;
             border-color: #003366;
             background-color: #fff;
-            box-shadow: 0 0 0 2px rgba(0, 51, 102, 0.1);
+            box-shadow: 0 0 0 4px rgba(0, 51, 102, 0.1);
         }
 
         .form-group input::placeholder {
-            color: #aaa;
+            color: #bbb;
             font-size: 13px;
         }
 
         .toggle-password {
             position: absolute;
-            right: 12px;
+            right: 15px;
             top: 50%;
             transform: translateY(-50%);
             cursor: pointer;
-            color: #888;
-            font-size: 18px;
+            color: #003366;
+            font-size: 16px;
             background: transparent;
             border: none;
             padding: 0;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            transition: color 0.3s ease;
         }
 
         .toggle-password:hover {
+            color: #0047b3;
+        }
+
+        /* Opciones adicionales */
+        .form-options {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 25px;
+        }
+
+        .checkbox {
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+        }
+
+        .checkbox input {
+            margin-right: 8px;
+            cursor: pointer;
+            accent-color: #003366;
+        }
+
+        .checkbox span {
+            font-size: 13px;
+            color: #666;
+        }
+
+        .forgot-link {
+            font-size: 13px;
             color: #003366;
+            text-decoration: none;
+            transition: color 0.3s ease;
+        }
+
+        .forgot-link:hover {
+            color: #0047b3;
+            text-decoration: underline;
         }
 
         /* Botón de login */
         .btn-login {
             width: 100%;
-            padding: 12px;
-            background-color: #003366;
+            padding: 14px;
+            background: #003366;
             color: white;
             border: none;
-            border-radius: 10px;
-            font-size: 14px;
+            border-radius: 12px;
+            font-size: 16px;
             font-weight: 600;
             cursor: pointer;
-            transition: background-color 0.2s;
-            margin: 15px 0 20px;
+            transition: all 0.3s ease;
+            margin-bottom: 25px;
             text-transform: uppercase;
-            letter-spacing: 0.5px;
+            letter-spacing: 1px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .btn-login::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+            transition: left 0.5s ease;
+        }
+
+        .btn-login:hover::before {
+            left: 100%;
         }
 
         .btn-login:hover {
-            background-color: #0047b3;
+            background: #0047b3;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 51, 102, 0.3);
         }
 
         .btn-login:active {
-            transform: translateY(1px);
+            transform: translateY(0);
         }
 
-        /* Enlaces */
-        .links {
+        /* Enlace de registro */
+        .register-link {
             text-align: center;
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-            margin-top: 5px;
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid #e1e8ed;
         }
 
-        .links a {
+        .register-link p {
             color: #666;
+            font-size: 14px;
+        }
+
+        .register-link a {
+            color: #003366;
             text-decoration: none;
-            font-size: 12px;
-            transition: color 0.2s;
-        }
-
-        .links a:hover {
-            color: #003366;
-            text-decoration: underline;
-        }
-
-        .links .bold-link {
-            color: #003366;
             font-weight: 600;
-            font-size: 13px;
+            transition: color 0.3s ease;
+        }
+
+        .register-link a:hover {
+            color: #0047b3;
+            text-decoration: underline;
         }
 
         /* Footer */
         .login-footer {
             text-align: center;
             margin-top: 25px;
-            padding-top: 15px;
-            border-top: 1px solid #eef2f6;
-            color: #888;
+            color: #aaa;
             font-size: 11px;
         }
 
-        /* Responsive - Móviles */
+        /* Animaciones */
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .login-container {
+            animation: fadeInUp 0.6s ease;
+        }
+
+        /* Responsive */
         @media (max-width: 480px) {
             body {
                 padding: 15px;
             }
             
-            .container {
-                max-width: 100%;
-            }
-            
             .login-container {
-                padding: 20px 18px 25px 18px;
-            }
-            
-            .login-header {
-                gap: 12px;
-                margin-bottom: 25px;
+                padding: 30px 20px;
             }
             
             .logo-img {
-                width: 45px;
-                height: 45px;
+                width: 60px;
+                height: 60px;
             }
             
             .header-text h1 {
-                font-size: 20px;
+                font-size: 24px;
             }
             
-            .header-text p {
-                font-size: 11px;
-            }
-            
-            .form-group {
-                margin-bottom: 18px;
-            }
-            
-            .form-group label {
-                font-size: 12px;
-            }
-            
-            .form-group input,
-            .password-wrapper input {
-                padding: 10px 12px;
-                font-size: 13px;
-            }
-            
-            .password-wrapper input {
-                padding-right: 40px;
+            .form-group input {
+                padding: 12px 15px 12px 40px;
             }
             
             .btn-login {
-                padding: 10px;
-                font-size: 13px;
-                margin: 12px 0 18px;
+                padding: 12px;
+                font-size: 14px;
             }
             
-            .links a {
-                font-size: 11px;
-            }
-            
-            .links .bold-link {
-                font-size: 12px;
-            }
-            
-            .login-footer {
-                margin-top: 20px;
-                padding-top: 12px;
-                font-size: 10px;
+            .form-options {
+                flex-direction: column;
+                gap: 10px;
+                align-items: flex-start;
             }
         }
 
         /* Para pantallas muy pequeñas */
         @media (max-width: 360px) {
             .login-container {
-                padding: 18px 15px 22px 15px;
-            }
-            
-            .login-header {
-                gap: 10px;
-            }
-            
-            .logo-img {
-                width: 40px;
-                height: 40px;
+                padding: 25px 18px;
             }
             
             .header-text h1 {
-                font-size: 18px;
-            }
-            
-            .header-text p {
-                font-size: 10px;
-            }
-            
-            .form-group input,
-            .password-wrapper input {
-                padding: 9px 12px;
-                font-size: 12px;
-            }
-            
-            .btn-login {
-                padding: 9px;
-                font-size: 12px;
+                font-size: 22px;
             }
         }
     </style>
@@ -431,33 +438,47 @@ if ($error == 'campos_vacios') {
 <body>
     <div class="container">
         <div class="login-container">
-            <!-- Header con logo y título juntos -->
+            <!-- Header con logo y título -->
             <div class="login-header">
-                <img src="img/logo-gym.jpg" alt="Gym System Logo" class="logo-img" onerror="this.src='https://via.placeholder.com/50x50?text=G'">
+                <div class="logo-wrapper">
+                    <img src="img/logo-gym.jpg" alt="Gym System Logo" class="logo-img" onerror="this.src='https://via.placeholder.com/80x80?text=GYM'">
+                </div>
                 <div class="header-text">
                     <h1>Sistema de Gimnasio</h1>
-                    <center><p>Inicia sesion para continuar</p></center>  
+                    <p>Inicia sesión para continuar</p>
                 </div>
             </div>
             
             <form method="POST" action="" id="loginForm">
                 <div class="form-group">
                     <label for="email">Correo electrónico</label>
-                    <input type="email" id="email" name="email" 
-                           placeholder="ejemplo@correo.com" 
-                           value="<?php echo isset($_POST['email']) ? htmlspecialchars($_POST['email']) : ''; ?>" 
-                           required>
+                    <div class="input-wrapper">
+                        <i class="fas fa-envelope input-icon"></i>
+                        <input type="email" id="email" name="email" 
+                               placeholder="ejemplo@correo.com" 
+                               value="<?php echo isset($_POST['email']) ? htmlspecialchars($_POST['email']) : ''; ?>" 
+                               required>
+                    </div>
                 </div>
                 
                 <div class="form-group">
                     <label for="password">Contraseña</label>
-                    <div class="password-wrapper">
+                    <div class="input-wrapper password-wrapper">
+                        <i class="fas fa-lock input-icon"></i>
                         <input type="password" id="password" name="password" 
-                               placeholder="••••••••" required>
+                               placeholder="Ingresa tu contraseña" required>
                         <button type="button" class="toggle-password" onclick="togglePassword()">
                             <i class="fas fa-eye"></i>
                         </button>
                     </div>
+                </div>
+                
+                <div class="form-options">
+                    <label class="checkbox">
+                        <input type="checkbox" id="remember">
+                        <span>Recordarme</span>
+                    </label>
+                    <a href="recuperar-password.php" class="forgot-link">¿Olvidaste tu contraseña?</a>
                 </div>
                 
                 <button type="submit" class="btn-login">
@@ -465,9 +486,8 @@ if ($error == 'campos_vacios') {
                 </button>
             </form>
             
-            <div class="links">
-                <a href="recuperar-password.php">¿Olvidaste tu contraseña?</a>
-                <a href="registro.php" class="bold-link">Crear una cuenta</a>
+            <div class="register-link">
+                <p>¿No tienes una cuenta? <a href="registro.php">Crear cuenta</a></p>
             </div>
             
             <div class="login-footer">
@@ -492,6 +512,27 @@ if ($error == 'campos_vacios') {
             toggleIcon.classList.add('fa-eye');
         }
     }
+    
+    // Guardar email si se selecciona "Recordarme"
+    document.getElementById('loginForm').addEventListener('submit', function(e) {
+        const remember = document.getElementById('remember').checked;
+        const email = document.getElementById('email').value;
+        
+        if (remember) {
+            localStorage.setItem('savedEmail', email);
+        } else {
+            localStorage.removeItem('savedEmail');
+        }
+    });
+    
+    // Cargar email guardado
+    window.addEventListener('load', function() {
+        const savedEmail = localStorage.getItem('savedEmail');
+        if (savedEmail) {
+            document.getElementById('email').value = savedEmail;
+            document.getElementById('remember').checked = true;
+        }
+    });
     
     // Mostrar alerta si hay error
     <?php if ($mensaje_error): ?>

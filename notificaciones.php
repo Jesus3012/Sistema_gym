@@ -33,10 +33,6 @@ if (!in_array($usuario_rol, ['admin', 'recepcionista'])) {
     exit;
 }
 
-// Obtener parametros de busqueda
-$search_manual = isset($_GET['search_manual']) ? $conn->real_escape_string($_GET['search_manual']) : '';
-$search_automatica = isset($_GET['search_automatica']) ? $conn->real_escape_string($_GET['search_automatica']) : '';
-
 // Obtener numero de pagina para paginacion
 $pagina_manual = isset($_GET['pagina_manual']) ? (int)$_GET['pagina_manual'] : 1;
 $pagina_automatica = isset($_GET['pagina_automatica']) ? (int)$_GET['pagina_automatica'] : 1;
@@ -44,40 +40,12 @@ $registros_por_pagina = 10;
 $offset_manual = ($pagina_manual - 1) * $registros_por_pagina;
 $offset_automatica = ($pagina_automatica - 1) * $registros_por_pagina;
 
-// Construir consultas con busqueda para notificaciones manuales
-$where_manual = "";
-if (!empty($search_manual)) {
-    $where_manual = " WHERE n.titulo LIKE '%$search_manual%' OR n.mensaje LIKE '%$search_manual%' OR u.nombre LIKE '%$search_manual%'";
-}
-
-$count_query_manual = "SELECT COUNT(*) as total FROM notificaciones n LEFT JOIN usuarios u ON n.enviado_por = u.id" . $where_manual;
-$total_manual = $conn->query($count_query_manual)->fetch_assoc()['total'];
+// Obtener total de registros para paginacion
+$total_manual = $conn->query("SELECT COUNT(*) as total FROM notificaciones")->fetch_assoc()['total'];
 $total_paginas_manual = ceil($total_manual / $registros_por_pagina);
 
-$query_manual = "SELECT n.*, u.nombre as usuario_envio, 
-    (SELECT COUNT(*) FROM notificaciones_enviadas WHERE notificacion_id = n.id) as total_enviados
-    FROM notificaciones n 
-    LEFT JOIN usuarios u ON n.enviado_por = u.id 
-    $where_manual
-    ORDER BY n.fecha_envio DESC 
-    LIMIT $registros_por_pagina OFFSET $offset_manual";
-$stats['notificaciones_manuales'] = $conn->query($query_manual);
-
-// Construir consultas con busqueda para notificaciones automaticas
-$where_automatica = "";
-if (!empty($search_automatica)) {
-    $where_automatica = " WHERE cliente_nombre LIKE '%$search_automatica%' OR cliente_email LIKE '%$search_automatica%' OR plan_nombre LIKE '%$search_automatica%' OR tipo_notificacion LIKE '%$search_automatica%'";
-}
-
-$count_query_automatica = "SELECT COUNT(*) as total FROM notificaciones_vencimiento_historial" . $where_automatica;
-$total_automatica = $conn->query($count_query_automatica)->fetch_assoc()['total'];
+$total_automatica = $conn->query("SELECT COUNT(*) as total FROM notificaciones_vencimiento_historial")->fetch_assoc()['total'];
 $total_paginas_automatica = ceil($total_automatica / $registros_por_pagina);
-
-$query_automatica = "SELECT * FROM notificaciones_vencimiento_historial 
-    $where_automatica
-    ORDER BY fecha_envio DESC 
-    LIMIT $registros_por_pagina OFFSET $offset_automatica";
-$stats['notificaciones_automaticas'] = $conn->query($query_automatica);
 
 // Funcion para enviar correo con PHPMailer
 function enviarCorreo($email, $nombre, $titulo, $mensaje, $tipo) {
@@ -88,7 +56,6 @@ function enviarCorreo($email, $nombre, $titulo, $mensaje, $tipo) {
     $mail = new PHPMailer(true);
     
     try {
-        // Configuracion SMTP
         $mail->isSMTP();
         $mail->Host = 'smtp.gmail.com';
         $mail->SMTPAuth = true;
@@ -105,7 +72,6 @@ function enviarCorreo($email, $nombre, $titulo, $mensaje, $tipo) {
             )
         );
         
-        // Configuracion del correo
         $mail->setFrom('jesusgabrielmtz78@gmail.com', 'Gimnasio System');
         $mail->addAddress($email, $nombre);
         $mail->isHTML(true);
@@ -113,21 +79,16 @@ function enviarCorreo($email, $nombre, $titulo, $mensaje, $tipo) {
         $asunto = "Notificacion Gimnasio - " . $titulo;
         $mail->Subject = $asunto;
         
-        // LIMPIAR EL MENSAJE - Convertir \r\n a saltos de línea reales
         $mensaje_limpio = str_replace(array('\r\n', '\r', '\n', "\r\n", "\r", "\n"), "\n", $mensaje);
         $mensaje_limpio = str_replace('\\r\\n', "\n", $mensaje_limpio);
         $mensaje_limpio = str_replace('\\n', "\n", $mensaje_limpio);
-        
-        // Convertir saltos de línea a <br> para HTML
         $mensaje_html = nl2br(trim($mensaje_limpio));
         
-        // Colores segun el tipo
         $color = '#3b82f6';
         if ($tipo == 'aviso') $color = '#f59e0b';
         if ($tipo == 'alerta') $color = '#ef4444';
         if ($tipo == 'promocion') $color = '#10b981';
         
-        // HTML del correo
         $html = '
         <!DOCTYPE html>
         <html>
@@ -180,7 +141,6 @@ function enviarCorreo($email, $nombre, $titulo, $mensaje, $tipo) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     if ($_POST['action'] === 'enviar_notificacion') {
         $titulo = $conn->real_escape_string($_POST['titulo']);
-        // Limpiar el mensaje antes de guardar
         $mensaje_raw = $_POST['mensaje'];
         $mensaje_limpio = str_replace(array('\r\n', '\r', '\n', "\r\n", "\r", "\n", '\\r\\n', '\\n'), "\n", $mensaje_raw);
         $mensaje = $conn->real_escape_string($mensaje_limpio);
@@ -188,14 +148,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         $destinatarios = $conn->real_escape_string($_POST['destinatarios']);
         $fecha_envio = date('Y-m-d H:i:s');
         
-        // Insertar la notificacion
         $query = "INSERT INTO notificaciones (titulo, mensaje, tipo, destinatarios, fecha_envio, enviado_por, estado) 
                   VALUES ('$titulo', '$mensaje', '$tipo', '$destinatarios', '$fecha_envio', $usuario_id, 'enviado')";
         
         if ($conn->query($query)) {
             $notificacion_id = $conn->insert_id;
-            
-            // Obtener destinatarios segun la seleccion
             $destinatarios_lista = array();
             
             switch($destinatarios) {
@@ -279,7 +236,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                     break;
             }
             
-            // Enviar correos y registrar
             $enviados = 0;
             $fallidos = 0;
             $errores = array();
@@ -316,6 +272,138 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             echo json_encode(array('success' => false, 'error' => 'Error al guardar la notificacion: ' . $conn->error));
             exit;
         }
+    }
+    
+    // ========== BUSQUEDA EN TIEMPO REAL - NOTIFICACIONES MANUALES ==========
+    if ($_POST['action'] === 'buscar_manuales') {
+        $search = $conn->real_escape_string($_POST['search']);
+        $page = (int)$_POST['page'];
+        $offset = ($page - 1) * $registros_por_pagina;
+        
+        $where = "";
+        if (!empty($search)) {
+            $where = " WHERE n.titulo LIKE '%$search%' OR n.mensaje LIKE '%$search%' OR u.nombre LIKE '%$search%'";
+        }
+        
+        $count_query = "SELECT COUNT(*) as total FROM notificaciones n LEFT JOIN usuarios u ON n.enviado_por = u.id" . $where;
+        $total = $conn->query($count_query)->fetch_assoc()['total'];
+        $total_paginas = ceil($total / $registros_por_pagina);
+        
+        $query = "SELECT n.*, u.nombre as usuario_envio, 
+                    (SELECT COUNT(*) FROM notificaciones_enviadas WHERE notificacion_id = n.id) as total_enviados
+                    FROM notificaciones n 
+                    LEFT JOIN usuarios u ON n.enviado_por = u.id 
+                    $where
+                    ORDER BY n.fecha_envio DESC 
+                    LIMIT $registros_por_pagina OFFSET $offset";
+        $result = $conn->query($query);
+        
+        $html = '';
+        if ($result && $result->num_rows > 0) {
+            while($notif = $result->fetch_assoc()) {
+                $tipo_clase = '';
+                $tipo_texto = '';
+                switch($notif['tipo']) {
+                    case 'info': $tipo_clase = 'info'; $tipo_texto = 'Informativo'; break;
+                    case 'aviso': $tipo_clase = 'aviso'; $tipo_texto = 'Aviso'; break;
+                    case 'alerta': $tipo_clase = 'alerta'; $tipo_texto = 'Alerta'; break;
+                    case 'promocion': $tipo_clase = 'promocion'; $tipo_texto = 'Promocion'; break;
+                }
+                
+                $destinatarios_texto = array(
+                    'todos_clientes_activos' => 'Todos los clientes activos',
+                    'clientes_membresia_activa' => 'Clientes con membresia activa',
+                    'todos_usuarios' => 'Todos los usuarios',
+                    'todos_membresia_usuarios' => 'Clientes membresia activa + Usuarios activos'
+                );
+                $destinatario_texto = isset($destinatarios_texto[$notif['destinatarios']]) ? $destinatarios_texto[$notif['destinatarios']] : $notif['destinatarios'];
+                
+                $html .= '
+                <div class="notificacion-item ' . $tipo_clase . '">
+                    <div class="titulo">
+                        ' . htmlspecialchars($notif['titulo']) . '
+                        <span class="badge-custom badge-' . $tipo_clase . ' float-right">' . $tipo_texto . '</span>
+                    </div>
+                    <div class="mensaje">' . nl2br(htmlspecialchars($notif['mensaje'])) . '</div>
+                    <div class="meta">
+                        <span><i class="fas fa-calendar"></i> ' . date('d/m/Y h:i A', strtotime($notif['fecha_envio'])) . '</span>
+                        <span><i class="fas fa-user"></i> Enviado por: ' . htmlspecialchars($notif['usuario_envio']) . '</span>
+                        <span><i class="fas fa-users"></i> ' . $destinatario_texto . '</span>
+                        <span><i class="fas fa-envelope"></i> Enviados: ' . $notif['total_enviados'] . ' correos</span>
+                    </div>
+                </div>';
+            }
+        } else {
+            $html = '<div class="text-center text-muted py-5"><i class="fas fa-envelope-open fa-3x mb-3"></i><p>No hay notificaciones que coincidan con la busqueda</p></div>';
+        }
+        
+        echo json_encode(array(
+            'html' => $html,
+            'total' => $total,
+            'total_paginas' => $total_paginas,
+            'pagina_actual' => $page
+        ));
+        exit;
+    }
+    
+    // ========== BUSQUEDA EN TIEMPO REAL - NOTIFICACIONES AUTOMATICAS ==========
+    if ($_POST['action'] === 'buscar_automaticas') {
+        $search = $conn->real_escape_string($_POST['search']);
+        $page = (int)$_POST['page'];
+        $offset = ($page - 1) * $registros_por_pagina;
+        
+        $where = "";
+        if (!empty($search)) {
+            $where = " WHERE cliente_nombre LIKE '%$search%' OR cliente_email LIKE '%$search%' OR plan_nombre LIKE '%$search%' OR tipo_notificacion LIKE '%$search%'";
+        }
+        
+        $count_query = "SELECT COUNT(*) as total FROM notificaciones_vencimiento_historial" . $where;
+        $total = $conn->query($count_query)->fetch_assoc()['total'];
+        $total_paginas = ceil($total / $registros_por_pagina);
+        
+        $query = "SELECT * FROM notificaciones_vencimiento_historial 
+                    $where
+                    ORDER BY fecha_envio DESC 
+                    LIMIT $registros_por_pagina OFFSET $offset";
+        $result = $conn->query($query);
+        
+        $html = '';
+        if ($result && $result->num_rows > 0) {
+            while($notif = $result->fetch_assoc()) {
+                $tipo_clase = $notif['tipo_notificacion'] == '3_dias' ? 'info' : 'danger';
+                $tipo_texto = $notif['tipo_notificacion'] == '3_dias' ? '3 dias antes' : 'Dia del vencimiento';
+                $estado_clase = $notif['estado'] == 'enviado' ? 'success' : 'danger';
+                $estado_texto = $notif['estado'] == 'enviado' ? 'Enviado' : 'Fallido';
+                
+                $html .= '
+                <div class="notificacion-item ' . $tipo_clase . '">
+                    <div class="titulo">
+                        <i class="fas fa-bell"></i> Notificacion de Vencimiento - ' . $tipo_texto . '
+                        <span class="badge-custom badge-' . $estado_clase . ' float-right">' . $estado_texto . '</span>
+                    </div>
+                    <div class="mensaje">
+                        <strong>Cliente:</strong> ' . htmlspecialchars($notif['cliente_nombre']) . '<br>
+                        <strong>Email:</strong> ' . htmlspecialchars($notif['cliente_email']) . '<br>
+                        <strong>Plan:</strong> ' . htmlspecialchars($notif['plan_nombre']) . '<br>
+                        <strong>Fecha vencimiento:</strong> ' . date('d/m/Y', strtotime($notif['fecha_vencimiento'])) . '
+                    </div>
+                    <div class="meta">
+                        <span><i class="fas fa-calendar"></i> Enviado: ' . date('d/m/Y h:i A', strtotime($notif['fecha_envio'])) . '</span>
+                        ' . ($notif['dias_restantes'] > 0 ? '<span><i class="fas fa-hourglass-half"></i> Dias restantes: ' . $notif['dias_restantes'] . '</span>' : '') . '
+                    </div>
+                </div>';
+            }
+        } else {
+            $html = '<div class="text-center text-muted py-5"><i class="fas fa-bell-slash fa-3x mb-3"></i><p>No hay notificaciones que coincidan con la busqueda</p></div>';
+        }
+        
+        echo json_encode(array(
+            'html' => $html,
+            'total' => $total,
+            'total_paginas' => $total_paginas,
+            'pagina_actual' => $page
+        ));
+        exit;
     }
 }
 
@@ -419,7 +507,7 @@ function enviarNotificacionVencimiento($email, $nombre, $dias_restantes, $fecha_
     }
 }
 
-// Funcion para procesar notificaciones de vencimiento (con historial)
+// Funcion para procesar notificaciones de vencimiento
 function procesarNotificacionesVencimiento($conn) {
     $fecha_actual = date('Y-m-d');
     $resultados = array(
@@ -457,16 +545,13 @@ function procesarNotificacionesVencimiento($conn) {
                 }
             }
             
-            // Notificacion 3 dias antes
             if ($dias_restantes == 3 && !in_array('3_dias', $notificaciones_enviadas)) {
                 $envio = enviarNotificacionVencimiento($row['email'], $row['nombre'] . ' ' . $row['apellido'], 3, $fecha_fin, $row['plan_nombre']);
-                
                 $estado = $envio ? 'enviado' : 'fallido';
                 $insert = "INSERT INTO notificaciones_vencimiento_historial 
                           (inscripcion_id, cliente_id, cliente_nombre, cliente_email, plan_nombre, tipo_notificacion, dias_restantes, fecha_vencimiento, fecha_envio, estado) 
                           VALUES ({$row['id']}, {$row['cliente_id']}, '{$row['nombre']} {$row['apellido']}', '{$row['email']}', '{$row['plan_nombre']}', '3_dias', 3, '$fecha_fin', NOW(), '$estado')";
                 $conn->query($insert);
-                
                 if ($envio) {
                     $resultados['enviados_3_dias']++;
                 } else {
@@ -474,16 +559,13 @@ function procesarNotificacionesVencimiento($conn) {
                 }
             }
             
-            // Notificacion el dia que vence
             if ($dias_restantes == 0 && !in_array('vencido', $notificaciones_enviadas)) {
                 $envio = enviarNotificacionVencimiento($row['email'], $row['nombre'] . ' ' . $row['apellido'], 0, $fecha_fin, $row['plan_nombre']);
-                
                 $estado = $envio ? 'enviado' : 'fallido';
                 $insert = "INSERT INTO notificaciones_vencimiento_historial 
                           (inscripcion_id, cliente_id, cliente_nombre, cliente_email, plan_nombre, tipo_notificacion, dias_restantes, fecha_vencimiento, fecha_envio, estado) 
                           VALUES ({$row['id']}, {$row['cliente_id']}, '{$row['nombre']} {$row['apellido']}', '{$row['email']}', '{$row['plan_nombre']}', 'vencido', 0, '$fecha_fin', NOW(), '$estado')";
                 $conn->query($insert);
-                
                 if ($envio) {
                     $resultados['enviados_vencidos']++;
                 } else {
@@ -554,337 +636,84 @@ $stats['notificaciones_automaticas'] = ($result_automatica && $result_automatica
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/admin-lte@3.2/dist/css/adminlte.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/css/bootstrap.min.css">
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            background: #f5f7fa;
-            font-family: 'Source Sans Pro', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-        }
-
-        .main-content {
-            margin-left: 280px;
-            transition: margin-left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-            min-height: 100vh;
-            padding: 20px;
-            background: #f4f6f9;
-        }
-
-        body.sidebar-collapsed .main-content {
-            margin-left: 70px;
-        }
-
-        @media (max-width: 768px) {
-            .main-content {
-                margin-left: 0 !important;
-                padding: 80px 15px 15px 15px;
-            }
-        }
-
-        .content-header {
-            padding: 15px 0;
-        }
-
-        .content-header h1 {
-            font-size: 1.8rem;
-            font-weight: 600;
-            color: #1e293b;
-        }
-
-        .stats-card {
-            text-align: center;
-            padding: 25px 15px;
-            background: white;
-            border-radius: 20px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
-            transition: all 0.3s ease;
-            margin-bottom: 20px;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .stats-card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 8px 25px rgba(0,0,0,0.15);
-        }
-
-        .stats-card::before {
-            content: '';
-            position: absolute;
-            top: -50%;
-            right: -50%;
-            width: 200%;
-            height: 200%;
-            background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0) 70%);
-            opacity: 0;
-            transition: opacity 0.3s ease;
-        }
-
-        .stats-card:hover::before {
-            opacity: 1;
-        }
-
-        .stats-icon {
-            width: 90px;
-            height: 90px;
-            margin: 0 auto 20px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 50%;
-            font-size: 40px;
-            color: white;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.2);
-        }
-
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #f5f7fa; font-family: 'Source Sans Pro', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; }
+        .main-content { margin-left: 280px; transition: margin-left 0.3s cubic-bezier(0.4, 0, 0.2, 1); min-height: 100vh; padding: 20px; background: #f4f6f9; }
+        body.sidebar-collapsed .main-content { margin-left: 70px; }
+        @media (max-width: 768px) { .main-content { margin-left: 0 !important; padding: 80px 15px 15px 15px; } }
+        .content-header { padding: 15px 0; }
+        .content-header h1 { font-size: 1.8rem; font-weight: 600; color: #1e293b; }
+        .stats-card { text-align: center; padding: 25px 15px; background: white; border-radius: 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); transition: all 0.3s ease; margin-bottom: 20px; position: relative; overflow: hidden; }
+        .stats-card:hover { transform: translateY(-5px); box-shadow: 0 8px 25px rgba(0,0,0,0.15); }
+        .stats-card::before { content: ''; position: absolute; top: -50%; right: -50%; width: 200%; height: 200%; background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0) 70%); opacity: 0; transition: opacity 0.3s ease; }
+        .stats-card:hover::before { opacity: 1; }
+        .stats-icon { width: 90px; height: 90px; margin: 0 auto 20px; display: flex; align-items: center; justify-content: center; border-radius: 50%; font-size: 40px; color: white; box-shadow: 0 4px 10px rgba(0,0,0,0.2); }
         .stats-icon.bg-info { background: #17a2b8; }
         .stats-icon.bg-success { background: #28a745; }
         .stats-icon.bg-warning { background: #ffc107; }
         .stats-icon.bg-danger { background: #dc3545; }
-
         .stats-card.info-bg { background: linear-gradient(135deg, #17a2b8 0%, #138496 100%); }
         .stats-card.success-bg { background: linear-gradient(135deg, #28a745 0%, #1e7e34 100%); }
         .stats-card.warning-bg { background: linear-gradient(135deg, #ffc107 0%, #e0a800 100%); }
         .stats-card.danger-bg { background: linear-gradient(135deg, #dc3545 0%, #bd2130 100%); }
-
-        .stats-card.info-bg .stats-number,
-        .stats-card.info-bg .stats-label,
-        .stats-card.success-bg .stats-number,
-        .stats-card.success-bg .stats-label,
-        .stats-card.warning-bg .stats-number,
-        .stats-card.warning-bg .stats-label,
-        .stats-card.danger-bg .stats-number,
-        .stats-card.danger-bg .stats-label {
-            color: white;
-        }
-
-        .stats-number {
-            font-size: 2.5rem;
-            font-weight: bold;
-            margin-bottom: 8px;
-        }
-
-        .stats-label {
-            font-size: 0.85rem;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            font-weight: 500;
-        }
-
-        .card {
-            border-radius: 0.25rem;
-            box-shadow: 0 0 1px rgba(0,0,0,.125), 0 1px 3px rgba(0,0,0,.2);
-            margin-bottom: 20px;
-        }
-        
-        .card-header {
-            padding: 0.75rem 1.25rem;
-            border-bottom: 1px solid rgba(0,0,0,0.125);
-        }
-        
-        .card-header h3 {
-            font-size: 1.1rem;
-            font-weight: 600;
-            margin: 0;
-            color: white;
-        }
-        
-        .card-header i {
-            margin-right: 8px;
-        }
-        
-        .card-body {
-            padding: 1.25rem;
-        }
-        
-        .text-right {
-            text-align: right;
-        }
-
+        .stats-card.info-bg .stats-number, .stats-card.info-bg .stats-label,
+        .stats-card.success-bg .stats-number, .stats-card.success-bg .stats-label,
+        .stats-card.warning-bg .stats-number, .stats-card.warning-bg .stats-label,
+        .stats-card.danger-bg .stats-number, .stats-card.danger-bg .stats-label { color: white; }
+        .stats-number { font-size: 2.5rem; font-weight: bold; margin-bottom: 8px; }
+        .stats-label { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 500; }
+        .card { border-radius: 0.25rem; box-shadow: 0 0 1px rgba(0,0,0,.125), 0 1px 3px rgba(0,0,0,.2); margin-bottom: 20px; }
+        .card-header { padding: 0.75rem 1.25rem; border-bottom: 1px solid rgba(0,0,0,0.125); }
+        .card-header h3 { font-size: 1.1rem; font-weight: 600; margin: 0; color: white; }
+        .card-header i { margin-right: 8px; }
+        .card-body { padding: 1.25rem; }
+        .text-right { text-align: right; }
         .card-header.primary { background-color: #007bff; }
         .card-header.warning { background-color: #ffc107; }
         .card-header.dark { background-color: #343a40; }
-
-        .notificacion-item {
-            border-left: 3px solid;
-            margin-bottom: 15px;
-            padding: 15px;
-            background: white;
-            border-radius: 6px;
-            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-        }
-
+        .notificacion-item { border-left: 3px solid; margin-bottom: 15px; padding: 15px; background: white; border-radius: 6px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
         .notificacion-item.info { border-left-color: #17a2b8; }
         .notificacion-item.aviso { border-left-color: #ffc107; }
         .notificacion-item.alerta { border-left-color: #dc3545; }
         .notificacion-item.promocion { border-left-color: #28a745; }
         .notificacion-item.danger { border-left-color: #dc3545; }
-
-        .notificacion-item .titulo {
-            font-weight: 600;
-            font-size: 1rem;
-            margin-bottom: 5px;
-        }
-
-        .notificacion-item .mensaje {
-            color: #475569;
-            font-size: 0.85rem;
-            margin-bottom: 8px;
-        }
-
-        .notificacion-item .meta {
-            font-size: 0.7rem;
-            color: #94a3b8;
-            display: flex;
-            gap: 15px;
-            flex-wrap: wrap;
-        }
-
-        .badge-custom {
-            padding: 3px 10px;
-            border-radius: 15px;
-            font-size: 0.7rem;
-            font-weight: 600;
-        }
-
+        .notificacion-item .titulo { font-weight: 600; font-size: 1rem; margin-bottom: 5px; }
+        .notificacion-item .mensaje { color: #475569; font-size: 0.85rem; margin-bottom: 8px; }
+        .notificacion-item .meta { font-size: 0.7rem; color: #94a3b8; display: flex; gap: 15px; flex-wrap: wrap; }
+        .badge-custom { padding: 3px 10px; border-radius: 15px; font-size: 0.7rem; font-weight: 600; }
         .badge-info { background: #dbeafe; color: #1e40af; }
         .badge-aviso { background: #fed7aa; color: #92400e; }
         .badge-alerta { background: #fee2e2; color: #991b1b; }
         .badge-promocion { background: #d1fae5; color: #065f46; }
         .badge-success { background: #d1fae5; color: #065f46; }
         .badge-danger { background: #fee2e2; color: #991b1b; }
-
-        textarea {
-            resize: vertical;
-            min-height: 100px;
-        }
-
-        .form-group {
-            margin-bottom: 1rem;
-        }
-
-        .form-group label {
-            font-weight: 600;
-            margin-bottom: 0.5rem;
-            display: block;
-            color: #1e293b;
-        }
-
-        .form-control, .form-select {
-            border-radius: 6px;
-            border: 1px solid #e2e8f0;
-            padding: 8px 12px;
-            transition: all 0.2s;
-        }
-
-        .form-control:focus, .form-select:focus {
-            border-color: #007bff;
-            box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.1);
-            outline: none;
-        }
-
-        .btn-primary {
-            background: #007bff;
-            border: none;
-            border-radius: 6px;
-            padding: 10px 24px;
-            font-weight: 600;
-            color: white;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-
-        .btn-primary:hover {
-            background: #0056b3;
-        }
-
-        .destinatario-card {
-            background: #f8fafc;
-            border-radius: 8px;
-            padding: 12px 15px;
-            margin-bottom: 10px;
-            cursor: pointer;
-            transition: all 0.2s;
-            border: 1px solid #e2e8f0;
-        }
-
-        .destinatario-card:hover {
-            background: #f1f5f9;
-            transform: translateX(3px);
-        }
-
-        .destinatario-card.selected {
-            border-color: #007bff;
-            background: #e8f0fe;
-        }
-
-        .destinatario-card .nombre {
-            font-weight: 600;
-            color: #1e293b;
-            font-size: 0.9rem;
-        }
-
-        .destinatario-card .email {
-            font-size: 0.75rem;
-            color: #64748b;
-        }
-
-        .nav-tabs .nav-link {
-            color: #1e293b;
-            font-weight: 500;
-        }
-
-        .nav-tabs .nav-link.active {
-            color: #007bff;
-            font-weight: 600;
-        }
-
-        .pagination .page-link {
-            color: #007bff;
-        }
-
-        .pagination .active .page-link {
-            background-color: #007bff;
-            border-color: #007bff;
-            color: white;
-        }
-
-        /* Estilos para buscador */
-        .search-box {
-            margin-bottom: 20px;
-            padding: 15px;
-            background: #f8f9fa;
-            border-radius: 8px;
-            border: 1px solid #e9ecef;
-        }
-
-        .search-box .input-group {
-            max-width: 400px;
-        }
-
-        .search-box .btn-outline-secondary {
-            border-color: #ced4da;
-        }
-
-        .search-box .btn-outline-secondary:hover {
-            background-color: #007bff;
-            border-color: #007bff;
-            color: white;
-        }
-
-        .clear-search {
-            color: #dc3545;
-            margin-left: 10px;
-            text-decoration: none;
-        }
-
-        .clear-search:hover {
-            text-decoration: underline;
-        }
+        textarea { resize: vertical; min-height: 100px; }
+        .form-group { margin-bottom: 1rem; }
+        .form-group label { font-weight: 600; margin-bottom: 0.5rem; display: block; color: #1e293b; }
+        .form-control, .form-select { border-radius: 6px; border: 1px solid #e2e8f0; padding: 8px 12px; transition: all 0.2s; }
+        .form-control:focus, .form-select:focus { border-color: #007bff; box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.1); outline: none; }
+        .btn-primary { background: #007bff; border: none; border-radius: 6px; padding: 10px 24px; font-weight: 600; color: white; cursor: pointer; transition: all 0.2s; }
+        .btn-primary:hover { background: #0056b3; }
+        .btn-danger { background: #dc3545; border: none; border-radius: 6px; padding: 10px 24px; font-weight: 600; color: white; cursor: pointer; transition: all 0.2s; }
+        .btn-danger:hover { background: #c82333; transform: translateY(-2px); }
+        .destinatario-card { background: #f8fafc; border-radius: 8px; padding: 12px 15px; margin-bottom: 10px; cursor: pointer; transition: all 0.2s; border: 1px solid #e2e8f0; }
+        .destinatario-card:hover { background: #f1f5f9; transform: translateX(3px); }
+        .destinatario-card.selected { border-color: #007bff; background: #e8f0fe; }
+        .destinatario-card .nombre { font-weight: 600; color: #1e293b; font-size: 0.9rem; }
+        .destinatario-card .email { font-size: 0.75rem; color: #64748b; }
+        .nav-tabs .nav-link { color: #1e293b; font-weight: 500; cursor: pointer; }
+        .nav-tabs .nav-link.active { color: #007bff; font-weight: 600; }
+        .pagination .page-link { color: #007bff; cursor: pointer; }
+        .pagination .active .page-link { background-color: #007bff; border-color: #007bff; color: white; }
+        .search-box { margin-bottom: 20px; padding: 15px; background: #f8f9fa; border-radius: 8px; border: 1px solid #e9ecef; }
+        .search-box .input-group { max-width: 400px; }
+        .loading-spinner { display: inline-block; width: 20px; height: 20px; border: 2px solid #f3f3f3; border-top: 2px solid #007bff; border-radius: 50%; animation: spin 1s linear infinite; margin-left: 10px; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .result-count { font-size: 0.85rem; color: #6c757d; margin-bottom: 15px; }
+        .clear-search-btn { margin-left: 10px; padding: 6px 12px; background: #dc3545; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 12px; }
+        .clear-search-btn:hover { background: #c82333; }
     </style>
 </head>
 <body class="hold-transition sidebar-mini">
@@ -895,9 +724,7 @@ $stats['notificaciones_automaticas'] = ($result_automatica && $result_automatica
             <div class="container-fluid">
                 <div class="row mb-2">
                     <div class="col-sm-6">
-                        <h1 class="m-0">
-                            Notificaciones por Correo
-                        </h1>
+                        <h1 class="m-0">Notificaciones por Correo</h1>
                     </div>
                 </div>
             </div>
@@ -907,39 +734,28 @@ $stats['notificaciones_automaticas'] = ($result_automatica && $result_automatica
         <div class="row">
             <div class="col-lg-3 col-md-6 col-12">
                 <div class="stats-card info-bg">
-                    <div class="stats-icon bg-info">
-                        <i class="fas fa-users"></i>
-                    </div>
+                    <div class="stats-icon bg-info"><i class="fas fa-users"></i></div>
                     <div class="stats-number"><?php echo $stats['total_clientes_activos']; ?></div>
                     <div class="stats-label">Clientes Activos</div>
                 </div>
             </div>
-            
             <div class="col-lg-3 col-md-6 col-12">
                 <div class="stats-card success-bg">
-                    <div class="stats-icon bg-success">
-                        <i class="fas fa-id-card"></i>
-                    </div>
+                    <div class="stats-icon bg-success"><i class="fas fa-id-card"></i></div>
                     <div class="stats-number"><?php echo $stats['clientes_con_membresia']; ?></div>
                     <div class="stats-label">Con Membresia Activa</div>
                 </div>
             </div>
-            
             <div class="col-lg-3 col-md-6 col-12">
                 <div class="stats-card warning-bg">
-                    <div class="stats-icon bg-warning">
-                        <i class="fas fa-user-shield"></i>
-                    </div>
+                    <div class="stats-icon bg-warning"><i class="fas fa-user-shield"></i></div>
                     <div class="stats-number"><?php echo $stats['total_usuarios_activos']; ?></div>
                     <div class="stats-label">Usuarios Activos</div>
                 </div>
             </div>
-            
             <div class="col-lg-3 col-md-6 col-12">
                 <div class="stats-card danger-bg">
-                    <div class="stats-icon bg-danger">
-                        <i class="fas fa-envelope"></i>
-                    </div>
+                    <div class="stats-icon bg-danger"><i class="fas fa-envelope"></i></div>
                     <div class="stats-number"><?php echo $stats['total_notificaciones']; ?></div>
                     <div class="stats-label">Notificaciones Enviadas</div>
                 </div>
@@ -984,10 +800,7 @@ $stats['notificaciones_automaticas'] = ($result_automatica && $result_automatica
                                     <div class="col-md-6">
                                         <div class="destinatario-card" data-destinatario="todos_clientes_activos">
                                             <div class="d-flex justify-content-between align-items-center">
-                                                <div>
-                                                    <div class="nombre"><i class="fas fa-users"></i> Todos los clientes activos</div>
-                                                    <div class="email">Clientes con estado activo</div>
-                                                </div>
+                                                <div><div class="nombre"><i class="fas fa-users"></i> Todos los clientes activos</div><div class="email">Clientes con estado activo</div></div>
                                                 <span class="badge-custom badge-info"><?php echo $stats['total_clientes_activos']; ?> clientes</span>
                                             </div>
                                         </div>
@@ -995,10 +808,7 @@ $stats['notificaciones_automaticas'] = ($result_automatica && $result_automatica
                                     <div class="col-md-6">
                                         <div class="destinatario-card" data-destinatario="clientes_membresia_activa">
                                             <div class="d-flex justify-content-between align-items-center">
-                                                <div>
-                                                    <div class="nombre"><i class="fas fa-id-card"></i> Clientes con membresia activa</div>
-                                                    <div class="email">Inscripcion activa y no vencida</div>
-                                                </div>
+                                                <div><div class="nombre"><i class="fas fa-id-card"></i> Clientes con membresia activa</div><div class="email">Inscripcion activa y no vencida</div></div>
                                                 <span class="badge-custom badge-info"><?php echo $stats['clientes_con_membresia']; ?> clientes</span>
                                             </div>
                                         </div>
@@ -1006,10 +816,7 @@ $stats['notificaciones_automaticas'] = ($result_automatica && $result_automatica
                                     <div class="col-md-6">
                                         <div class="destinatario-card" data-destinatario="todos_usuarios">
                                             <div class="d-flex justify-content-between align-items-center">
-                                                <div>
-                                                    <div class="nombre"><i class="fas fa-user-shield"></i> Todos los usuarios del sistema</div>
-                                                    <div class="email">Usuarios activos del sistema</div>
-                                                </div>
+                                                <div><div class="nombre"><i class="fas fa-user-shield"></i> Todos los usuarios del sistema</div><div class="email">Usuarios activos del sistema</div></div>
                                                 <span class="badge-custom badge-aviso"><?php echo $stats['total_usuarios_activos']; ?> usuarios</span>
                                             </div>
                                         </div>
@@ -1017,10 +824,7 @@ $stats['notificaciones_automaticas'] = ($result_automatica && $result_automatica
                                     <div class="col-md-6">
                                         <div class="destinatario-card" data-destinatario="todos_membresia_usuarios">
                                             <div class="d-flex justify-content-between align-items-center">
-                                                <div>
-                                                    <div class="nombre"><i class="fas fa-globe"></i> Clientes membresia activa + Usuarios activos</div>
-                                                    <div class="email">Clientes con inscripcion activa y usuarios del sistema</div>
-                                                </div>
+                                                <div><div class="nombre"><i class="fas fa-globe"></i> Clientes membresia activa + Usuarios activos</div><div class="email">Clientes con inscripcion activa y usuarios del sistema</div></div>
                                                 <span class="badge-custom badge-promocion"><?php echo $stats['clientes_con_membresia'] + $stats['total_usuarios_activos']; ?> personas</span>
                                             </div>
                                         </div>
@@ -1031,15 +835,13 @@ $stats['notificaciones_automaticas'] = ($result_automatica && $result_automatica
                         </div>
                     </div>
                     <div class="text-right mt-3">
-                        <button type="submit" class="btn-primary" style="border: none; cursor: pointer;">
-                            <i class="fas fa-paper-plane"></i> Enviar Notificacion por Correo
-                        </button>
+                        <button type="submit" class="btn-primary"><i class="fas fa-paper-plane"></i> Enviar Notificacion por Correo</button>
                     </div>
                 </form>
             </div>
         </div>
 
-        <!-- Boton para notificaciones de vencimiento -->
+        <!-- Boton para notificaciones de vencimiento (EMERGENCIA) -->
         <div class="card">
             <div class="card-header warning">
                 <h3><i class="fas fa-calendar-alt"></i> Notificaciones Automaticas de Vencimiento</h3>
@@ -1047,17 +849,18 @@ $stats['notificaciones_automaticas'] = ($result_automatica && $result_automatica
             <div class="card-body">
                 <div class="row">
                     <div class="col-md-8">
-                        <p>Esta funcion enviara notificaciones automaticas a los clientes con membresia proxima a vencer:</p>
+                        <p>Este sistema enviara notificaciones automaticas DIARIAMENTE a los clientes con membresia proxima a vencer:</p>
                         <ul>
-                            <li><i class="fas fa-envelope"></i> 3 dias antes del vencimiento</li>
-                            <li><i class="fas fa-exclamation-triangle"></i> El dia del vencimiento</li>
+                            <li><i class="fas fa-envelope"></i> <strong>3 dias antes</strong> del vencimiento</li>
+                            <li><i class="fas fa-exclamation-triangle"></i> <strong>El dia del vencimiento</strong></li>
                         </ul>
                         <p class="text-muted small">Nota: Los clientes con plan "Visita" no recibiran estas notificaciones.</p>
+                        <hr>
+                        <p class="text-danger"><strong> BOTON DE EMERGENCIA </strong><br>
+                        <small>Use este boton SOLO si el sistema automatico falla. En condiciones normales, las notificaciones se envian automaticamente cada dia.</small></p>
                     </div>
                     <div class="col-md-4 text-right">
-                        <button type="button" id="btnProcesarVencimientos" class="btn-primary" style="border: none; cursor: pointer; padding: 12px 24px;">
-                            <i class="fas fa-play"></i> Procesar Notificaciones Ahora
-                        </button>
+                        <button type="button" id="btnProcesarVencimientos" class="btn-danger"><i class="fas fa-exclamation-triangle"></i> Forzar Envio</button>
                     </div>
                 </div>
             </div>
@@ -1070,186 +873,132 @@ $stats['notificaciones_automaticas'] = ($result_automatica && $result_automatica
             </div>
             <div class="card-body">
                 <ul class="nav nav-tabs mb-3" id="historialTabs" role="tablist">
-                    <li class="nav-item">
-                        <a class="nav-link active" id="manual-tab" data-toggle="tab" href="#manual" role="tab">
-                            <i class="fas fa-paper-plane"></i> Notificaciones Manuales
-                        </a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" id="automatica-tab" data-toggle="tab" href="#automatica" role="tab">
-                            <i class="fas fa-calendar-alt"></i> Notificaciones Automaticas (Vencimiento)
-                        </a>
-                    </li>
+                    <li class="nav-item"><a class="nav-link active" id="manual-tab" data-toggle="tab" href="#manual" role="tab"><i class="fas fa-paper-plane"></i> Notificaciones Manuales</a></li>
+                    <li class="nav-item"><a class="nav-link" id="automatica-tab" data-toggle="tab" href="#automatica" role="tab"><i class="fas fa-calendar-alt"></i> Notificaciones Automaticas (Vencimiento)</a></li>
                 </ul>
                 
                 <div class="tab-content" id="historialTabsContent">
-                    <!-- Tab Notificaciones Manuales -->
+                    <!-- Tab Notificaciones Manuales con buscador en tiempo real -->
                     <div class="tab-pane fade show active" id="manual" role="tabpanel">
-                        <!-- Buscador para notificaciones manuales -->
                         <div class="search-box">
-                            <form method="GET" action="" class="form-inline">
+                            <div class="form-inline">
                                 <div class="input-group">
-                                    <input type="text" class="form-control" name="search_manual" placeholder="Buscar por título, mensaje o usuario..." value="<?php echo htmlspecialchars($search_manual); ?>">
+                                    <input type="text" id="searchManualInput" class="form-control" placeholder="Buscar por titulo, mensaje o usuario..." autocomplete="off">
                                     <div class="input-group-append">
-                                        <button class="btn btn-outline-secondary" type="submit">
-                                            <i class="fas fa-search"></i> Buscar
-                                        </button>
+                                        <span class="input-group-text"><i class="fas fa-search"></i></span>
                                     </div>
                                 </div>
-                                <?php if (!empty($search_manual)): ?>
-                                    <a href="?pagina_manual=1&pagina_automatica=<?php echo $pagina_automatica; ?>#manual" class="clear-search">
-                                        <i class="fas fa-times"></i> Limpiar busqueda
-                                    </a>
-                                <?php endif; ?>
-                                <input type="hidden" name="pagina_automatica" value="<?php echo $pagina_automatica; ?>">
-                            </form>
-                        </div>
-                        
-                        <?php if ($stats['notificaciones_manuales'] && $stats['notificaciones_manuales']->num_rows > 0): ?>
-                            <div class="text-muted mb-2">Mostrando <?php echo $stats['notificaciones_manuales']->num_rows; ?> de <?php echo $total_manual; ?> registros</div>
-                            <?php while($notif = $stats['notificaciones_manuales']->fetch_assoc()): 
-                                $tipo_clase = '';
-                                $tipo_texto = '';
-                                switch($notif['tipo']) {
-                                    case 'info': $tipo_clase = 'info'; $tipo_texto = 'Informativo'; break;
-                                    case 'aviso': $tipo_clase = 'aviso'; $tipo_texto = 'Aviso'; break;
-                                    case 'alerta': $tipo_clase = 'alerta'; $tipo_texto = 'Alerta'; break;
-                                    case 'promocion': $tipo_clase = 'promocion'; $tipo_texto = 'Promocion'; break;
-                                }
-                                
-                                $destinatarios_texto = array(
-                                    'todos_clientes_activos' => 'Todos los clientes activos',
-                                    'clientes_membresia_activa' => 'Clientes con membresia activa',
-                                    'todos_usuarios' => 'Todos los usuarios',
-                                    'todos_membresia_usuarios' => 'Clientes membresia activa + Usuarios activos'
-                                );
-                                $destinatario_texto = isset($destinatarios_texto[$notif['destinatarios']]) ? $destinatarios_texto[$notif['destinatarios']] : $notif['destinatarios'];
-                            ?>
-                                <div class="notificacion-item <?php echo $tipo_clase; ?>">
-                                    <div class="titulo">
-                                        <?php echo htmlspecialchars($notif['titulo']); ?>
-                                        <span class="badge-custom badge-<?php echo $tipo_clase; ?> float-right"><?php echo $tipo_texto; ?></span>
-                                    </div>
-                                    <div class="mensaje"><?php echo nl2br(htmlspecialchars($notif['mensaje'])); ?></div>
-                                    <div class="meta">
-                                        <span><i class="fas fa-calendar"></i> <?php echo date('d/m/Y h:i A', strtotime($notif['fecha_envio'])); ?></span>
-                                        <span><i class="fas fa-user"></i> Enviado por: <?php echo htmlspecialchars($notif['usuario_envio']); ?></span>
-                                        <span><i class="fas fa-users"></i> <?php echo $destinatario_texto; ?></span>
-                                        <span><i class="fas fa-envelope"></i> Enviados: <?php echo $notif['total_enviados']; ?> correos</span>
-                                    </div>
-                                </div>
-                            <?php endwhile; ?>
-                            
-                            <?php if($total_paginas_manual > 1): ?>
-                            <nav class="mt-3">
-                                <ul class="pagination justify-content-center">
-                                    <li class="page-item <?php echo $pagina_manual <= 1 ? 'disabled' : ''; ?>">
-                                        <a class="page-link" href="?pagina_manual=<?php echo $pagina_manual-1; ?>&pagina_automatica=<?php echo $pagina_automatica; ?>&search_manual=<?php echo urlencode($search_manual); ?>#manual">Anterior</a>
-                                    </li>
-                                    <?php for($i = 1; $i <= $total_paginas_manual; $i++): ?>
-                                        <li class="page-item <?php echo $pagina_manual == $i ? 'active' : ''; ?>">
-                                            <a class="page-link" href="?pagina_manual=<?php echo $i; ?>&pagina_automatica=<?php echo $pagina_automatica; ?>&search_manual=<?php echo urlencode($search_manual); ?>#manual"><?php echo $i; ?></a>
-                                        </li>
-                                    <?php endfor; ?>
-                                    <li class="page-item <?php echo $pagina_manual >= $total_paginas_manual ? 'disabled' : ''; ?>">
-                                        <a class="page-link" href="?pagina_manual=<?php echo $pagina_manual+1; ?>&pagina_automatica=<?php echo $pagina_automatica; ?>&search_manual=<?php echo urlencode($search_manual); ?>#manual">Siguiente</a>
-                                    </li>
-                                </ul>
-                            </nav>
-                            <?php endif; ?>
-                            
-                        <?php else: ?>
-                            <div class="text-center text-muted py-5">
-                                <i class="fas fa-envelope-open fa-3x mb-3"></i>
-                                <p>No hay notificaciones manuales<?php echo !empty($search_manual) ? ' que coincidan con la busqueda' : ' enviadas aun'; ?></p>
+                                <div id="manualLoading" class="loading-spinner" style="display: none;"></div>
+                                <button type="button" id="clearManualSearch" class="clear-search-btn" style="display: none;"><i class="fas fa-times"></i> Limpiar</button>
                             </div>
-                        <?php endif; ?>
+                        </div>
+                        <div id="manualResultCount" class="result-count"></div>
+                        <div id="manualResultados">
+                            <?php if ($stats['notificaciones_manuales'] && $stats['notificaciones_manuales']->num_rows > 0): ?>
+                                <?php while($notif = $stats['notificaciones_manuales']->fetch_assoc()): 
+                                    $tipo_clase = '';
+                                    $tipo_texto = '';
+                                    switch($notif['tipo']) {
+                                        case 'info': $tipo_clase = 'info'; $tipo_texto = 'Informativo'; break;
+                                        case 'aviso': $tipo_clase = 'aviso'; $tipo_texto = 'Aviso'; break;
+                                        case 'alerta': $tipo_clase = 'alerta'; $tipo_texto = 'Alerta'; break;
+                                        case 'promocion': $tipo_clase = 'promocion'; $tipo_texto = 'Promocion'; break;
+                                    }
+                                    $destinatarios_texto = array(
+                                        'todos_clientes_activos' => 'Todos los clientes activos',
+                                        'clientes_membresia_activa' => 'Clientes con membresia activa',
+                                        'todos_usuarios' => 'Todos los usuarios',
+                                        'todos_membresia_usuarios' => 'Clientes membresia activa + Usuarios activos'
+                                    );
+                                    $destinatario_texto = isset($destinatarios_texto[$notif['destinatarios']]) ? $destinatarios_texto[$notif['destinatarios']] : $notif['destinatarios'];
+                                ?>
+                                    <div class="notificacion-item <?php echo $tipo_clase; ?>">
+                                        <div class="titulo"><?php echo htmlspecialchars($notif['titulo']); ?><span class="badge-custom badge-<?php echo $tipo_clase; ?> float-right"><?php echo $tipo_texto; ?></span></div>
+                                        <div class="mensaje"><?php echo nl2br(htmlspecialchars($notif['mensaje'])); ?></div>
+                                        <div class="meta">
+                                            <span><i class="fas fa-calendar"></i> <?php echo date('d/m/Y h:i A', strtotime($notif['fecha_envio'])); ?></span>
+                                            <span><i class="fas fa-user"></i> Enviado por: <?php echo htmlspecialchars($notif['usuario_envio']); ?></span>
+                                            <span><i class="fas fa-users"></i> <?php echo $destinatario_texto; ?></span>
+                                            <span><i class="fas fa-envelope"></i> Enviados: <?php echo $notif['total_enviados']; ?> correos</span>
+                                        </div>
+                                    </div>
+                                <?php endwhile; ?>
+                            <?php else: ?>
+                                <div class="text-center text-muted py-5"><i class="fas fa-envelope-open fa-3x mb-3"></i><p>No hay notificaciones manuales enviadas aun</p></div>
+                            <?php endif; ?>
+                        </div>
+                        <div id="manualPagination" class="pagination-container">
+                            <?php if($total_paginas_manual > 1): ?>
+                            <nav><ul class="pagination justify-content-center">
+                                <li class="page-item <?php echo $pagina_manual <= 1 ? 'disabled' : ''; ?>"><a class="page-link" href="?pagina_manual=<?php echo $pagina_manual-1; ?>&pagina_automatica=<?php echo $pagina_automatica; ?>#manual">Anterior</a></li>
+                                <?php for($i = 1; $i <= $total_paginas_manual; $i++): ?>
+                                    <li class="page-item <?php echo $pagina_manual == $i ? 'active' : ''; ?>"><a class="page-link" href="?pagina_manual=<?php echo $i; ?>&pagina_automatica=<?php echo $pagina_automatica; ?>#manual"><?php echo $i; ?></a></li>
+                                <?php endfor; ?>
+                                <li class="page-item <?php echo $pagina_manual >= $total_paginas_manual ? 'disabled' : ''; ?>"><a class="page-link" href="?pagina_manual=<?php echo $pagina_manual+1; ?>&pagina_automatica=<?php echo $pagina_automatica; ?>#manual">Siguiente</a></li>
+                            </ul></nav>
+                            <?php endif; ?>
+                        </div>
                     </div>
                     
-                    <!-- Tab Notificaciones Automaticas -->
+                    <!-- Tab Notificaciones Automaticas con buscador en tiempo real -->
                     <div class="tab-pane fade" id="automatica" role="tabpanel">
-                        <!-- Buscador para notificaciones automaticas -->
                         <div class="search-box">
-                            <form method="GET" action="" class="form-inline">
+                            <div class="form-inline">
                                 <div class="input-group">
-                                    <input type="text" class="form-control" name="search_automatica" placeholder="Buscar por cliente, email, plan o tipo..." value="<?php echo htmlspecialchars($search_automatica); ?>">
+                                    <input type="text" id="searchAutomaticaInput" class="form-control" placeholder="Buscar por cliente, email, plan o tipo..." autocomplete="off">
                                     <div class="input-group-append">
-                                        <button class="btn btn-outline-secondary" type="submit">
-                                            <i class="fas fa-search"></i> Buscar
-                                        </button>
+                                        <span class="input-group-text"><i class="fas fa-search"></i></span>
                                     </div>
                                 </div>
-                                <?php if (!empty($search_automatica)): ?>
-                                    <a href="?pagina_manual=<?php echo $pagina_manual; ?>&pagina_automatica=1#automatica" class="clear-search">
-                                        <i class="fas fa-times"></i> Limpiar busqueda
-                                    </a>
-                                <?php endif; ?>
-                                <input type="hidden" name="pagina_manual" value="<?php echo $pagina_manual; ?>">
-                            </form>
-                        </div>
-                        
-                        <?php if ($stats['notificaciones_automaticas'] && $stats['notificaciones_automaticas']->num_rows > 0): ?>
-                            <div class="text-muted mb-2">Mostrando <?php echo $stats['notificaciones_automaticas']->num_rows; ?> de <?php echo $total_automatica; ?> registros</div>
-                            <?php while($notif = $stats['notificaciones_automaticas']->fetch_assoc()): 
-                                $tipo_clase = $notif['tipo_notificacion'] == '3_dias' ? 'info' : 'danger';
-                                $tipo_texto = $notif['tipo_notificacion'] == '3_dias' ? '3 dias antes' : 'Dia del vencimiento';
-                                $estado_clase = $notif['estado'] == 'enviado' ? 'success' : 'danger';
-                                $estado_texto = $notif['estado'] == 'enviado' ? 'Enviado' : 'Fallido';
-                            ?>
-                                <div class="notificacion-item <?php echo $tipo_clase; ?>">
-                                    <div class="titulo">
-                                        <i class="fas fa-bell"></i> Notificacion de Vencimiento - <?php echo $tipo_texto; ?>
-                                        <span class="badge-custom badge-<?php echo $estado_clase; ?> float-right"><?php echo $estado_texto; ?></span>
-                                    </div>
-                                    <div class="mensaje">
-                                        <strong>Cliente:</strong> <?php echo htmlspecialchars($notif['cliente_nombre']); ?><br>
-                                        <strong>Email:</strong> <?php echo htmlspecialchars($notif['cliente_email']); ?><br>
-                                        <strong>Plan:</strong> <?php echo htmlspecialchars($notif['plan_nombre']); ?><br>
-                                        <strong>Fecha vencimiento:</strong> <?php echo date('d/m/Y', strtotime($notif['fecha_vencimiento'])); ?>
-                                    </div>
-                                    <div class="meta">
-                                        <span><i class="fas fa-calendar"></i> Enviado: <?php echo date('d/m/Y h:i A', strtotime($notif['fecha_envio'])); ?></span>
-                                        <?php if($notif['dias_restantes'] > 0): ?>
-                                            <span><i class="fas fa-hourglass-half"></i> Dias restantes: <?php echo $notif['dias_restantes']; ?></span>
-                                        <?php endif; ?>
-                                    </div>
-                                </div>
-                            <?php endwhile; ?>
-                            
-                            <?php if($total_paginas_automatica > 1): ?>
-                            <nav class="mt-3">
-                                <ul class="pagination justify-content-center">
-                                    <li class="page-item <?php echo $pagina_automatica <= 1 ? 'disabled' : ''; ?>">
-                                        <a class="page-link" href="?pagina_manual=<?php echo $pagina_manual; ?>&pagina_automatica=<?php echo $pagina_automatica-1; ?>&search_automatica=<?php echo urlencode($search_automatica); ?>#automatica">Anterior</a>
-                                    </li>
-                                    <?php for($i = 1; $i <= $total_paginas_automatica; $i++): ?>
-                                        <li class="page-item <?php echo $pagina_automatica == $i ? 'active' : ''; ?>">
-                                            <a class="page-link" href="?pagina_manual=<?php echo $pagina_manual; ?>&pagina_automatica=<?php echo $i; ?>&search_automatica=<?php echo urlencode($search_automatica); ?>#automatica"><?php echo $i; ?></a>
-                                        </li>
-                                    <?php endfor; ?>
-                                    <li class="page-item <?php echo $pagina_automatica >= $total_paginas_automatica ? 'disabled' : ''; ?>">
-                                        <a class="page-link" href="?pagina_manual=<?php echo $pagina_manual; ?>&pagina_automatica=<?php echo $pagina_automatica+1; ?>&search_automatica=<?php echo urlencode($search_automatica); ?>#automatica">Siguiente</a>
-                                    </li>
-                                </ul>
-                            </nav>
-                            <?php endif; ?>
-                            
-                        <?php else: ?>
-                            <div class="text-center text-muted py-5">
-                                <i class="fas fa-bell-slash fa-3x mb-3"></i>
-                                <p>No hay notificaciones automaticas<?php echo !empty($search_automatica) ? ' que coincidan con la busqueda' : ' enviadas aun'; ?></p>
-                                <button type="button" id="btnProcesarVencimientosEmpty" class="btn-primary mt-2" style="border: none; cursor: pointer;">
-                                    <i class="fas fa-play"></i> Procesar Notificaciones Ahora
-                                </button>
+                                <div id="automaticaLoading" class="loading-spinner" style="display: none;"></div>
+                                <button type="button" id="clearAutomaticaSearch" class="clear-search-btn" style="display: none;"><i class="fas fa-times"></i> Limpiar</button>
                             </div>
+                        </div>
+                        <div id="automaticaResultCount" class="result-count"></div>
+                        <div id="automaticaResultados">
+                            <?php if ($stats['notificaciones_automaticas'] && $stats['notificaciones_automaticas']->num_rows > 0): ?>
+                                <?php while($notif = $stats['notificaciones_automaticas']->fetch_assoc()): 
+                                    $tipo_clase = $notif['tipo_notificacion'] == '3_dias' ? 'info' : 'danger';
+                                    $tipo_texto = $notif['tipo_notificacion'] == '3_dias' ? '3 dias antes' : 'Dia del vencimiento';
+                                    $estado_clase = $notif['estado'] == 'enviado' ? 'success' : 'danger';
+                                    $estado_texto = $notif['estado'] == 'enviado' ? 'Enviado' : 'Fallido';
+                                ?>
+                                    <div class="notificacion-item <?php echo $tipo_clase; ?>">
+                                        <div class="titulo"><i class="fas fa-bell"></i> Notificacion de Vencimiento - <?php echo $tipo_texto; ?><span class="badge-custom badge-<?php echo $estado_clase; ?> float-right"><?php echo $estado_texto; ?></span></div>
+                                        <div class="mensaje">
+                                            <strong>Cliente:</strong> <?php echo htmlspecialchars($notif['cliente_nombre']); ?><br>
+                                            <strong>Email:</strong> <?php echo htmlspecialchars($notif['cliente_email']); ?><br>
+                                            <strong>Plan:</strong> <?php echo htmlspecialchars($notif['plan_nombre']); ?><br>
+                                            <strong>Fecha vencimiento:</strong> <?php echo date('d/m/Y', strtotime($notif['fecha_vencimiento'])); ?>
+                                        </div>
+                                        <div class="meta">
+                                            <span><i class="fas fa-calendar"></i> Enviado: <?php echo date('d/m/Y h:i A', strtotime($notif['fecha_envio'])); ?></span>
+                                            <?php if($notif['dias_restantes'] > 0): ?>
+                                                <span><i class="fas fa-hourglass-half"></i> Dias restantes: <?php echo $notif['dias_restantes']; ?></span>
+                                            <?php endif; ?>
+                                        </div>
+                                    </div>
+                                <?php endwhile; ?>
+                            <?php else: ?>
                         <?php endif; ?>
+                        </div>
+                        <div id="automaticaPagination" class="pagination-container">
+                            <?php if($total_paginas_automatica > 1): ?>
+                            <nav><ul class="pagination justify-content-center">
+                                <li class="page-item <?php echo $pagina_automatica <= 1 ? 'disabled' : ''; ?>"><a class="page-link" href="?pagina_manual=<?php echo $pagina_manual; ?>&pagina_automatica=<?php echo $pagina_automatica-1; ?>#automatica">Anterior</a></li>
+                                <?php for($i = 1; $i <= $total_paginas_automatica; $i++): ?>
+                                    <li class="page-item <?php echo $pagina_automatica == $i ? 'active' : ''; ?>"><a class="page-link" href="?pagina_manual=<?php echo $pagina_manual; ?>&pagina_automatica=<?php echo $i; ?>#automatica"><?php echo $i; ?></a></li>
+                                <?php endfor; ?>
+                                <li class="page-item <?php echo $pagina_automatica >= $total_paginas_automatica ? 'disabled' : ''; ?>"><a class="page-link" href="?pagina_manual=<?php echo $pagina_manual; ?>&pagina_automatica=<?php echo $pagina_automatica+1; ?>#automatica">Siguiente</a></li>
+                            </ul></nav>
+                            <?php endif; ?>
+                        </div>
                     </div>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Agregar Bootstrap JS y dependencias -->
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.11.6/dist/umd/popper.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/js/bootstrap.min.js"></script>
@@ -1257,19 +1006,131 @@ $stats['notificaciones_automaticas'] = ($result_automatica && $result_automatica
     <script src="https://cdn.jsdelivr.net/npm/admin-lte@3.2/dist/js/adminlte.min.js"></script>
 
     <script>
-        // Mantener el tab activo despues de la busqueda
-        $(document).ready(function() {
-            var hash = window.location.hash;
-            if (hash === '#automatica') {
-                $('#automatica-tab').tab('show');
-            } else if (hash === '#manual') {
-                $('#manual-tab').tab('show');
-            }
+        let manualSearchTimeout;
+        let automaticaSearchTimeout;
+        let currentManualPage = 1;
+        let currentAutomaticaPage = 1;
+        
+        // Cargar notificaciones manuales con busqueda
+        function cargarManuales(search = '', page = 1) {
+            $('#manualLoading').show();
+            $.ajax({
+                url: 'notificaciones.php',
+                method: 'POST',
+                data: { action: 'buscar_manuales', search: search, page: page },
+                dataType: 'json',
+                success: function(response) {
+                    $('#manualResultados').html(response.html);
+                    $('#manualResultCount').html(response.total > 0 ? 'Mostrando ' + response.total + ' registros' : '');
+                    $('#manualLoading').hide();
+                    currentManualPage = response.pagina_actual;
+                    
+                    // Mostrar/ocultar boton limpiar
+                    if (search !== '') {
+                        $('#clearManualSearch').show();
+                    } else {
+                        $('#clearManualSearch').hide();
+                    }
+                    
+                    // Generar paginacion
+                    if (response.total_paginas > 1) {
+                        let pagHtml = '<nav><ul class="pagination justify-content-center">';
+                        pagHtml += '<li class="page-item ' + (response.pagina_actual <= 1 ? 'disabled' : '') + '"><a class="page-link" href="#" data-page="' + (response.pagina_actual - 1) + '">Anterior</a></li>';
+                        for (let i = 1; i <= response.total_paginas; i++) {
+                            pagHtml += '<li class="page-item ' + (response.pagina_actual == i ? 'active' : '') + '"><a class="page-link" href="#" data-page="' + i + '">' + i + '</a></li>';
+                        }
+                        pagHtml += '<li class="page-item ' + (response.pagina_actual >= response.total_paginas ? 'disabled' : '') + '"><a class="page-link" href="#" data-page="' + (response.pagina_actual + 1) + '">Siguiente</a></li>';
+                        pagHtml += '</ul></nav>';
+                        $('#manualPagination').html(pagHtml);
+                        
+                        $('.pagination .page-link').off('click').on('click', function(e) {
+                            e.preventDefault();
+                            let page = $(this).data('page');
+                            if (page && page !== currentManualPage) {
+                                cargarManuales($('#searchManualInput').val(), page);
+                            }
+                        });
+                    } else {
+                        $('#manualPagination').html('');
+                    }
+                }
+            });
+        }
+        
+        // Cargar notificaciones automaticas con busqueda
+        function cargarAutomaticas(search = '', page = 1) {
+            $('#automaticaLoading').show();
+            $.ajax({
+                url: 'notificaciones.php',
+                method: 'POST',
+                data: { action: 'buscar_automaticas', search: search, page: page },
+                dataType: 'json',
+                success: function(response) {
+                    $('#automaticaResultados').html(response.html);
+                    $('#automaticaResultCount').html(response.total > 0 ? 'Mostrando ' + response.total + ' registros' : '');
+                    $('#automaticaLoading').hide();
+                    currentAutomaticaPage = response.pagina_actual;
+                    
+                    // Mostrar/ocultar boton limpiar
+                    if (search !== '') {
+                        $('#clearAutomaticaSearch').show();
+                    } else {
+                        $('#clearAutomaticaSearch').hide();
+                    }
+                    
+                    // Generar paginacion
+                    if (response.total_paginas > 1) {
+                        let pagHtml = '<nav><ul class="pagination justify-content-center">';
+                        pagHtml += '<li class="page-item ' + (response.pagina_actual <= 1 ? 'disabled' : '') + '"><a class="page-link" href="#" data-page="' + (response.pagina_actual - 1) + '">Anterior</a></li>';
+                        for (let i = 1; i <= response.total_paginas; i++) {
+                            pagHtml += '<li class="page-item ' + (response.pagina_actual == i ? 'active' : '') + '"><a class="page-link" href="#" data-page="' + i + '">' + i + '</a></li>';
+                        }
+                        pagHtml += '<li class="page-item ' + (response.pagina_actual >= response.total_paginas ? 'disabled' : '') + '"><a class="page-link" href="#" data-page="' + (response.pagina_actual + 1) + '">Siguiente</a></li>';
+                        pagHtml += '</ul></nav>';
+                        $('#automaticaPagination').html(pagHtml);
+                        
+                        $('.pagination .page-link').off('click').on('click', function(e) {
+                            e.preventDefault();
+                            let page = $(this).data('page');
+                            if (page && page !== currentAutomaticaPage) {
+                                cargarAutomaticas($('#searchAutomaticaInput').val(), page);
+                            }
+                        });
+                    } else {
+                        $('#automaticaPagination').html('');
+                    }
+                }
+            });
+        }
+        
+        // Buscadores en tiempo real
+        $('#searchManualInput').on('input', function() {
+            clearTimeout(manualSearchTimeout);
+            manualSearchTimeout = setTimeout(() => {
+                cargarManuales($(this).val(), 1);
+            }, 500);
+        });
+        
+        $('#searchAutomaticaInput').on('input', function() {
+            clearTimeout(automaticaSearchTimeout);
+            automaticaSearchTimeout = setTimeout(() => {
+                cargarAutomaticas($(this).val(), 1);
+            }, 500);
+        });
+        
+        // Botones para limpiar busqueda
+        $('#clearManualSearch').on('click', function() {
+            $('#searchManualInput').val('');
+            cargarManuales('', 1);
+        });
+        
+        $('#clearAutomaticaSearch').on('click', function() {
+            $('#searchAutomaticaInput').val('');
+            cargarAutomaticas('', 1);
         });
         
         // Seleccion de destinatarios
         var destinatarioSeleccionado = null;
-        
         $('.destinatario-card').on('click', function() {
             $('.destinatario-card').removeClass('selected');
             $(this).addClass('selected');
@@ -1277,177 +1138,128 @@ $stats['notificaciones_automaticas'] = ($result_automatica && $result_automatica
             $('#destinatarios').val(destinatarioSeleccionado);
         });
         
+        // Envio de formulario
         $('#formNotificacion').on('submit', function(e) {
             e.preventDefault();
-            
             var titulo = $('#titulo').val();
             var mensaje = $('#mensaje').val();
             var destinatarios = $('#destinatarios').val();
             
             if (!titulo || !mensaje) {
-                Swal.fire({
-                    icon: 'error',
-                    title: 'Campos incompletos',
-                    text: 'Por favor completa el titulo y el mensaje'
-                });
+                Swal.fire({ icon: 'error', title: 'Campos incompletos', text: 'Por favor completa el titulo y el mensaje' });
                 return;
             }
-            
             if (!destinatarios) {
-                Swal.fire({
-                    icon: 'error',
-                    title: 'Selecciona destinatarios',
-                    text: 'Por favor selecciona un grupo de destinatarios'
-                });
+                Swal.fire({ icon: 'error', title: 'Selecciona destinatarios', text: 'Por favor selecciona un grupo de destinatarios' });
                 return;
             }
-            
-            var destinatarioTexto = $('.destinatario-card.selected .nombre').text();
             
             Swal.fire({
                 title: 'Enviar notificacion por correo?',
-                html: '<p><strong>Destinatarios:</strong> ' + destinatarioTexto + '</p>' +
-                       '<p><strong>Titulo:</strong> ' + titulo + '</p>' +
-                       '<p class="text-muted small">Se enviara por correo electronico a todos los destinatarios seleccionados.</p>',
-                icon: 'question',
-                showCancelButton: true,
-                confirmButtonText: 'Si, enviar',
-                cancelButtonText: 'Cancelar'
-            }).then(function(result) {
+                html: '<p><strong>Destinatarios:</strong> ' + $('.destinatario-card.selected .nombre').text() + '</p>',
+                icon: 'question', showCancelButton: true, confirmButtonText: 'Si, enviar', cancelButtonText: 'Cancelar'
+            }).then((result) => {
                 if (result.isConfirmed) {
-                    Swal.fire({
-                        title: 'Enviando...',
-                        text: 'Por favor espera, esto puede tomar unos momentos',
-                        allowOutsideClick: false,
-                        didOpen: function() {
-                            Swal.showLoading();
-                        }
-                    });
-                    
-                    var formData = $(this).serialize();
-                    formData += '&action=enviar_notificacion';
-                    
+                    Swal.fire({ title: 'Enviando...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
                     $.ajax({
                         url: 'notificaciones.php',
                         method: 'POST',
-                        data: formData,
+                        data: $(this).serialize() + '&action=enviar_notificacion',
                         dataType: 'json',
-                        timeout: 300000,
-                        success: function(response) {
+                        success: (response) => {
                             if (response.success) {
-                                var mensajeHtml = '<strong>' + response.enviados + '</strong> correos enviados correctamente<br>';
-                                mensajeHtml += '<strong>' + response.fallidos + '</strong> correos fallidos<br>';
-                                mensajeHtml += '<strong>Total:</strong> ' + response.total + ' destinatarios';
-                                
-                                if (response.fallidos > 0 && response.errores && response.errores.length > 0) {
-                                    mensajeHtml += '<br><br><strong>Correos con error:</strong><br>';
-                                    mensajeHtml += response.errores.slice(0, 5).join('<br>');
-                                    if (response.errores.length > 5) {
-                                        mensajeHtml += '<br>... y ' + (response.errores.length - 5) + ' mas';
-                                    }
-                                }
-                                
-                                Swal.fire({
-                                    icon: 'success',
-                                    title: 'Notificaciones enviadas',
-                                    html: mensajeHtml,
-                                    confirmButtonText: 'Aceptar'
-                                }).then(function() {
-                                    location.reload();
-                                });
+                                Swal.fire({ icon: 'success', title: 'Notificaciones enviadas', html: '<strong>' + response.enviados + '</strong> enviados, <strong>' + response.fallidos + '</strong> fallidos', confirmButtonText: 'Aceptar' }).then(() => location.reload());
                             } else {
-                                Swal.fire({
-                                    icon: 'error',
-                                    title: 'Error',
-                                    text: response.error || 'No se pudo enviar la notificacion'
-                                });
+                                Swal.fire({ icon: 'error', title: 'Error', text: response.error });
                             }
                         },
-                        error: function(xhr, status, error) {
-                            Swal.fire({
-                                icon: 'error',
-                                title: 'Error',
-                                text: 'Ocurrio un error al enviar la notificacion: ' + error
-                            });
-                        }
+                        error: () => Swal.fire({ icon: 'error', title: 'Error', text: 'Ocurrio un error' })
                     });
                 }
-            }.bind(this));
+            });
         });
-
-        // Funcion para procesar notificaciones de vencimiento
+        
+        // Procesar vencimientos (EMERGENCIA)
         function procesarVencimientos() {
             Swal.fire({
-                title: 'Procesar notificaciones de vencimiento?',
-                html: '<p>Se enviaran notificaciones a los clientes con membresia proxima a vencer:</p>' +
-                       '<ul style="text-align: left;">' +
-                       '<li><i class="fas fa-envelope"></i> <strong>3 dias antes</strong> del vencimiento</li>' +
-                       '<li><i class="fas fa-exclamation-triangle"></i> <strong>El dia del vencimiento</strong></li>' +
-                       '</ul>' +
-                       '<p class="text-muted small">Nota: Los clientes con plan "Visita" no recibiran estas notificaciones.</p>',
-                icon: 'question',
+                title: ' BOTON DE EMERGENCIA ',
+                html: '<p><strong>Este boton es SOLO para uso en caso de emergencia</strong></p>' +
+                    '<p>Las notificaciones automaticas deberian enviarse diariamente sin intervencion manual.</p>' +
+                    '<p>Use este boton SOLO si:</p>' +
+                    '<ul style="text-align: left;">' +
+                    '<li>El sistema automatico no ha enviado las notificaciones</li>' +
+                    '<li>Hubo un error en el proceso automatico</li>' +
+                    '<li>Necesita forzar el envio de notificaciones de vencimiento</li>' +
+                    '</ul>' +
+                    '<hr>' +
+                    '<p>Se enviaran notificaciones a los clientes con membresia proxima a vencer:</p>' +
+                    '<ul style="text-align: left;">' +
+                    '<li><i class="fas fa-envelope"></i> <strong>3 dias antes</strong> del vencimiento</li>' +
+                    '<li><i class="fas fa-exclamation-triangle"></i> <strong>El dia del vencimiento</strong></li>' +
+                    '</ul>' +
+                    '<p class="text-muted small">Nota: Los clientes con plan "Visita" no recibiran estas notificaciones.</p>',
+                icon: 'warning',
                 showCancelButton: true,
-                confirmButtonText: 'Si, procesar',
-                cancelButtonText: 'Cancelar'
-            }).then(function(result) {
+                confirmButtonText: 'Si, forzar envio (EMERGENCIA)',
+                cancelButtonText: 'Cancelar',
+                confirmButtonColor: '#dc3545'
+            }).then((result) => {
                 if (result.isConfirmed) {
-                    Swal.fire({
-                        title: 'Procesando...',
-                        text: 'Enviando notificaciones de vencimiento',
-                        allowOutsideClick: false,
-                        didOpen: function() {
-                            Swal.showLoading();
-                        }
-                    });
-                    
+                    Swal.fire({ title: 'Procesando...', text: 'Enviando notificaciones de vencimiento (modo emergencia)', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
                     $.ajax({
                         url: 'notificaciones.php',
                         method: 'POST',
                         data: { action: 'procesar_vencimientos' },
                         dataType: 'json',
-                        success: function(response) {
+                        success: (response) => {
                             if (response.success) {
-                                var mensajeHtml = '<strong>Resultado del proceso:</strong><br><br>';
+                                var mensajeHtml = '<strong>Resultado del proceso de emergencia:</strong><br><br>';
                                 mensajeHtml += '<i class="fas fa-calendar-day"></i> 3 dias antes: <strong>' + response.detalles.enviados_3_dias + '</strong> notificaciones<br>';
                                 mensajeHtml += '<i class="fas fa-calendar-times"></i> Dia vencimiento: <strong>' + response.detalles.enviados_vencidos + '</strong> notificaciones<br>';
                                 mensajeHtml += '<i class="fas fa-exclamation-circle"></i> Errores: <strong>' + response.detalles.errores + '</strong><br>';
                                 
                                 if (response.detalles.enviados_3_dias === 0 && response.detalles.enviados_vencidos === 0) {
-                                    mensajeHtml += '<br><div class="alert alert-warning">No se encontraron inscripciones que cumplan las condiciones.<br>';
+                                    mensajeHtml += '<br><div class="alert alert-warning"> No se encontraron inscripciones que cumplan las condiciones.<br>';
                                     mensajeHtml += '<small>Requisitos: Inscripcion activa, plan que no sea "Visita", cliente con email, fecha de vencimiento = hoy o en 3 dias.</small></div>';
+                                } else {
+                                    mensajeHtml += '<br><div class="alert alert-success"> Proceso de emergencia completado. Se han enviado las notificaciones.</div>';
                                 }
                                 
-                                Swal.fire({
-                                    icon: 'success',
-                                    title: 'Proceso completado',
-                                    html: mensajeHtml,
-                                    confirmButtonText: 'Aceptar'
-                                }).then(function() {
-                                    location.reload();
-                                });
+                                Swal.fire({ icon: 'success', title: 'Proceso de emergencia completado', html: mensajeHtml, confirmButtonText: 'Aceptar' }).then(() => location.reload());
                             } else {
-                                Swal.fire({
-                                    icon: 'error',
-                                    title: 'Error',
-                                    text: response.message || 'No se pudieron procesar las notificaciones'
-                                });
+                                Swal.fire({ icon: 'error', title: 'Error', text: response.message || 'No se pudieron procesar las notificaciones' });
                             }
                         },
-                        error: function(xhr, status, error) {
-                            Swal.fire({
-                                icon: 'error',
-                                title: 'Error',
-                                text: 'Ocurrio un error: ' + error
-                            });
-                        }
+                        error: () => Swal.fire({ icon: 'error', title: 'Error', text: 'Ocurrio un error en el proceso de emergencia' })
                     });
                 }
             });
         }
-
-        // Botones de procesar vencimientos
+        
         $('#btnProcesarVencimientos').on('click', procesarVencimientos);
         $('#btnProcesarVencimientosEmpty').on('click', procesarVencimientos);
+        
+        // Mantener el tab activo
+        $(document).ready(function() {
+            var hash = window.location.hash;
+            if (hash === '#automatica') {
+                $('#automatica-tab').tab('show');
+            } else if (hash === '#manual') {
+                $('#manual-tab').tab('show');
+            }
+            
+            // Cargar datos iniciales de los tabs cuando se muestran
+            $('#manual-tab').on('shown.bs.tab', function() {
+                if ($('#manualResultados').children('.notificacion-item').length === 0 && $('#manualResultados').text().trim() === '') {
+                    cargarManuales('', 1);
+                }
+            });
+            $('#automatica-tab').on('shown.bs.tab', function() {
+                if ($('#automaticaResultados').children('.notificacion-item').length === 0 && $('#automaticaResultados').text().trim() === '') {
+                    cargarAutomaticas('', 1);
+                }
+            });
+        });
     </script>
 </body>
 </html>

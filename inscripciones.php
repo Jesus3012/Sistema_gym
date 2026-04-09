@@ -934,25 +934,104 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
                                     <?php endif; ?>
                                 </td>
                                 <td class="acciones-cell">
-                                    <div class="acciones-container">
-                                        <button class="btn-accion btn-detalle" onclick="verDetalle(<?php echo $ins['id']; ?>)" title="Ver detalles completos">
-                                            <i class="fas fa-eye"></i> <span>Ver</span>
-                                        </button>
-                                        
-                                        <?php if($ins['estado'] == 'activa'): ?>
-                                            <button class="btn-accion btn-renovar" onclick="abrirRenovar(<?php echo $ins['id']; ?>, <?php echo $ins['cliente_id']; ?>)" title="Renovar inscripción">
-                                                <i class="fas fa-sync-alt"></i> <span>Renovar</span>
-                                            </button>
-                                            <button class="btn-accion btn-cancelar" onclick="cancelarInscripcion(<?php echo $ins['id']; ?>)" title="Cancelar inscripción">
-                                                <i class="fas fa-times-circle"></i> <span>Cancelar</span>
-                                            </button>
-                                        <?php elseif($ins['estado'] == 'vencida'): ?>
-                                            <button class="btn-accion btn-renovar" onclick="abrirRenovar(<?php echo $ins['id']; ?>, <?php echo $ins['cliente_id']; ?>)" title="Renovar inscripción vencida">
-                                                <i class="fas fa-sync-alt"></i> <span>Renovar</span>
-                                            </button>
-                                        <?php endif; ?>
-                                    </div>
-                                </td>
+    <div class="acciones-container">
+        <button class="btn-accion btn-detalle" onclick="verDetalle(<?php echo $ins['id']; ?>)" title="Ver detalles completos">
+            <i class="fas fa-eye"></i> <span>Ver</span>
+        </button>
+        
+        <?php
+        // Verificar si el botón de renovar debe estar deshabilitado
+        $renovar_disabled = false;
+        $renovar_title = "Renovar inscripción";
+        $mensaje_renovar = "";
+        
+        if($ins['estado'] == 'cancelada') {
+            $renovar_disabled = true;
+            $renovar_title = "No se puede renovar una inscripción cancelada";
+            $mensaje_renovar = $renovar_title;
+        } 
+        elseif($ins['plan_nombre'] == 'Visita') {
+            // Para planes de visita (duración 1 día)
+            $fecha_inicio = new DateTime($ins['fecha_inicio']);
+            $hoy = new DateTime();
+            $hoy->setTime(0, 0, 0);
+            $fecha_inicio->setTime(0, 0, 0);
+            
+            // Calcular diferencia en días
+            $diferencia_dias = $hoy->diff($fecha_inicio)->days;
+            
+            if($ins['estado'] == 'activa') {
+                // Si es el mismo día de la visita
+                if($hoy == $fecha_inicio) {
+                    $renovar_disabled = true;
+                    $renovar_title = "No se puede renovar el mismo día. La visita es válida solo por hoy. Puede renovar a partir de mañana.";
+                    $mensaje_renovar = $renovar_title;
+                } 
+                // Si la visita ya pasó y está activa (posiblemente no se actualizó el estado)
+                elseif($hoy > $fecha_inicio) {
+                    $renovar_disabled = false;
+                    $renovar_title = "Renovar visita (día siguiente)";
+                    $mensaje_renovar = "";
+                }
+                else {
+                    $renovar_disabled = false;
+                    $renovar_title = "Renovar visita";
+                }
+            } 
+            elseif($ins['estado'] == 'vencida') {
+                // Si está vencida, se puede renovar
+                $renovar_disabled = false;
+                $renovar_title = "Renovar visita (vencida)";
+            }
+        }
+        elseif($ins['estado'] == 'activa') {
+            // Para planes normales (mensual, trimestral, etc.)
+            if($ins['fecha_fin'] && $ins['fecha_fin'] != '0000-00-00') {
+                $fecha_fin = new DateTime($ins['fecha_fin']);
+                $hoy = new DateTime();
+                $hoy->setTime(0, 0, 0);
+                $fecha_fin->setTime(0, 0, 0);
+                
+                if($fecha_fin > $hoy) {
+                    $dias_restantes = $hoy->diff($fecha_fin)->days;
+                    if($dias_restantes > 7) {
+                        $renovar_disabled = true;
+                        $renovar_title = "No se puede renovar. La inscripción aún tiene $dias_restantes días activos.";
+                        $mensaje_renovar = $renovar_title;
+                    } elseif($dias_restantes <= 7 && $dias_restantes >= 0) {
+                        $renovar_title = "Renovar inscripción (próxima a vencer - $dias_restantes días restantes)";
+                    }
+                } else {
+                    $renovar_disabled = false;
+                    $renovar_title = "Renovar inscripción (vencida)";
+                }
+            } else {
+                // Plan sin vencimiento
+                $renovar_disabled = true;
+                $renovar_title = "Este plan no requiere renovación (sin vencimiento)";
+                $mensaje_renovar = $renovar_title;
+            }
+        } 
+        elseif($ins['estado'] == 'vencida') {
+            $renovar_disabled = false;
+            $renovar_title = "Renovar inscripción (vencida)";
+        }
+        ?>
+        
+        <button class="btn-accion btn-renovar" 
+                onclick="abrirRenovar(<?php echo $ins['id']; ?>, <?php echo $ins['cliente_id']; ?>, <?php echo $renovar_disabled ? 'true' : 'false'; ?>, '<?php echo addslashes($mensaje_renovar ?: $renovar_title); ?>')"
+                <?php echo $renovar_disabled ? 'disabled style="opacity: 0.5; cursor: pointer;"' : ''; ?>
+                title="<?php echo $renovar_title; ?>">
+            <i class="fas fa-sync-alt"></i> <span>Renovar</span>
+        </button>
+        
+        <?php if($ins['estado'] == 'activa'): ?>
+            <button class="btn-accion btn-cancelar" onclick="cancelarInscripcion(<?php echo $ins['id']; ?>)" title="Cancelar inscripción">
+                <i class="fas fa-times-circle"></i> <span>Cancelar</span>
+            </button>
+        <?php endif; ?>
+    </div>
+</td>
                             </tr>
                             <?php endforeach; ?>
                             <?php if(empty($inscripciones)): ?>
