@@ -4,6 +4,10 @@ define('DB_USER', 'root');
 define('DB_PASS', '');
 define('DB_NAME', 'gym_sistema');
 
+// 🔹 Zona horaria fija para México (UTC -6)
+date_default_timezone_set('Etc/GMT+6');
+ini_set('date.timezone','Etc/GMT+6');
+
 class Database {
     private $host = DB_HOST;
     private $user = DB_USER;
@@ -25,6 +29,10 @@ class Database {
             }
             
             $this->conn->set_charset("utf8");
+
+            // 🔹 Forzar zona horaria en MySQL
+            $this->conn->query("SET time_zone = '-06:00'");
+            
         } catch (Exception $e) {
             die($e->getMessage());
         }

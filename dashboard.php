@@ -903,33 +903,34 @@ include 'includes/sidebar.php';
             }
         }
 
+        
         /* Para igualar la altura de las cards en la misma fila */
-.row.equal-height-cards {
-    display: flex;
-    flex-wrap: wrap;
-}
+        .row.equal-height-cards {
+            display: flex;
+            flex-wrap: wrap;
+        }
 
-.row.equal-height-cards > [class*='col-'] {
-    display: flex;
-    flex-direction: column;
-}
+        .row.equal-height-cards > [class*='col-'] {
+            display: flex;
+            flex-direction: column;
+        }
 
-.row.equal-height-cards .card {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-}
+        .row.equal-height-cards .card {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
 
-.row.equal-height-cards .card .card-body {
-    flex: 1;
-}
+        .row.equal-height-cards .card .card-body {
+            flex: 1;
+        }
 
-/* Para la card de Ingresos Mensuales que tiene canvas */
-.row.equal-height-cards .card .card-body canvas {
-    min-height: 250px;
-    height: 100%;
-    max-height: 100%;
-}
+        /* Para la card de Ingresos Mensuales que tiene canvas */
+        .row.equal-height-cards .card .card-body canvas {
+            min-height: 250px;
+            height: 100%;
+            max-height: 100%;
+        }
     </style>
     
     <!-- AdminLTE CSS -->
@@ -1315,7 +1316,14 @@ include 'includes/sidebar.php';
                     </div>
                 </div>
                 <div class="modal-search">
-                    <input type="text" id="searchClientes" placeholder="🔍 Buscar cliente por nombre, teléfono o email...">
+                    <div class="input-group">
+                        <div class="input-group-prepend">
+                        <span class="input-group-text">
+                            <i class="fas fa-search"></i>
+                        </span>
+                        </div>
+                        <input type="text" id="searchClientes" class="form-control" placeholder="Buscar cliente por nombre, teléfono o email...">
+                    </div>
                 </div>
                 <div class="modal-body">
                     <div class="modal-grid" id="clientesGrid">
@@ -1398,7 +1406,14 @@ include 'includes/sidebar.php';
                     </div>
                 </div>
                 <div class="modal-search">
-                    <input type="text" id="searchProductos" placeholder="🔍 Buscar producto por nombre o categoría...">
+                    <div class="input-group">
+                        <div class="input-group-prepend">
+                        <span class="input-group-text">
+                            <i class="fas fa-search"></i>
+                        </span>
+                        </div>
+                        <input type="text" id="searchProductos" class="form-control" placeholder="Buscar producto por nombre o categoría...">
+                    </div>
                 </div>
                 <div class="modal-body">
                     <div class="modal-grid" id="productosGrid">
@@ -1492,7 +1507,14 @@ include 'includes/sidebar.php';
                     </div>
                 </div>
                 <div class="modal-search">
-                    <input type="text" id="searchInscripciones" placeholder="🔍 Buscar por cliente o plan...">
+                    <div class="input-group">
+                        <div class="input-group-prepend">
+                        <span class="input-group-text">
+                            <i class="fas fa-search"></i>
+                        </span>
+                    </div>
+                    <input type="text" id="searchInscripciones" class="form-control" placeholder="Buscar por cliente o plan...">
+                    </div>
                 </div>
                 <div class="modal-body">
                     <div class="modal-grid" id="inscripcionesGrid">
@@ -1594,7 +1616,14 @@ include 'includes/sidebar.php';
                     </div>
                 </div>
                 <div class="modal-search">
-                    <input type="text" id="searchClases" placeholder="🔍 Buscar clase, instructor o horario...">
+                    <div class="input-group">
+                        <div class="input-group-prepend">
+                        <span class="input-group-text">
+                            <i class="fas fa-search"></i>
+                        </span>
+                        </div>
+                        <input type="text" id="searchClases" class="form-control"placeholder="Buscar clase, instructor o horario...">
+                    </div>
                 </div>
                 <div class="modal-body">
                     <div class="modal-grid" id="clasesGrid">
