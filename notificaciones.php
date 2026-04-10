@@ -1184,20 +1184,7 @@ $stats['notificaciones_automaticas'] = ($result_automatica && $result_automatica
             Swal.fire({
                 title: ' BOTON DE EMERGENCIA ',
                 html: '<p><strong>Este boton es SOLO para uso en caso de emergencia</strong></p>' +
-                    '<p>Las notificaciones automaticas deberian enviarse diariamente sin intervencion manual.</p>' +
-                    '<p>Use este boton SOLO si:</p>' +
-                    '<ul style="text-align: left;">' +
-                    '<li>El sistema automatico no ha enviado las notificaciones</li>' +
-                    '<li>Hubo un error en el proceso automatico</li>' +
-                    '<li>Necesita forzar el envio de notificaciones de vencimiento</li>' +
-                    '</ul>' +
-                    '<hr>' +
-                    '<p>Se enviaran notificaciones a los clientes con membresia proxima a vencer:</p>' +
-                    '<ul style="text-align: left;">' +
-                    '<li><i class="fas fa-envelope"></i> <strong>3 dias antes</strong> del vencimiento</li>' +
-                    '<li><i class="fas fa-exclamation-triangle"></i> <strong>El dia del vencimiento</strong></li>' +
-                    '</ul>' +
-                    '<p class="text-muted small">Nota: Los clientes con plan "Visita" no recibiran estas notificaciones.</p>',
+                    '<p>Las notificaciones automaticas deberian enviarse diariamente sin intervencion manual.</p>',
                 icon: 'warning',
                 showCancelButton: true,
                 confirmButtonText: 'Si, forzar envio (EMERGENCIA)',
