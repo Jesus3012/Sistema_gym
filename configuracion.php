@@ -32,7 +32,6 @@ $config_gimnasio = $config_result->fetch_assoc();
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
     
-    // Guardar configuración del gimnasio
     if ($action === 'save_config') {
         $nombre = $conn->real_escape_string($_POST['nombre_gimnasio']);
         $telefono = $conn->real_escape_string($_POST['telefono']);
@@ -40,8 +39,71 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $direccion = $conn->real_escape_string($_POST['direccion']);
         $horario = $conn->real_escape_string($_POST['horario']);
         
-        $conn->query("UPDATE configuracion_gimnasio SET nombre='$nombre', telefono='$telefono', email='$email', direccion='$direccion', horario='$horario' WHERE id=1");
-        echo json_encode(['success' => true]);
+        // Manejo del logo
+        $logo_path = null;
+        
+        // Verificar si se subió un nuevo logo
+        if (isset($_FILES['logo']) && $_FILES['logo']['error'] === UPLOAD_ERR_OK) {
+            $archivo = $_FILES['logo'];
+            $nombre_original = $archivo['name'];
+            $tipo = $archivo['type'];
+            $tamano = $archivo['size'];
+            $temp = $archivo['tmp_name'];
+            
+            // Validar tipo de archivo
+            $tipos_permitidos = ['image/jpeg', 'image/jpg', 'image/png'];
+            if (!in_array($tipo, $tipos_permitidos)) {
+                echo json_encode(['success' => false, 'message' => 'Solo se permiten archivos JPG, JPEG y PNG']);
+                exit;
+            }
+            
+            // Validar tamaño (máximo 2MB)
+            if ($tamano > 2 * 1024 * 1024) {
+                echo json_encode(['success' => false, 'message' => 'El archivo no puede superar los 2MB']);
+                exit;
+            }
+            
+            // Crear directorio img si no existe
+            $directorio = 'img/';
+            if (!file_exists($directorio)) {
+                mkdir($directorio, 0777, true);
+            }
+            
+            // Generar nombre único para el logo
+            $extension = pathinfo($nombre_original, PATHINFO_EXTENSION);
+            $nombre_logo = 'logo-gym.' . $extension;
+            $ruta_completa = $directorio . $nombre_logo;
+            
+            // Obtener logo anterior
+            $query_old = "SELECT logo FROM configuracion_gimnasio WHERE id = 1";
+            $result_old = $conn->query($query_old);
+            $old_logo = $result_old->fetch_assoc();
+            
+            if ($old_logo && !empty($old_logo['logo']) && file_exists($old_logo['logo'])) {
+                unlink($old_logo['logo']);
+            }
+            
+            // Subir nuevo archivo
+            if (move_uploaded_file($temp, $ruta_completa)) {
+                $logo_path = 'img/' . $nombre_logo;
+            } else {
+                echo json_encode(['success' => false, 'message' => 'Error al subir el archivo']);
+                exit;
+            }
+        }
+        
+        // Construir la consulta SQL
+        if ($logo_path) {
+            $query = "UPDATE configuracion_gimnasio SET nombre='$nombre', telefono='$telefono', email='$email', direccion='$direccion', horario='$horario', logo='$logo_path' WHERE id=1";
+        } else {
+            $query = "UPDATE configuracion_gimnasio SET nombre='$nombre', telefono='$telefono', email='$email', direccion='$direccion', horario='$horario' WHERE id=1";
+        }
+        
+        if ($conn->query($query)) {
+            echo json_encode(['success' => true, 'message' => 'Configuración guardada correctamente']);
+        } else {
+            echo json_encode(['success' => false, 'message' => 'Error al guardar la configuración: ' . $conn->error]);
+        }
         exit;
     }
     
@@ -521,45 +583,45 @@ $total_clientes = $conn->query("SELECT COUNT(*) as total FROM clientes WHERE est
         }
 
         /* Contenedor para el botón mostrar alerta - centrado */
-.alert-boton-container {
-    margin-top: 15px;
-    margin-bottom: 10px;
-    text-align: center;
-}
+        .alert-boton-container {
+            margin-top: 15px;
+            margin-bottom: 10px;
+            text-align: center;
+        }
 
-/* Botones para mostrar alertas ocultas - azul suave con borde fuerte */
-.btn-mostrar-alerta {
-    background: #eff6ff;  /* Azul muy suave de fondo */
-    border: 2px solid #3b82f6;  /* Borde azul fuerte */
-    border-radius: 50px;
-    padding: 10px 28px;
-    cursor: pointer;
-    font-size: 13px;
-    font-weight: 600;
-    color: #2563eb;  /* Texto azul */
-    transition: all 0.3s ease;
-    display: inline-flex;
-    align-items: center;
-    gap: 10px;
-    letter-spacing: 0.5px;
-    box-shadow: 0 2px 8px rgba(59, 130, 246, 0.15);
-}
+        /* Botones para mostrar alertas ocultas - azul suave con borde fuerte */
+        .btn-mostrar-alerta {
+            background: #eff6ff;  /* Azul muy suave de fondo */
+            border: 2px solid #3b82f6;  /* Borde azul fuerte */
+            border-radius: 50px;
+            padding: 10px 28px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+            color: #2563eb;  /* Texto azul */
+            transition: all 0.3s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            letter-spacing: 0.5px;
+            box-shadow: 0 2px 8px rgba(59, 130, 246, 0.15);
+        }
 
-.btn-mostrar-alerta:hover {
-    background: #dbeafe;  /* Azul un poco más intenso al hover */
-    border-color: #2563eb;  /* Borde más fuerte */
-    transform: translateY(-2px);
-    color: #1e40af;
-    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.25);
-}
+        .btn-mostrar-alerta:hover {
+            background: #dbeafe;  /* Azul un poco más intenso al hover */
+            border-color: #2563eb;  /* Borde más fuerte */
+            transform: translateY(-2px);
+            color: #1e40af;
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.25);
+        }
 
-.btn-mostrar-alerta:active {
-    transform: translateY(0px);
-}
+        .btn-mostrar-alerta:active {
+            transform: translateY(0px);
+        }
 
-.btn-mostrar-alerta i {
-    font-size: 14px;
-}
+        .btn-mostrar-alerta i {
+            font-size: 14px;
+        }
 
         /* Estilos para acciones de clientes en una línea */
         .acciones-cliente {
@@ -579,6 +641,60 @@ $total_clientes = $conn->query("SELECT COUNT(*) as total FROM clientes WHERE est
         .table th:first-child,
         .table td:first-child {
             display: none;
+        }
+
+        /* Estilos para el input de archivo */
+        .custom-file {
+            position: relative;
+            display: inline-block;
+            width: 100%;
+            height: calc(1.5em + 0.75rem + 2px);
+            margin-bottom: 0;
+        }
+
+        .custom-file-input {
+            position: relative;
+            z-index: 2;
+            width: 100%;
+            height: calc(1.5em + 0.75rem + 2px);
+            margin: 0;
+            opacity: 0;
+        }
+
+        .custom-file-label {
+            position: absolute;
+            top: 0;
+            right: 0;
+            left: 0;
+            z-index: 1;
+            height: calc(1.5em + 0.75rem + 2px);
+            padding: 0.375rem 0.75rem;
+            font-weight: 400;
+            line-height: 1.5;
+            color: #495057;
+            background-color: #fff;
+            border: 1px solid #ced4da;
+            border-radius: 0.25rem;
+            overflow: hidden;
+            white-space: nowrap;
+            text-overflow: ellipsis;
+        }
+
+        .custom-file-label::after {
+            position: absolute;
+            top: 0;
+            right: 0;
+            bottom: 0;
+            z-index: 3;
+            display: block;
+            height: calc(1.5em + 0.75rem);
+            padding: 0.375rem 0.75rem;
+            line-height: 1.5;
+            color: #495057;
+            content: "Examinar";
+            background-color: #e9ecef;
+            border-left: inherit;
+            border-radius: 0 0.25rem 0.25rem 0;
         }
     </style>
 </head>
@@ -654,8 +770,62 @@ $total_clientes = $conn->query("SELECT COUNT(*) as total FROM clientes WHERE est
                 <h3 class="card-title"><i class="fas fa-building"></i> Información del Gimnasio</h3>
             </div>
             <div class="card-body">
-                <form id="formInfoGimnasio">
+                <form id="formInfoGimnasio" enctype="multipart/form-data">
                     <div class="row">
+                        <!-- Sección Logo - Versión mejorada y más bonita -->
+                        <div class="col-md-12">
+                            <div class="form-group">
+                                <label><i class="fas fa-image"></i> Logo del Gimnasio</label>
+                                <div class="card bg-light">
+                                    <div class="card-body">
+                                        <div class="row align-items-center">
+                                            <div class="col-md-3 text-center">
+                                                <?php 
+                                                $logo_path = 'img/logo-gym.png';
+                                                if(!empty($config_gimnasio['logo']) && file_exists($config_gimnasio['logo'])) {
+                                                    $logo_path = $config_gimnasio['logo'];
+                                                }
+                                                ?>
+                                                <div class="text-center mb-3">
+                                                    <img id="preview_logo" src="<?php echo htmlspecialchars($logo_path); ?>" 
+                                                        alt="Logo del gimnasio" 
+                                                        style="max-width: 150px; max-height: 150px; border: 1px solid #ddd; padding: 5px; border-radius: 5px; object-fit: contain;">
+                                                </div>
+                                            </div>
+                                            <div class="col-md-9">
+                                                <div class="custom-file">
+                                                    <input type="file" class="custom-file-input" id="logo" name="logo" accept="image/*">
+                                                    <label class="custom-file-label" for="logo">Seleccionar logo (PNG, JPG, JPEG, GIF, WEBP, BMP)</label>
+                                                </div>
+                                                
+                                                <!-- Alerta ocultable con todas las recomendaciones -->
+                                                <div class="alert alert-info alert-ocultable mt-3" data-alerta-id="logo_info" style="position: relative;">
+                                                    <i class="fas fa-info-circle"></i> 
+                                                    <strong>Recomendaciones para el logo:</strong>
+                                                    <ul class="mb-0 mt-1">
+                                                        <li>Formatos permitidos: PNG, JPG, JPEG, GIF, WEBP, BMP</li>
+                                                        <li>Tamaño máximo: 2MB</li>
+                                                        <li>Dimensión recomendada: 200x200px</li>
+                                                        <li>Fondo transparente para mejor integración</li>
+                                                        <li>El logo se mostrará en facturas, reportes y en la interfaz del sistema</li>
+                                                    </ul>
+                                                    <button class="btn-ocultar" onclick="event.preventDefault(); event.stopPropagation(); ocultarAlerta('logo_info')" title="Ocultar recomendaciones">
+                                                        <i class="fas fa-times"></i>
+                                                    </button>
+                                                </div>
+                                                
+                                                <?php if(!empty($config_gimnasio['logo'])): ?>
+                                                    <button type="button" class="btn btn-danger btn-sm mt-2" onclick="eliminarLogo()">
+                                                        <i class="fas fa-trash"></i> Eliminar logo actual
+                                                    </button>
+                                                <?php endif; ?>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
                         <div class="col-md-6">
                             <div class="form-group">
                                 <label><i class="fas fa-building"></i> Nombre del Gimnasio</label>
@@ -1508,6 +1678,10 @@ $total_clientes = $conn->query("SELECT COUNT(*) as total FROM clientes WHERE est
                     textoBoton = 'Más información';
                     iconoBoton = 'fa-info-circle';
                     break;
+                case 'logo_info':
+                    textoBoton = 'Mostrar recomendaciones';
+                    iconoBoton = 'fa-image';
+                    break;
                 default:
                     textoBoton = 'Mostrar alerta';
                     iconoBoton = 'fa-eye';
@@ -1537,7 +1711,7 @@ $total_clientes = $conn->query("SELECT COUNT(*) as total FROM clientes WHERE est
                     if (estaOculta) {
                         $(this).addClass('oculto');
                         
-                        // Determinar el texto del botón
+                        // Determinar el texto del botón según el ID de la alerta
                         let textoBoton = '';
                         let iconoBoton = '';
                         switch(alertaId) {
@@ -1552,6 +1726,10 @@ $total_clientes = $conn->query("SELECT COUNT(*) as total FROM clientes WHERE est
                             case 'usuario_info':
                                 textoBoton = 'Más información';
                                 iconoBoton = 'fa-info-circle';
+                                break;
+                            case 'logo_info':
+                                textoBoton = 'Mostrar recomendaciones';
+                                iconoBoton = 'fa-image';
                                 break;
                             default:
                                 textoBoton = 'Mostrar alerta';
@@ -1604,6 +1782,182 @@ $total_clientes = $conn->query("SELECT COUNT(*) as total FROM clientes WHERE est
                 error: function(xhr, status, error) {
                     Swal.fire({ icon: 'error', title: 'Error', text: 'Ocurrió un error: ' + error, target: document.body });
                 }
+            });
+        });
+
+        // Agrega esta función para eliminar el logo
+        function eliminarLogo() {
+            Swal.fire({
+                title: '¿Eliminar logo?',
+                text: "Esta acción eliminará el logo actual del gimnasio",
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonColor: '#d33',
+                cancelButtonColor: '#3085d6',
+                confirmButtonText: 'Sí, eliminar',
+                cancelButtonText: 'Cancelar',
+                target: document.body
+            }).then((result) => {
+                if (result.isConfirmed) {
+                    $.ajax({
+                        url: 'includes/eliminar_logo.php',
+                        type: 'POST',
+                        dataType: 'json',
+                        success: function(response) {
+                            if (response.success) {
+                                Swal.fire({
+                                    icon: 'success',
+                                    title: 'Eliminado',
+                                    text: response.message,
+                                    target: document.body,
+                                    showConfirmButton: false,
+                                    timer: 1500
+                                }).then(() => {
+                                    location.reload();
+                                });
+                            } else {
+                                Swal.fire({
+                                    icon: 'error',
+                                    title: 'Error',
+                                    text: response.message,
+                                    target: document.body
+                                });
+                            }
+                        },
+                        error: function() {
+                            Swal.fire({
+                                icon: 'error',
+                                title: 'Error',
+                                text: 'Ocurrió un error al eliminar el logo',
+                                target: document.body
+                            });
+                        }
+                    });
+                }
+            });
+        }
+
+        // Modifica el envío del formulario de información del gimnasio
+        $(document).ready(function() {
+            // Vista previa del logo
+            $('#logo').on('change', function(e) {
+                const file = e.target.files[0];
+                if (file) {
+                    // Validar tipo de archivo
+                    const tiposPermitidos = ['image/jpeg', 'image/jpg', 'image/png'];
+                    if (!tiposPermitidos.includes(file.type)) {
+                        Swal.fire({
+                            icon: 'error',
+                            title: 'Error',
+                            text: 'Solo se permiten archivos JPG, JPEG y PNG',
+                            target: document.body
+                        });
+                        $(this).val('');
+                        return;
+                    }
+                    
+                    // Validar tamaño (máximo 2MB)
+                    if (file.size > 2 * 1024 * 1024) {
+                        Swal.fire({
+                            icon: 'error',
+                            title: 'Error',
+                            text: 'El archivo no puede superar los 2MB',
+                            target: document.body
+                        });
+                        $(this).val('');
+                        return;
+                    }
+                    
+                    const reader = new FileReader();
+                    reader.onload = function(e) {
+                        $('#preview_logo').attr('src', e.target.result);
+                    }
+                    reader.readAsDataURL(file);
+                    
+                    // Mostrar nombre del archivo
+                    $(this).next('.custom-file-label').html(file.name);
+                } else {
+                    $(this).next('.custom-file-label').html('Seleccionar logo (PNG, JPG, JPEG)');
+                }
+            });
+            
+            // Los demás eventos de formularios...
+            $('#formPlan, #formCategoria, #formProveedor, #formProducto, #formClase, #formUsuario, #formCliente').on('submit', function(e) {
+                e.preventDefault();
+                let action = '';
+                if ($(this).attr('id') === 'formPlan') action = 'save_plan';
+                else if ($(this).attr('id') === 'formCategoria') action = 'save_categoria';
+                else if ($(this).attr('id') === 'formProveedor') action = 'save_proveedor';
+                else if ($(this).attr('id') === 'formProducto') action = 'save_producto';
+                else if ($(this).attr('id') === 'formClase') action = 'save_clase';
+                else if ($(this).attr('id') === 'formUsuario') action = 'save_usuario';
+                else if ($(this).attr('id') === 'formCliente') action = 'save_cliente';
+                
+                let data = $(this).serialize() + '&action=' + action;
+                $.ajax({
+                    url: 'configuracion.php',
+                    method: 'POST',
+                    data: data,
+                    success: function(response) {
+                        let res;
+                        try { res = typeof response === 'string' ? JSON.parse(response) : response; } catch(e) { res = { success: true }; }
+                        if (res.success) {
+                            Swal.fire({ icon: 'success', title: 'Guardado', text: 'Registro guardado correctamente', target: document.body, timer: 1500, showConfirmButton: false });
+                            setTimeout(() => location.reload(), 1500);
+                        } else if (res.error) {
+                            Swal.fire({ icon: 'error', title: 'Error', text: res.error, target: document.body });
+                        }
+                    },
+                    error: function(xhr, status, error) {
+                        Swal.fire({ icon: 'error', title: 'Error', text: 'Ocurrió un error: ' + error, target: document.body });
+                    }
+                });
+            });
+            
+            // Formulario específico de configuración del gimnasio (con logo)
+            $('#formInfoGimnasio').on('submit', function(e) {
+                e.preventDefault();
+                
+                const formData = new FormData(this);
+                formData.append('action', 'save_config');
+                
+                $.ajax({
+                    url: 'configuracion.php',
+                    type: 'POST',
+                    data: formData,
+                    processData: false,
+                    contentType: false,
+                    dataType: 'json',
+                    success: function(response) {
+                        if (response.success) {
+                            Swal.fire({
+                                icon: 'success',
+                                title: '¡Éxito!',
+                                text: response.message,
+                                target: document.body,
+                                showConfirmButton: false,
+                                timer: 2000
+                            }).then(() => {
+                                location.reload();
+                            });
+                        } else {
+                            Swal.fire({
+                                icon: 'error',
+                                title: 'Error',
+                                text: response.message,
+                                target: document.body
+                            });
+                        }
+                    },
+                    error: function(xhr, status, error) {
+                        Swal.fire({
+                            icon: 'error',
+                            title: 'Error',
+                            text: 'Ocurrió un error al guardar la configuración: ' + error,
+                            target: document.body
+                        });
+                    }
+                });
             });
         });
     </script>

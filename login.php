@@ -28,10 +28,55 @@ if (isset($_SESSION['user_id']) && isset($_SESSION['login_time'])) {
 $error = '';
 $mensaje_swal = '';
 
-if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    $database = new Database();
-    $db = $database->getConnection();
+// Obtener configuración del gimnasio (incluyendo el logo)
+$database = new Database();
+$db = $database->getConnection();
+
+// Función para obtener el logo del gimnasio
+function getGymLogo($conn) {
+    // Intentar obtener logo de la base de datos
+    $query = "SELECT logo FROM configuracion_gimnasio WHERE id = 1";
+    $result = $conn->query($query);
     
+    if ($result && $row = $result->fetch_assoc()) {
+        if (!empty($row['logo']) && file_exists($row['logo'])) {
+            // Agregar timestamp para evitar caché
+            $timestamp = filemtime($row['logo']);
+            return $row['logo'] . '?v=' . $timestamp;
+        }
+    }
+    
+    // Buscar logo con cualquier extensión en la carpeta img
+    $extensiones = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'ico'];
+    foreach ($extensiones as $ext) {
+        $ruta = "img/logo-gym." . $ext;
+        if (file_exists($ruta)) {
+            $timestamp = filemtime($ruta);
+            return $ruta . '?v=' . $timestamp;
+        }
+    }
+    
+    // Logo por defecto (placeholder)
+    return 'https://via.placeholder.com/80x80?text=GYM';
+}
+
+// Función para obtener el nombre del gimnasio
+function getGymName($conn) {
+    $query = "SELECT nombre FROM configuracion_gimnasio WHERE id = 1";
+    $result = $conn->query($query);
+    
+    if ($result && $row = $result->fetch_assoc()) {
+        return htmlspecialchars($row['nombre']);
+    }
+    
+    return 'Gym System';
+}
+
+// Obtener datos del gimnasio
+$gym_logo = getGymLogo($db);
+$gym_name = getGymName($db);
+
+if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $email = mysqli_real_escape_string($db, $_POST['email']);
     $password = $_POST['password'];
     
@@ -100,7 +145,7 @@ if ($error == 'campos_vacios') {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes">
-    <title>Iniciar Sesión - Gym System</title>
+    <title><?php echo $gym_name; ?> - Iniciar Sesión</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <!-- SweetAlert2 CSS -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css">
@@ -118,7 +163,7 @@ if ($error == 'campos_vacios') {
         body {
             font-family: 'Segoe UI', 'Poppins', 'Roboto', sans-serif;
             min-height: 100vh;
-            background: #d1d4fe; /* Azul sólido como antes */
+            background: #f5f5ff;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -160,10 +205,12 @@ if ($error == 'campos_vacios') {
         .logo-img {
             width: 80px;
             height: 80px;
-            object-fit: cover;
+            object-fit: contain; /* Cambiado de cover a contain para que no se recorte */
             border-radius: 20px;
             box-shadow: 0 5px 15px rgba(0, 51, 102, 0.2);
             transition: transform 0.3s ease;
+            background-color: #f8f9fa; /* Fondo claro por si el logo es transparente */
+            padding: 5px;
         }
 
         .logo-img:hover {
@@ -438,13 +485,16 @@ if ($error == 'campos_vacios') {
 <body>
     <div class="container">
         <div class="login-container">
-            <!-- Header con logo y título -->
+            <!-- Header con logo y título dinámicos -->
             <div class="login-header">
                 <div class="logo-wrapper">
-                    <img src="img/logo-gym.jpg" alt="Gym System Logo" class="logo-img" onerror="this.src='https://via.placeholder.com/80x80?text=GYM'">
+                    <img src="<?php echo $gym_logo; ?>" 
+                         alt="<?php echo $gym_name; ?> Logo" 
+                         class="logo-img" 
+                         onerror="this.src='https://via.placeholder.com/80x80?text=GYM'">
                 </div>
                 <div class="header-text">
-                    <h1>Sistema de Gimnasio</h1>
+                    <h1><?php echo $gym_name; ?></h1>
                     <p>Inicia sesión para continuar</p>
                 </div>
             </div>
@@ -491,7 +541,7 @@ if ($error == 'campos_vacios') {
             </div>
             
             <div class="login-footer">
-                &copy; <?php echo date('Y'); ?> Todos los derechos reservados.
+                &copy; <?php echo date('Y'); ?> <?php echo $gym_name; ?>. Todos los derechos reservados.
             </div>
         </div>
     </div>

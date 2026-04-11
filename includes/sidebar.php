@@ -583,7 +583,7 @@ body.sidebar-collapsed .main-content {
 
             <li class="nav-item">
                 <a href="historial_stock.php" class="nav-link <?php echo $active_module == 'historial' ? 'active' : ''; ?>">
-                    <i class="fas fa-box"></i>
+                    <i class="fas fa-history"></i>
                     <span class="nav-text">Historial Stock</span>
                 </a>
             </li>
@@ -602,7 +602,7 @@ body.sidebar-collapsed .main-content {
 
             <li class="nav-item">
                 <a href="inscripciones_clases.php" class="nav-link <?php echo $active_module == 'clases_inscriptions' ? 'active' : ''; ?>">
-                    <i class="fas fa-chalkboard-user"></i>
+                    <i class="fas fa-user-check"></i>
                     <span class="nav-text">Inscripciones a Clases</span>
                 </a>
             </li>
@@ -614,7 +614,7 @@ body.sidebar-collapsed .main-content {
             </li>
             <li class="nav-item">
                 <a href="notificaciones.php" class="nav-link <?php echo $active_module == 'notificaciones' ? 'active' : ''; ?>">
-                    <i class="fas fa-chalkboard-user"></i>
+                    <i class="fas fa-bell"></i>
                     <span class="nav-text">Notificaciones</span>
                 </a>
             </li>
