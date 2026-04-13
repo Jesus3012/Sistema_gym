@@ -109,9 +109,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
             
             // Calcular fecha fin según el plan
             if ($plan['duracion_dias'] > 0) {
-                // Para plan Visita (duración 1 día), la fecha fin es la misma fecha de inicio (solo dura el día actual)
-                if ($plan['plan_nombre'] == 'Visita' || $plan['duracion_dias'] == 1) {
-                    $fecha_fin = $fecha_inicio; // Misma fecha de inicio
+                // Para plan Visita o cualquier plan de 1 día, la fecha fin es la misma fecha de inicio
+                if ($plan['duracion_dias'] == 1) {
+                    $fecha_fin = $fecha_inicio;
                 } else {
                     $fecha_fin = date('Y-m-d', strtotime($fecha_inicio . ' + ' . $plan['duracion_dias'] . ' days'));
                 }
@@ -171,6 +171,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
 
             // Limpiar token después de uso exitoso
             unset($_SESSION['csrf_token']);
+            
+            // Generar nuevo token para el siguiente formulario
+            $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 
             // Guardar mensaje en sesión
             if (!empty($email_cliente) && $envio_correo) {
@@ -209,12 +212,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
         $metodo_pago = $_POST['metodo_pago'];
         $referencia = $_POST['referencia'] ?? null;
         
-        // Verificar si ya se procesó esta renovación
-        if (isset($_SESSION['last_renewal_' . $inscripcion_id]) && 
-            $_SESSION['last_renewal_' . $inscripcion_id] > time() - 5) {
-            throw new Exception('Ya se está procesando una renovación para esta inscripción');
+        // Verificar si ya se procesó esta renovación (prevenir doble clic)
+        $clave_renovacion = 'last_renewal_' . $inscripcion_id;
+        if (isset($_SESSION[$clave_renovacion]) && $_SESSION[$clave_renovacion] > time() - 10) {
+            throw new Exception('Ya se está procesando una renovación para esta inscripción. Por favor espere.');
         }
-        $_SESSION['last_renewal_' . $inscripcion_id] = time();
+        $_SESSION[$clave_renovacion] = time();
         
         // Validar que la fecha de inicio no sea anterior a hoy
         if (strtotime($fecha_inicio) < strtotime(date('Y-m-d'))) {
@@ -232,11 +235,36 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
             throw new Exception('Plan no válido');
         }
         
+        // Obtener inscripción actual para verificar estado
+        $stmt_ins = $conn->prepare("SELECT i.*, p.nombre as plan_actual, p.duracion_dias as duracion_actual FROM inscripciones i JOIN planes p ON i.plan_id = p.id WHERE i.id = ?");
+        $stmt_ins->bind_param("i", $inscripcion_id);
+        $stmt_ins->execute();
+        $inscripcion_actual = $stmt_ins->get_result()->fetch_assoc();
+        
+        // VERIFICACIÓN: Solo permitir renovar si la inscripción está VENCIDA o es un plan de 1 día VENCIDO
+        if ($inscripcion_actual['estado'] == 'activa') {
+            // Para planes de 1 día, verificar si ya pasó la fecha
+            if ($inscripcion_actual['duracion_actual'] == 1) {
+                $fecha_fin_actual = $inscripcion_actual['fecha_fin'];
+                $hoy = new DateTime();
+                $hoy->setTime(0, 0, 0);
+                $fecha_fin_obj = new DateTime($fecha_fin_actual);
+                $fecha_fin_obj->setTime(0, 0, 0);
+                
+                if ($hoy <= $fecha_fin_obj) {
+                    throw new Exception('No se puede renovar un plan de 1 día mientras está activo el día de hoy. Espere hasta mañana.');
+                }
+            } else {
+                // Para planes normales, NO permitir renovar mientras esté activo
+                throw new Exception('No se puede renovar mientras la inscripción está activa. Espere a que venza.');
+            }
+        }
+        
         // Calcular fecha fin según el plan
         if ($plan['duracion_dias'] > 0) {
-            // Para plan Visita (duración 1 día), la fecha fin es la misma fecha de inicio
-            if ($plan['plan_nombre'] == 'Visita' || $plan['duracion_dias'] == 1) {
-                $fecha_fin = $fecha_inicio; // Misma fecha de inicio (solo dura el día actual)
+            // Para plan de 1 día, la fecha fin es la misma fecha de inicio
+            if ($plan['duracion_dias'] == 1) {
+                $fecha_fin = $fecha_inicio;
             } else {
                 $fecha_fin = date('Y-m-d', strtotime($fecha_inicio . ' + ' . $plan['duracion_dias'] . ' days'));
             }
@@ -294,7 +322,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
         }
 
         // Limpiar la marca de tiempo después de procesar
-        unset($_SESSION['last_renewal_' . $inscripcion_id]);
+        unset($_SESSION[$clave_renovacion]);
 
         // Guardar mensaje en sesión
         if (!empty($email_cliente) && $envio_correo) {
@@ -820,14 +848,25 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
                 margin: 0;
             }
         }
-        /* Para que el modal se vea correctamente cuando se muestra automáticamente */
-.modal.show.d-block {
-    display: block;
-}
-
-.modal-backdrop {
-    z-index: 1040;
-}
+        
+        .modal.show.d-block {
+            display: block;
+        }
+        
+        .modal-backdrop {
+            z-index: 1040;
+        }
+        
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        
+        /* Estilo para campo de precio readonly en renovación */
+        .precio-readonly {
+            background-color: #e9ecef;
+            cursor: not-allowed;
+        }
     </style>
 </head>
 <body>
@@ -913,12 +952,63 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
                             </tr>
                         </thead>
                         <tbody>
-                            <?php foreach($inscripciones as $ins): ?>
+                            <?php foreach($inscripciones as $ins): 
+                                // ========== LÓGICA PARA EL BOTÓN RENOVAR ==========
+                                $renovar_disabled = false;
+                                $renovar_title = "Renovar inscripción";
+                                $mensaje_renovar = "";
+                                
+                                // Caso 1: Inscripción cancelada - NO se puede renovar
+                                if($ins['estado'] == 'cancelada') {
+                                    $renovar_disabled = true;
+                                    $renovar_title = "No se puede renovar una inscripción cancelada";
+                                    $mensaje_renovar = $renovar_title;
+                                } 
+                                // Caso 2: Plan sin vencimiento (duracion_dias = 0) - NO se puede renovar
+                                elseif($ins['duracion_dias'] == 0) {
+                                    $renovar_disabled = true;
+                                    $renovar_title = "Este plan no requiere renovación (sin vencimiento)";
+                                    $mensaje_renovar = $renovar_title;
+                                }
+                                // Caso 3: Planes de 1 día (Visita o cualquier plan de 1 día)
+                                elseif($ins['duracion_dias'] == 1) {
+                                    if($ins['estado'] == 'activa') {
+                                        // Verificar si la fecha de hoy es igual o menor a la fecha_fin
+                                        $fecha_fin_plan = new DateTime($ins['fecha_fin']);
+                                        $hoy = new DateTime();
+                                        $hoy->setTime(0, 0, 0);
+                                        $fecha_fin_plan->setTime(0, 0, 0);
+                                        
+                                        if($hoy <= $fecha_fin_plan) {
+                                            $renovar_disabled = true;
+                                            $renovar_title = "No se puede renovar un plan de 1 día mientras está activo. Espere hasta mañana.";
+                                            $mensaje_renovar = $renovar_title;
+                                        } else {
+                                            $renovar_disabled = false;
+                                            $renovar_title = "Renovar plan (día siguiente)";
+                                        }
+                                    } elseif($ins['estado'] == 'vencida') {
+                                        $renovar_disabled = false;
+                                        $renovar_title = "Renovar plan (vencido)";
+                                    }
+                                }
+                                // Caso 4: Planes normales (duración > 1 día)
+                                else {
+                                    if($ins['estado'] == 'vencida') {
+                                        $renovar_disabled = false;
+                                        $renovar_title = "Renovar inscripción (vencida)";
+                                    } else {
+                                        $renovar_disabled = true;
+                                        $renovar_title = "No se puede renovar mientras la inscripción está activa. Espere a que venza.";
+                                        $mensaje_renovar = $renovar_title;
+                                    }
+                                }
+                            ?>
                             <tr>
                                 <td><strong><?php echo htmlspecialchars($ins['cliente_nombre'] . ' ' . $ins['cliente_apellido']); ?></strong></td>
                                 <td><?php echo htmlspecialchars($ins['cliente_telefono']); ?></td>
                                 <td>
-                                    <?php if($ins['plan_nombre'] == 'Visita'): ?>
+                                    <?php if($ins['duracion_dias'] == 1): ?>
                                         <span class="badge-visita"><?php echo htmlspecialchars($ins['plan_nombre']); ?></span>
                                     <?php else: ?>
                                         <?php echo htmlspecialchars($ins['plan_nombre']); ?>
@@ -927,7 +1017,7 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
                                 <td><?php echo date('d/m/Y', strtotime($ins['fecha_inicio'])); ?></td>
                                 <td>
                                     <?php 
-                                    if($ins['plan_nombre'] == 'Visita') {
+                                    if($ins['duracion_dias'] == 1) {
                                         echo '<span class="text-warning">' . date('d/m/Y', strtotime($ins['fecha_fin'])) . ' (Solo hoy)</span>';
                                     } else {
                                         echo $ins['duracion_dias'] > 0 ? date('d/m/Y', strtotime($ins['fecha_fin'])) : 'Sin vencimiento';
@@ -945,104 +1035,25 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
                                     <?php endif; ?>
                                 </td>
                                 <td class="acciones-cell">
-                                <div class="acciones-container">
-                                    <button class="btn-accion btn-detalle" onclick="verDetalle(<?php echo $ins['id']; ?>)" title="Ver detalles completos">
-                                        <i class="fas fa-eye"></i> <span>Ver</span>
-                                    </button>
-                                    
-                                    <?php
-                                    // Verificar si el botón de renovar debe estar deshabilitado
-                                    $renovar_disabled = false;
-                                    $renovar_title = "Renovar inscripción";
-                                    $mensaje_renovar = "";
-                                    
-                                    if($ins['estado'] == 'cancelada') {
-                                        $renovar_disabled = true;
-                                        $renovar_title = "No se puede renovar una inscripción cancelada";
-                                        $mensaje_renovar = $renovar_title;
-                                    } 
-                                    elseif($ins['plan_nombre'] == 'Visita') {
-                                        // Para planes de visita (duración 1 día)
-                                        $fecha_inicio = new DateTime($ins['fecha_inicio']);
-                                        $hoy = new DateTime();
-                                        $hoy->setTime(0, 0, 0);
-                                        $fecha_inicio->setTime(0, 0, 0);
-                                        
-                                        // Calcular diferencia en días
-                                        $diferencia_dias = $hoy->diff($fecha_inicio)->days;
-                                        
-                                        if($ins['estado'] == 'activa') {
-                                            // Si es el mismo día de la visita
-                                            if($hoy == $fecha_inicio) {
-                                                $renovar_disabled = true;
-                                                $renovar_title = "No se puede renovar el mismo día. La visita es válida solo por hoy. Puede renovar a partir de mañana.";
-                                                $mensaje_renovar = $renovar_title;
-                                            } 
-                                            // Si la visita ya pasó y está activa (posiblemente no se actualizó el estado)
-                                            elseif($hoy > $fecha_inicio) {
-                                                $renovar_disabled = false;
-                                                $renovar_title = "Renovar visita (día siguiente)";
-                                                $mensaje_renovar = "";
-                                            }
-                                            else {
-                                                $renovar_disabled = false;
-                                                $renovar_title = "Renovar visita";
-                                            }
-                                        } 
-                                        elseif($ins['estado'] == 'vencida') {
-                                            // Si está vencida, se puede renovar
-                                            $renovar_disabled = false;
-                                            $renovar_title = "Renovar visita (vencida)";
-                                        }
-                                    }
-                                    elseif($ins['estado'] == 'activa') {
-                                        // Para planes normales (mensual, trimestral, etc.)
-                                        if($ins['fecha_fin'] && $ins['fecha_fin'] != '0000-00-00') {
-                                            $fecha_fin = new DateTime($ins['fecha_fin']);
-                                            $hoy = new DateTime();
-                                            $hoy->setTime(0, 0, 0);
-                                            $fecha_fin->setTime(0, 0, 0);
-                                            
-                                            if($fecha_fin > $hoy) {
-                                                $dias_restantes = $hoy->diff($fecha_fin)->days;
-                                                if($dias_restantes > 7) {
-                                                    $renovar_disabled = true;
-                                                    $renovar_title = "No se puede renovar. La inscripción aún tiene $dias_restantes días activos.";
-                                                    $mensaje_renovar = $renovar_title;
-                                                } elseif($dias_restantes <= 7 && $dias_restantes >= 0) {
-                                                    $renovar_title = "Renovar inscripción (próxima a vencer - $dias_restantes días restantes)";
-                                                }
-                                            } else {
-                                                $renovar_disabled = false;
-                                                $renovar_title = "Renovar inscripción (vencida)";
-                                            }
-                                        } else {
-                                            // Plan sin vencimiento
-                                            $renovar_disabled = true;
-                                            $renovar_title = "Este plan no requiere renovación (sin vencimiento)";
-                                            $mensaje_renovar = $renovar_title;
-                                        }
-                                    } 
-                                    elseif($ins['estado'] == 'vencida') {
-                                        $renovar_disabled = false;
-                                        $renovar_title = "Renovar inscripción (vencida)";
-                                    }
-                                    ?>
-                                    
-                                    <button class="btn-accion btn-renovar" 
-                                            onclick="abrirRenovar(<?php echo $ins['id']; ?>, <?php echo $ins['cliente_id']; ?>, <?php echo $renovar_disabled ? 'true' : 'false'; ?>, '<?php echo addslashes($mensaje_renovar ?: $renovar_title); ?>')"
-                                            <?php echo $renovar_disabled ? 'disabled style="opacity: 0.5; cursor: pointer;"' : ''; ?>
-                                            title="<?php echo $renovar_title; ?>">
-                                        <i class="fas fa-sync-alt"></i> <span>Renovar</span>
-                                    </button>
-                                    
-                                    <?php if($ins['estado'] == 'activa'): ?>
-                                        <button class="btn-accion btn-cancelar" onclick="cancelarInscripcion(<?php echo $ins['id']; ?>)" title="Cancelar inscripción">
-                                            <i class="fas fa-times-circle"></i> <span>Cancelar</span>
+                                    <div class="acciones-container">
+                                        <button class="btn-accion btn-detalle" onclick="verDetalle(<?php echo $ins['id']; ?>)" title="Ver detalles completos">
+                                            <i class="fas fa-eye"></i> <span>Ver</span>
                                         </button>
-                                    <?php endif; ?>
-                                </div>
-                            </td>
+                                        
+                                        <button class="btn-accion btn-renovar" 
+                                                onclick="abrirRenovar(<?php echo $ins['id']; ?>, <?php echo $ins['cliente_id']; ?>, <?php echo $renovar_disabled ? 'true' : 'false'; ?>, '<?php echo addslashes($mensaje_renovar ?: $renovar_title); ?>')"
+                                                <?php echo $renovar_disabled ? 'disabled style="opacity: 0.5; cursor: not-allowed;"' : ''; ?>
+                                                title="<?php echo $renovar_title; ?>">
+                                            <i class="fas fa-sync-alt"></i> <span>Renovar</span>
+                                        </button>
+                                        
+                                        <?php if($ins['estado'] == 'activa'): ?>
+                                            <button class="btn-accion btn-cancelar" onclick="cancelarInscripcion(<?php echo $ins['id']; ?>)" title="Cancelar inscripción">
+                                                <i class="fas fa-times-circle"></i> <span>Cancelar</span>
+                                            </button>
+                                        <?php endif; ?>
+                                    </div>
+                                </td>
                             </tr>
                             <?php endforeach; ?>
                             <?php if(empty($inscripciones)): ?>
@@ -1161,14 +1172,14 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
                     
                     <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
-                        <button type="submit" class="btn btn-primary">Guardar</button>
+                        <button type="submit" class="btn btn-primary" id="btnGuardarNuevo">Guardar</button>
                     </div>
                 </form>
             </div>
         </div>
     </div>
     
-    <!-- Modal Renovar -->
+    <!-- Modal Renovar - PRECIO SOLO LECTURA -->
     <div class="modal fade" id="modalRenovar" tabindex="-1">
         <div class="modal-dialog">
             <div class="modal-content">
@@ -1206,7 +1217,8 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
                         
                         <div class="mb-3">
                             <label class="form-label">Precio Pagado *</label>
-                            <input type="number" class="form-control" name="precio_pagado" id="renovar_precio_pagado" step="0.01" required>
+                            <input type="number" class="form-control precio-readonly" name="precio_pagado" id="renovar_precio_pagado" step="0.01" readonly required>
+                            <small class="text-muted">El precio se carga automáticamente según el plan seleccionado</small>
                         </div>
                         
                         <div class="mb-3">
@@ -1226,7 +1238,7 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
                     
                     <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
-                        <button type="submit" class="btn btn-success">Renovar</button>
+                        <button type="submit" class="btn btn-success" id="btnRenovar">Renovar</button>
                     </div>
                 </form>
             </div>
@@ -1256,6 +1268,8 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     
     <script>
+        let formularioEnviando = false;
+        
         function actualizarPrecioNuevo() {
             const planSelect = document.getElementById('plan_id_nuevo');
             const selectedOption = planSelect.options[planSelect.selectedIndex];
@@ -1271,6 +1285,8 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
             const precio = selectedOption.getAttribute('data-precio');
             if (precio) {
                 document.getElementById('renovar_precio_pagado').value = precio;
+            } else {
+                document.getElementById('renovar_precio_pagado').value = '';
             }
         }
         
@@ -1292,7 +1308,67 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
             }, 2000);
         }
         
-        function abrirRenovar(inscripcionId, clienteId) {
+        $('#formNuevoCliente').on('submit', function(e) {
+            if (formularioEnviando) {
+                e.preventDefault();
+                Swal.fire('Procesando', 'Ya se está procesando la solicitud, por favor espere...', 'warning');
+                return false;
+            }
+            
+            formularioEnviando = true;
+            const $btn = $('#btnGuardarNuevo');
+            $btn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> Guardando...');
+            
+            setTimeout(function() {
+                if (formularioEnviando) {
+                    formularioEnviando = false;
+                    $btn.prop('disabled', false).html('Guardar');
+                }
+            }, 10000);
+        });
+        
+        $('#formRenovar').on('submit', function(e) {
+            if (formularioEnviando) {
+                e.preventDefault();
+                Swal.fire('Procesando', 'Ya se está procesando la solicitud, por favor espere...', 'warning');
+                return false;
+            }
+            
+            formularioEnviando = true;
+            const $btn = $('#btnRenovar');
+            $btn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> Renovando...');
+            
+            setTimeout(function() {
+                if (formularioEnviando) {
+                    formularioEnviando = false;
+                    $btn.prop('disabled', false).html('Renovar');
+                }
+            }, 10000);
+        });
+        
+        $('#modalNuevoCliente').on('hidden.bs.modal', function() {
+            formularioEnviando = false;
+            $('#btnGuardarNuevo').prop('disabled', false).html('Guardar');
+        });
+        
+        $('#modalRenovar').on('hidden.bs.modal', function() {
+            formularioEnviando = false;
+            $('#btnRenovar').prop('disabled', false).html('Renovar');
+            $('#renovar_plan_id').val('');
+            $('#renovar_precio_pagado').val('');
+        });
+        
+        function abrirRenovar(inscripcionId, clienteId, isDisabled, message) {
+            if (isDisabled === true || isDisabled === 'true') {
+                Swal.fire({
+                    title: 'No se puede renovar',
+                    text: message,
+                    icon: 'info',
+                    confirmButtonColor: '#1e3a8a'
+                });
+                return;
+            }
+            
             $.ajax({
                 url: 'includes/obtener_cliente.php',
                 method: 'POST',
@@ -1452,18 +1528,10 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
             window.location.href = '?';
         });
         
-        $('#formNuevoCliente').on('submit', function() {
-            const $btn = $(this).find('button[type="submit"]');
-            $btn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> Guardando...');
-        });
-
-        // Abrir modal automáticamente si viene del dashboard con action=nuevo_cliente
         <?php if ($abrir_modal_nuevo): ?>
         $(document).ready(function() {
-            // Abrir el modal normalmente (sin backdrop static)
             $('#modalNuevoCliente').modal('show');
             
-            // Eliminar el parámetro de la URL sin recargar la página
             const url = new URL(window.location.href);
             if (url.searchParams.has('action')) {
                 url.searchParams.delete('action');

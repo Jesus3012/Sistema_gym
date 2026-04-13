@@ -11,7 +11,64 @@ require_once __DIR__ . '/fpdf_ticket.php';
 use PHPMailer\PHPMailer\PHPMailer;
 use PHPMailer\PHPMailer\Exception;
 
+// Funcion para obtener configuracion del gimnasio
+function getConfiguracionGimnasio() {
+    global $conn;
+    
+    $query = "SELECT nombre, email, direccion, horario, logo FROM configuracion_gimnasio WHERE id = 1";
+    $result = $conn->query($query);
+    
+    if ($result && $row = $result->fetch_assoc()) {
+        // Verificar si el logo existe en la ruta guardada
+        if (!empty($row['logo']) && file_exists($row['logo'])) {
+            return $row;
+        }
+    }
+    
+    // Buscar logo con cualquier extension en la carpeta img
+    $extensiones = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'ico'];
+    foreach ($extensiones as $ext) {
+        $ruta = "img/logo-gym." . $ext;
+        if (file_exists($ruta)) {
+            return [
+                'nombre' => $row['nombre'] ?? 'Gimnasio',
+                'email' => $row['email'] ?? '',
+                'direccion' => $row['direccion'] ?? '',
+                'horario' => $row['horario'] ?? 'Lunes a Viernes 6am-10pm, Sabado 8am-6pm',
+                'logo' => $ruta
+            ];
+        }
+    }
+    
+    return [
+        'nombre' => 'Gimnasio',
+        'email' => '',
+        'direccion' => '',
+        'horario' => 'Lunes a Viernes 6am-10pm, Sabado 8am-6pm',
+        'logo' => ''
+    ];
+}
+
+// Funcion para obtener URL absoluta del logo
+function getLogoUrlAbsoluta($ruta_relativa) {
+    if (empty($ruta_relativa)) {
+        return '';
+    }
+    
+    // Obtener la URL base del sitio
+    $protocol = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 'https://' : 'http://';
+    $host = $_SERVER['HTTP_HOST'];
+    $base_url = $protocol . $host . '/';
+    
+    // Eliminar slash inicial si existe
+    $ruta_limpia = ltrim($ruta_relativa, '/');
+    
+    return $base_url . $ruta_limpia;
+}
+
 function enviarTicketInscripcion($email, $nombre_cliente, $plan_nombre, $fecha_inicio, $fecha_fin, $monto, $metodo_pago, $referencia) {
+    $config = getConfiguracionGimnasio();
+    $logo_url_absoluta = getLogoUrlAbsoluta($config['logo']);
     
     $asunto = "Bienvenido al Gimnasio - Ticket de Inscripcion";
     
@@ -20,7 +77,7 @@ function enviarTicketInscripcion($email, $nombre_cliente, $plan_nombre, $fecha_i
     <html>
     <head>
         <meta charset="UTF-8">
-        <title>Ticket de Inscripcion</title>
+        <title>Ticket de Inscripcion - ' . htmlspecialchars($config['nombre']) . '</title>
         <style>
             body {
                 font-family: "Segoe UI", Arial, sans-serif;
@@ -42,15 +99,24 @@ function enviarTicketInscripcion($email, $nombre_cliente, $plan_nombre, $fecha_i
                 padding: 25px;
                 text-align: center;
             }
+            .logo {
+                max-width: 80px;
+                max-height: 80px;
+                margin-bottom: 15px;
+                border-radius: 50%;
+                background: white;
+                padding: 8px;
+                object-fit: contain;
+            }
             .header h1 {
                 margin: 0;
-                font-size: 26px;
+                font-size: 24px;
                 letter-spacing: 1px;
             }
             .header p {
                 margin: 8px 0 0;
                 opacity: 0.9;
-                font-size: 14px;
+                font-size: 13px;
             }
             .content {
                 padding: 30px;
@@ -112,6 +178,29 @@ function enviarTicketInscripcion($email, $nombre_cliente, $plan_nombre, $fecha_i
                 font-weight: 600;
                 margin-top: 10px;
             }
+            .gym-info {
+                background: #eff6ff;
+                border-radius: 10px;
+                padding: 15px;
+                margin: 20px 0;
+                border: 1px solid #bfdbfe;
+            }
+            .gym-info-title {
+                font-weight: bold;
+                color: #1e3a8a;
+                margin-bottom: 10px;
+                font-size: 14px;
+            }
+            .gym-info-row {
+                display: flex;
+                align-items: center;
+                padding: 5px 0;
+                font-size: 13px;
+                color: #334155;
+            }
+            .gym-info-row strong {
+                width: 80px;
+            }
             .footer {
                 background: #f8fafc;
                 padding: 20px;
@@ -119,16 +208,6 @@ function enviarTicketInscripcion($email, $nombre_cliente, $plan_nombre, $fecha_i
                 font-size: 12px;
                 color: #64748b;
                 border-top: 1px solid #e2e8f0;
-            }
-            .btn-download {
-                display: inline-block;
-                background: #1e3a8a;
-                color: white;
-                text-decoration: none;
-                padding: 10px 20px;
-                border-radius: 8px;
-                margin-top: 15px;
-                font-size: 14px;
             }
             .highlight {
                 color: #1e3a8a;
@@ -139,11 +218,12 @@ function enviarTicketInscripcion($email, $nombre_cliente, $plan_nombre, $fecha_i
     <body>
         <div class="container">
             <div class="header">
-                <h1>SISTEMA GIMNASIO</h1>
+                ' . ($logo_url_absoluta ? '<img src="' . $logo_url_absoluta . '" alt="Logo" class="logo" style="max-width:80px;max-height:80px;object-fit:contain;">' : '<div style="width:80px;height:80px;margin:0 auto 15px;background:rgba(255,255,255,0.2);border-radius:50%;display:flex;align-items:center;justify-content:center;"><span style="font-size:40px;">🏋️</span></div>') . '
+                <h1>' . htmlspecialchars($config['nombre']) . '</h1>
                 <p>Comprobante Oficial de Pago</p>
             </div>
             <div class="content">
-                <div class="greeting">¡Hola, ' . htmlspecialchars($nombre_cliente) . '!</div>
+                <div class="greeting">Hola, ' . htmlspecialchars($nombre_cliente) . '!</div>
                 <div class="message">
                     Gracias por confiar en nosotros. Tu <span class="highlight">inscripcion</span> ha sido procesada exitosamente.
                 </div>
@@ -183,11 +263,18 @@ function enviarTicketInscripcion($email, $nombre_cliente, $plan_nombre, $fecha_i
                     <div class="badge">PAGADO</div>
                 </div>
                 
+                <div class="gym-info">
+                    <div class="gym-info-title">INFORMACION DEL GIMNASIO</div>
+                    <div class="gym-info-row"><strong>Direccion:</strong> ' . htmlspecialchars($config['direccion'] ?: 'No especificada') . '</div>
+                    <div class="gym-info-row"><strong>Email:</strong> ' . htmlspecialchars($config['email'] ?: 'No especificado') . '</div>
+                    <div class="gym-info-row"><strong>Horario:</strong> ' . htmlspecialchars($config['horario'] ?: 'Lunes a Viernes 6am-10pm, Sabado 8am-6pm') . '</div>
+                </div>
+                
                 <div style="text-align: center; margin-top: 20px;">
                     <div style="background: #f0fdf4; padding: 15px; border-radius: 10px; border-left: 4px solid #10b981;">
-                        <strong style="color: #166534;">✅ INFORMACION IMPORTANTE</strong>
+                        <strong style="color: #166534;">INFORMACION IMPORTANTE</strong>
                         <p style="margin: 8px 0 0; font-size: 13px; color: #166534;">
-                            Presenta este correo o tu identificacion en recepcion para ingresar al gimnasio.
+                            Este comprobante es un documento personal e intransferible. Conservalo para cualquier aclaracion futura.
                         </p>
                     </div>
                 </div>
@@ -199,7 +286,7 @@ function enviarTicketInscripcion($email, $nombre_cliente, $plan_nombre, $fecha_i
                 </div>
             </div>
             <div class="footer">
-                <p>&copy; ' . date('Y') . ' Sistema Gimnasio - Todos los derechos reservados</p>
+                <p>&copy; ' . date('Y') . ' ' . htmlspecialchars($config['nombre']) . ' - Todos los derechos reservados</p>
                 <p>Este es un comprobante de pago valido</p>
             </div>
         </div>
@@ -211,15 +298,17 @@ function enviarTicketInscripcion($email, $nombre_cliente, $plan_nombre, $fecha_i
 }
 
 function enviarTicketRenovacion($email, $nombre_cliente, $plan_nombre, $fecha_inicio, $fecha_fin, $monto, $metodo_pago, $referencia) {
+    $config = getConfiguracionGimnasio();
+    $logo_url_absoluta = getLogoUrlAbsoluta($config['logo']);
     
-    $asunto = "Renovacion Exitosa - Ticket de Renovacion";
+    $asunto = "Renovacion Exitosa - Ticket de Renovacion - " . htmlspecialchars($config['nombre']);
     
     $cuerpo_html = '
     <!DOCTYPE html>
     <html>
     <head>
         <meta charset="UTF-8">
-        <title>Ticket de Renovacion</title>
+        <title>Ticket de Renovacion - ' . htmlspecialchars($config['nombre']) . '</title>
         <style>
             body {
                 font-family: "Segoe UI", Arial, sans-serif;
@@ -241,15 +330,24 @@ function enviarTicketRenovacion($email, $nombre_cliente, $plan_nombre, $fecha_in
                 padding: 25px;
                 text-align: center;
             }
+            .logo {
+                max-width: 80px;
+                max-height: 80px;
+                margin-bottom: 15px;
+                border-radius: 50%;
+                background: white;
+                padding: 8px;
+                object-fit: contain;
+            }
             .header h1 {
                 margin: 0;
-                font-size: 26px;
+                font-size: 24px;
                 letter-spacing: 1px;
             }
             .header p {
                 margin: 8px 0 0;
                 opacity: 0.9;
-                font-size: 14px;
+                font-size: 13px;
             }
             .content {
                 padding: 30px;
@@ -311,6 +409,29 @@ function enviarTicketRenovacion($email, $nombre_cliente, $plan_nombre, $fecha_in
                 font-weight: 600;
                 margin-top: 10px;
             }
+            .gym-info {
+                background: #eff6ff;
+                border-radius: 10px;
+                padding: 15px;
+                margin: 20px 0;
+                border: 1px solid #bfdbfe;
+            }
+            .gym-info-title {
+                font-weight: bold;
+                color: #1e3a8a;
+                margin-bottom: 10px;
+                font-size: 14px;
+            }
+            .gym-info-row {
+                display: flex;
+                align-items: center;
+                padding: 5px 0;
+                font-size: 13px;
+                color: #334155;
+            }
+            .gym-info-row strong {
+                width: 80px;
+            }
             .footer {
                 background: #f8fafc;
                 padding: 20px;
@@ -328,11 +449,12 @@ function enviarTicketRenovacion($email, $nombre_cliente, $plan_nombre, $fecha_in
     <body>
         <div class="container">
             <div class="header">
-                <h1>SISTEMA GIMNASIO</h1>
+                ' . ($logo_url_absoluta ? '<img src="' . $logo_url_absoluta . '" alt="Logo" class="logo" style="max-width:80px;max-height:80px;object-fit:contain;">' : '<div style="width:80px;height:80px;margin:0 auto 15px;background:rgba(255,255,255,0.2);border-radius:50%;display:flex;align-items:center;justify-content:center;"><span style="font-size:40px;">🏋️</span></div>') . '
+                <h1>' . htmlspecialchars($config['nombre']) . '</h1>
                 <p>Comprobante de Renovacion</p>
             </div>
             <div class="content">
-                <div class="greeting">¡Hola, ' . htmlspecialchars($nombre_cliente) . '!</div>
+                <div class="greeting">Hola, ' . htmlspecialchars($nombre_cliente) . '!</div>
                 <div class="message">
                     Gracias por renovar tu membresia. Tu plan ha sido <span class="highlight">actualizado exitosamente</span>.
                 </div>
@@ -372,6 +494,13 @@ function enviarTicketRenovacion($email, $nombre_cliente, $plan_nombre, $fecha_in
                     <div class="badge">RENOVADO</div>
                 </div>
                 
+                <div class="gym-info">
+                    <div class="gym-info-title">INFORMACION DEL GIMNASIO</div>
+                    <div class="gym-info-row"><strong>Direccion:</strong> ' . htmlspecialchars($config['direccion'] ?: 'No especificada') . '</div>
+                    <div class="gym-info-row"><strong>Email:</strong> ' . htmlspecialchars($config['email'] ?: 'No especificado') . '</div>
+                    <div class="gym-info-row"><strong>Horario:</strong> ' . htmlspecialchars($config['horario'] ?: 'Lunes a Viernes 6am-10pm, Sabado 8am-6pm') . '</div>
+                </div>
+                
                 <div style="text-align: center; margin-top: 20px;">
                     <div style="background: #f0fdf4; padding: 15px; border-radius: 10px; border-left: 4px solid #10b981;">
                         <strong style="color: #166534;">RENOVACION EXITOSA</strong>
@@ -388,7 +517,7 @@ function enviarTicketRenovacion($email, $nombre_cliente, $plan_nombre, $fecha_in
                 </div>
             </div>
             <div class="footer">
-                <p>&copy; ' . date('Y') . ' Sistema Gimnasio - Todos los derechos reservados</p>
+                <p>&copy; ' . date('Y') . ' ' . htmlspecialchars($config['nombre']) . ' - Todos los derechos reservados</p>
                 <p>Este es un comprobante de pago valido</p>
             </div>
         </div>
@@ -400,6 +529,7 @@ function enviarTicketRenovacion($email, $nombre_cliente, $plan_nombre, $fecha_in
 }
 
 function enviarCorreoSMTP($email, $nombre, $asunto, $cuerpo_html, $pdf_content = null) {
+    $config = getConfiguracionGimnasio();
     $mail = new PHPMailer(true);
     
     try {
@@ -419,7 +549,8 @@ function enviarCorreoSMTP($email, $nombre, $asunto, $cuerpo_html, $pdf_content =
             )
         );
         
-        $mail->setFrom('jesusgabrielmtz78@gmail.com', 'Sistema Gimnasio');
+        $nombre_gimnasio = !empty($config['nombre']) ? $config['nombre'] : 'Sistema Gimnasio';
+        $mail->setFrom('jesusgabrielmtz78@gmail.com', $nombre_gimnasio);
         $mail->addAddress($email, $nombre);
         
         if ($pdf_content) {

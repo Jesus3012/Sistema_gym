@@ -19,6 +19,99 @@ if (!$conn) {
     die("Error: No se pudo establecer la conexión a la base de datos");
 }
 
+// Asegurar que exista el directorio de defaults
+if (!file_exists('uploads/productos/defaults/')) {
+    mkdir('uploads/productos/defaults/', 0777, true);
+}
+
+// Función para generar nombre limpio de imagen (sin timestamp)
+function generarNombreLimpio($nombre_producto) {
+    // Limpiar el nombre del producto: eliminar acentos, caracteres especiales, espacios
+    $nombre_limpio = strtolower($nombre_producto);
+    $nombre_limpio = str_replace(['á', 'é', 'í', 'ó', 'ú', 'ñ', 'Á', 'É', 'Í', 'Ó', 'Ú', 'Ñ'], ['a', 'e', 'i', 'o', 'u', 'n', 'a', 'e', 'i', 'o', 'u', 'n'], $nombre_limpio);
+    $nombre_limpio = preg_replace('/[^a-z0-9]+/', '_', $nombre_limpio);
+    $nombre_limpio = trim($nombre_limpio, '_');
+    
+    // Limitar longitud
+    if (strlen($nombre_limpio) > 50) {
+        $nombre_limpio = substr($nombre_limpio, 0, 50);
+    }
+    
+    return $nombre_limpio;
+}
+
+// Modificar la función generarNombreImagen para que use el nombre limpio sin timestamp
+function generarNombreImagen($nombre_producto, $extension) {
+    return generarNombreLimpio($nombre_producto) . '.' . $extension;
+}
+
+// Función para obtener imagen por defecto según categoría o nombre
+function getImagenPorDefecto($nombre_producto, $categoria_nombre) {
+    $nombre_producto = strtolower($nombre_producto);
+    $categoria_nombre = strtolower($categoria_nombre);
+    
+    // Mapeo de palabras clave a imágenes específicas
+    $imagenes_por_defecto = [
+        // Bebidas
+        'agua' => 'uploads/productos/defaults/agua.png',
+        'agua mineral' => 'uploads/productos/defaults/agua.png',
+        'gatorade' => 'uploads/productos/defaults/gatorade.png',
+        'electrolit' => 'uploads/productos/defaults/electrolit.png',
+        'powerade' => 'uploads/productos/defaults/powerade.png',
+        'monster' => 'uploads/productos/defaults/monster.png',
+        'red bull' => 'uploads/productos/defaults/redbull.png',
+        
+        // Suplementos
+        'proteina' => 'uploads/productos/defaults/proteina.png',
+        'whey' => 'uploads/productos/defaults/proteina.png',
+        'creatina' => 'uploads/productos/defaults/creatina.png',
+        'bcaa' => 'uploads/productos/defaults/bcaa.png',
+        'aminoacidos' => 'uploads/productos/defaults/aminoacidos.png',
+        'glutamina' => 'uploads/productos/defaults/glutamina.png',
+        'pre entreno' => 'uploads/productos/defaults/pre_entreno.png',
+        
+        // Ropa
+        'playera' => 'uploads/productos/defaults/playera.png',
+        'camiseta' => 'uploads/productos/defaults/playera.png',
+        'pants' => 'uploads/productos/defaults/pants.png',
+        'short' => 'uploads/productos/defaults/short.png',
+        'tenis' => 'uploads/productos/defaults/tenis.png',
+        
+        // Accesorios
+        'guantes' => 'uploads/productos/defaults/guantes.png',
+        'cuerda' => 'uploads/productos/defaults/cuerda.png',
+        'toalla' => 'uploads/productos/defaults/toalla.png',
+        'botella' => 'uploads/productos/defaults/botella.png',
+        'shaker' => 'uploads/productos/defaults/shaker.png',
+        
+        // Alimentos
+        'barra energetica' => 'uploads/productos/defaults/barra_energetica.png',
+        'barra proteica' => 'uploads/productos/defaults/barra_proteica.png',
+        
+        // Por categoría
+        'suplementos' => 'uploads/productos/defaults/suplemento_generico.png',
+        'ropa' => 'uploads/productos/defaults/ropa_generica.png',
+        'accesorios' => 'uploads/productos/defaults/accesorio_generico.png',
+        'bebidas' => 'uploads/productos/defaults/bebida_generica.png',
+        'alimentos' => 'uploads/productos/defaults/alimento_generico.png'
+    ];
+    
+    // Buscar por palabras clave en el nombre
+    foreach ($imagenes_por_defecto as $palabra => $imagen) {
+        if (strpos($nombre_producto, $palabra) !== false) {
+            return $imagen;
+        }
+    }
+    
+    // Buscar por categoría
+    if (isset($imagenes_por_defecto[$categoria_nombre])) {
+        return $imagenes_por_defecto[$categoria_nombre];
+    }
+    
+    // Imagen genérica por defecto
+    return 'uploads/productos/defaults/producto_generico.png';
+}
+
 // Obtener categorías y proveedores
 $categorias = [];
 $result = $conn->query("SELECT * FROM categorias_productos WHERE estado = 'activo' ORDER BY nombre");
@@ -64,6 +157,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action'])) {
         } elseif ($precio_venta <= 0) {
             $error = "El precio de venta debe ser mayor a 0";
         } else {
+            // Obtener nombre de la categoría para imagen por defecto
+            $stmt_cat = $conn->prepare("SELECT nombre FROM categorias_productos WHERE id = ?");
+            $stmt_cat->bind_param("i", $categoria_id);
+            $stmt_cat->execute();
+            $result_cat = $stmt_cat->get_result();
+            $categoria_data = $result_cat->fetch_assoc();
+            $categoria_nombre = $categoria_data ? $categoria_data['nombre'] : '';
+            $stmt_cat->close();
+            
             // Procesar imagen
             $foto_ruta = null;
             if (isset($_FILES['foto']) && $_FILES['foto']['error'] == 0) {
@@ -77,10 +179,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action'])) {
                     }
                     
                     $extension = pathinfo($_FILES['foto']['name'], PATHINFO_EXTENSION);
-                    $nombre_archivo = time() . '_' . uniqid() . '.' . $extension;
+                    $nombre_archivo = generarNombreImagen($nombre, $extension);
                     $foto_ruta = $upload_dir . $nombre_archivo;
                     move_uploaded_file($_FILES['foto']['tmp_name'], $foto_ruta);
                 }
+            }
+            
+            // Si no se subió imagen, asignar una por defecto
+            if (!$foto_ruta) {
+                $foto_ruta = getImagenPorDefecto($nombre, $categoria_nombre);
             }
             
             $sql = "INSERT INTO productos (nombre, descripcion, categoria_id, proveedor_id, precio_compra, precio_venta, stock, stock_minimo, foto, estado) 
@@ -93,12 +200,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action'])) {
                 $producto_id = $stmt->insert_id;
                 $stmt->close();
                 
-                // PRIMERO: Registrar movimiento (stock anterior es 0 porque es nuevo)
+                // Registrar movimiento de stock inicial
                 $resultado_movimiento = registrarMovimientoStock(
                     $conn,
                     $producto_id,
                     'inicial',
-                    $stock,  // Stock inicial
+                    $stock,
                     'Stock inicial al crear producto',
                     $_SESSION['user_id'],
                     null,
@@ -109,7 +216,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action'])) {
                 if ($resultado_movimiento['success']) {
                     $success = "Producto registrado exitosamente con stock inicial de " . $stock . " unidades";
                 } else {
-                    // Si falla el registro del movimiento, eliminamos el producto para mantener consistencia
                     $conn->query("DELETE FROM productos WHERE id = $producto_id");
                     $error = "Error al registrar movimiento de stock inicial: " . $resultado_movimiento['error'];
                 }
@@ -139,7 +245,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action'])) {
             $stock_nuevo = $stock_anterior + $cantidad;
             $stmt->close();
             
-            // PRIMERO: Registrar movimiento
+            // Registrar movimiento
             $resultado = registrarMovimientoStock(
                 $conn,
                 $id,
@@ -153,7 +259,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action'])) {
             );
             
             if ($resultado['success']) {
-                // SEGUNDO: Actualizar stock
                 $sql = "UPDATE productos SET stock = stock + ? WHERE id = ?";
                 $stmt = $conn->prepare($sql);
                 $stmt->bind_param("ii", $cantidad, $id);
@@ -180,9 +285,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action'])) {
         $observaciones = $_POST['observaciones'] ?? '';
         
         if ($tipo_ajuste == 'stock_correccion') {
-            $nuevo_stock = intval($_POST['stock_fisico']); // Este es el NUEVO STOCK
+            $nuevo_stock = intval($_POST['stock_fisico']);
             
-            // Obtener stock actual ANTES de actualizar
             $stmt = $conn->prepare("SELECT stock FROM productos WHERE id = ?");
             $stmt->bind_param("i", $id);
             $stmt->execute();
@@ -192,12 +296,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action'])) {
             $diferencia = $nuevo_stock - $stock_anterior;
             $stmt->close();
             
-            // PRIMERO: Registrar el movimiento con el stock anterior
             $resultado = registrarMovimientoStock(
                 $conn,
                 $id,
                 'correccion',
-                $nuevo_stock,  // Pasamos el NUEVO STOCK
+                $nuevo_stock,
                 $motivo,
                 $_SESSION['user_id'],
                 null,
@@ -206,7 +309,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action'])) {
             );
             
             if ($resultado['success']) {
-                // SEGUNDO: Actualizar el stock solo si el movimiento se registró correctamente
                 $sql = "UPDATE productos SET stock = ? WHERE id = ?";
                 $stmt = $conn->prepare($sql);
                 $stmt->bind_param("ii", $nuevo_stock, $id);
@@ -230,7 +332,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action'])) {
         elseif ($tipo_ajuste == 'stock_minimo') {
             $nuevo_stock_minimo = intval($_POST['nuevo_stock_minimo']);
             
-            // Obtener stock mínimo actual
             $stmt = $conn->prepare("SELECT stock_minimo FROM productos WHERE id = ?");
             $stmt->bind_param("i", $id);
             $stmt->execute();
@@ -239,7 +340,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action'])) {
             $stock_minimo_anterior = $producto['stock_minimo'];
             $stmt->close();
             
-            // Actualizar stock mínimo directamente SIN registrar movimiento
             $sql = "UPDATE productos SET stock_minimo = ? WHERE id = ?";
             $stmt = $conn->prepare($sql);
             $stmt->bind_param("ii", $nuevo_stock_minimo, $id);
@@ -327,12 +427,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action'])) {
         $proveedor_id = $_POST['proveedor_id'] ?: null;
         $precio_compra = floatval($_POST['precio_compra']);
         $precio_venta = floatval($_POST['precio_venta']);
-        $stock = intval($_POST['stock']);
-        $stock_minimo = intval($_POST['stock_minimo']);
         $descripcion = trim($_POST['descripcion']);
         
         if (empty($nombre)) {
             echo json_encode(['success' => false, 'error' => 'El nombre del producto es obligatorio']);
+            exit();
+        }
+        
+        if ($categoria_id == 0 || empty($categoria_id)) {
+            echo json_encode(['success' => false, 'error' => 'Debe seleccionar una categoría']);
             exit();
         }
         
@@ -349,20 +452,23 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action'])) {
                 }
                 
                 $extension = pathinfo($_FILES['foto']['name'], PATHINFO_EXTENSION);
-                $nombre_archivo = time() . '_' . uniqid() . '.' . $extension;
+                // Generar nombre limpio SIN timestamp para mantener consistencia
+                $nombre_limpio = generarNombreLimpio($nombre);
+                $nombre_archivo = $nombre_limpio . '.' . $extension;
                 $foto_ruta = $upload_dir . $nombre_archivo;
                 move_uploaded_file($_FILES['foto']['tmp_name'], $foto_ruta);
             }
         }
         
+        // Actualizar SOLO los campos editables (NO stock ni stock_minimo)
         if ($foto_ruta) {
-            $sql = "UPDATE productos SET nombre=?, descripcion=?, categoria_id=?, proveedor_id=?, precio_compra=?, precio_venta=?, stock=?, stock_minimo=?, foto=? WHERE id=?";
+            $sql = "UPDATE productos SET nombre=?, categoria_id=?, proveedor_id=?, precio_compra=?, precio_venta=?, descripcion=?, foto=? WHERE id=?";
             $stmt = $conn->prepare($sql);
-            $stmt->bind_param("ssiiddiisi", $nombre, $descripcion, $categoria_id, $proveedor_id, $precio_compra, $precio_venta, $stock, $stock_minimo, $foto_ruta, $id);
+            $stmt->bind_param("siiddssi", $nombre, $categoria_id, $proveedor_id, $precio_compra, $precio_venta, $descripcion, $foto_ruta, $id);
         } else {
-            $sql = "UPDATE productos SET nombre=?, descripcion=?, categoria_id=?, proveedor_id=?, precio_compra=?, precio_venta=?, stock=?, stock_minimo=? WHERE id=?";
+            $sql = "UPDATE productos SET nombre=?, categoria_id=?, proveedor_id=?, precio_compra=?, precio_venta=?, descripcion=? WHERE id=?";
             $stmt = $conn->prepare($sql);
-            $stmt->bind_param("ssiiddiii", $nombre, $descripcion, $categoria_id, $proveedor_id, $precio_compra, $precio_venta, $stock, $stock_minimo, $id);
+            $stmt->bind_param("siiddsi", $nombre, $categoria_id, $proveedor_id, $precio_compra, $precio_venta, $descripcion, $id);
         }
         
         if ($stmt->execute()) {
@@ -462,7 +568,6 @@ $stmt->close();
     <!-- SweetAlert2 -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css">
     <style>
-        /* Tus estilos existentes... */
         .main-content {
             margin-left: 280px;
             padding: 20px 30px;
@@ -522,6 +627,7 @@ $stmt->close();
             height: 50px;
             object-fit: cover;
             border-radius: 0.25rem;
+            background-color: #f8f9fa;
         }
         
         .preview-image {
@@ -582,26 +688,6 @@ $stmt->close();
             font-size: 1.75rem;
             font-weight: 600;
             margin-bottom: 0.25rem;
-        }
-        
-        .text-success {
-            color: #28a745 !important;
-        }
-        
-        .text-danger {
-            color: #dc3545 !important;
-        }
-        
-        .text-warning {
-            color: #ffc107 !important;
-        }
-        
-        .text-info {
-            color: #17a2b8 !important;
-        }
-        
-        .text-muted {
-            color: #6c757d !important;
         }
     </style>
 </head>
@@ -701,7 +787,7 @@ $stmt->close();
                                         <label><i class="fas fa-image"></i> Foto del Producto</label>
                                         <input type="file" name="foto" class="form-control" accept="image/*" onchange="previewImage(this, 'previewNuevo')">
                                         <div id="previewNuevo" style="margin-top: 10px; display: none;"></div>
-                                        <small class="text-muted">Formatos: JPG, PNG, WEBP (Max 2MB)</small>
+                                        <small class="text-muted">Formatos: JPG, PNG, WEBP (Max 2MB). Si no se selecciona, se usará una imagen por defecto.</small>
                                     </div>
                                 </div>
                                 
@@ -733,6 +819,11 @@ $stmt->close();
                                         <small class="text-muted">Alertar cuando el stock esté por debajo</small>
                                     </div>
                                 </div>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label><i class="fas fa-align-left"></i> Descripción</label>
+                                <textarea name="descripcion" class="form-control" rows="3" placeholder="Descripción del producto..."></textarea>
                             </div>
                             
                             <div class="form-group text-right">
@@ -821,7 +912,7 @@ $stmt->close();
         </main>
     </div>
 
-    <!-- Modales (mantener los mismos que tenías) -->
+    <!-- Modales -->
     <div class="modal fade" id="editProductoModal" tabindex="-1" role="dialog">
         <div class="modal-dialog modal-lg" role="document">
             <div class="modal-content">
@@ -905,6 +996,11 @@ $stmt->close();
                                     <input type="number" name="precio_venta" id="edit_precio_venta" class="form-control" step="0.01" min="0" required>
                                 </div>
                             </div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label><i class="fas fa-align-left"></i> Descripción</label>
+                            <textarea name="descripcion" id="edit_descripcion" class="form-control" rows="3"></textarea>
                         </div>
                     </div>
                     <div class="modal-footer">
@@ -999,7 +1095,6 @@ $stmt->close();
                             </select>
                         </div>
                         
-                        <!-- Campos dinámicos para corrección de stock -->
                         <div id="campo_correccion_stock" style="display: none;">
                             <div class="form-group">
                                 <label>Stock Actual en Sistema:</label>
@@ -1013,7 +1108,6 @@ $stmt->close();
                             </div>
                         </div>
                         
-                        <!-- Campos dinámicos para cambio de stock mínimo -->
                         <div id="campo_stock_minimo" style="display: none;">
                             <div class="form-group">
                                 <label>Stock Mínimo Actual:</label>
@@ -1183,9 +1277,20 @@ $stmt->close();
         }
         
         function editProducto(id) {
+            Swal.fire({
+                title: 'Cargando...',
+                text: 'Obteniendo datos del producto',
+                allowOutsideClick: false,
+                didOpen: () => {
+                    Swal.showLoading();
+                }
+            });
+            
             fetch(`productos_ajax.php?action=get&id=${id}`)
                 .then(response => response.json())
                 .then(data => {
+                    Swal.close();
+                    
                     if (data.success) {
                         $('#edit_producto_id').val(data.producto.id);
                         $('#edit_nombre').val(data.producto.nombre);
@@ -1193,11 +1298,15 @@ $stmt->close();
                         $('#edit_proveedor_id').val(data.producto.proveedor_id || '');
                         $('#edit_precio_compra').val(data.producto.precio_compra);
                         $('#edit_precio_venta').val(data.producto.precio_venta);
+                        $('#edit_descripcion').val(data.producto.descripcion || '');
                         
+                        // Mostrar imagen actual si existe
                         if (data.producto.foto && data.producto.foto !== 'null' && data.producto.foto !== '') {
                             $('#edit_current_image').html(`
-                                <img src="${data.producto.foto}" class="preview-image">
-                                <small class="text-muted d-block">Imagen actual</small>
+                                <div class="alert alert-info" style="padding: 10px; margin-top: 10px;">
+                                    <strong>Imagen actual:</strong><br>
+                                    <img src="${data.producto.foto}" class="preview-image" style="max-width: 150px; max-height: 150px; margin-top: 10px;">
+                                </div>
                             `).show();
                         } else {
                             $('#edit_current_image').hide();
@@ -1208,10 +1317,11 @@ $stmt->close();
                         
                         $('#editProductoModal').modal('show');
                     } else {
-                        Swal.fire('Error', 'No se pudo cargar el producto', 'error');
+                        Swal.fire('Error', data.error || 'No se pudo cargar el producto', 'error');
                     }
                 })
                 .catch(error => {
+                    Swal.close();
                     Swal.fire('Error', 'Error al cargar los datos del producto', 'error');
                 });
         }
@@ -1272,7 +1382,7 @@ $stmt->close();
                     } else if (diferencia < 0) {
                         $('#diferencia_stock').html('<span class="text-danger">Disminuirá en ' + Math.abs(diferencia) + ' unidades. Nuevo stock: ' + stockFisico + '</span>');
                     } else {
-                        $('#diferencia_stock').html('<span class="text-muted">✓ Sin cambios. Stock actual: ' + ajusteData.stock + ' unidades</span>');
+                        $('#diferencia_stock').html('<span class="text-muted">Sin cambios. Stock actual: ' + ajusteData.stock + ' unidades</span>');
                     }
                 });
                 
@@ -1291,7 +1401,7 @@ $stmt->close();
                             $('#preview_stock_minimo').html('<span class="text-info">Stock mínimo disminuirá de ' + ajusteData.stockMinimo + ' a ' + nuevoMinimo + ' unidades</span>');
                         }
                     } else {
-                        $('#preview_stock_minimo').html('<span class="text-muted">✓ Stock mínimo actual: ' + ajusteData.stockMinimo + ' unidades (sin cambios)</span>');
+                        $('#preview_stock_minimo').html('<span class="text-muted">Stock mínimo actual: ' + ajusteData.stockMinimo + ' unidades (sin cambios)</span>');
                     }
                 });
                 
@@ -1300,7 +1410,6 @@ $stmt->close();
             }
         }
 
-        // Manejar envío del formulario de ajustes con SweetAlert
         $('#ajusteForm').on('submit', function(e) {
             e.preventDefault();
             
@@ -1379,7 +1488,6 @@ $stmt->close();
                 cancelButtonText: 'Cancelar'
             }).then((result) => {
                 if (result.isConfirmed) {
-                    // Mostrar loading
                     Swal.fire({
                         title: 'Procesando...',
                         text: 'Guardando los cambios',
@@ -1389,7 +1497,6 @@ $stmt->close();
                         }
                     });
                     
-                    // Enviar formulario via AJAX
                     const formData = new FormData(this);
                     
                     fetch('productos.php', {
@@ -1406,7 +1513,7 @@ $stmt->close();
                                 confirmButtonText: 'OK'
                             }).then(() => {
                                 $('#ajusteModal').modal('hide');
-                                buscarProductos(); // Recargar la tabla
+                                buscarProductos();
                             });
                         } else {
                             Swal.fire({

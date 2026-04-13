@@ -46,6 +46,47 @@ $vencidas = $conn->query("SELECT COUNT(*) as total FROM inscripciones WHERE esta
 $canceladas = $conn->query("SELECT COUNT(*) as total FROM inscripciones WHERE estado = 'cancelada'")->fetch_assoc();
 $promedio = $conn->query("SELECT AVG(precio_pagado) as promedio FROM inscripciones WHERE estado = 'activa'")->fetch_assoc();
 $total_clientes = $conn->query("SELECT COUNT(*) as total FROM clientes WHERE estado = 'activo'")->fetch_assoc();
+
+// Función para obtener datos de la empresa
+function getDatosEmpresa($conn) {
+    $query = "SELECT nombre, telefono, email, direccion, horario, logo FROM configuracion_gimnasio WHERE id = 1";
+    $result = $conn->query($query);
+    if ($result && $row = $result->fetch_assoc()) {
+        // Verificar si el logo existe (cualquier formato)
+        if (!empty($row['logo']) && file_exists($row['logo'])) {
+            return $row;
+        }
+    }
+    
+    // Buscar logo con cualquier extensión en la carpeta img
+    $extensiones = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'ico'];
+    foreach ($extensiones as $ext) {
+        $ruta = "img/logo-gym." . $ext;
+        if (file_exists($ruta)) {
+            return [
+                'nombre' => $row['nombre'] ?? 'Gimnasio',
+                'telefono' => $row['telefono'] ?? '',
+                'email' => $row['email'] ?? '',
+                'direccion' => $row['direccion'] ?? '',
+                'horario' => $row['horario'] ?? '',
+                'logo' => $ruta
+            ];
+        }
+    }
+    
+    return [
+        'nombre' => 'Gimnasio',
+        'telefono' => '',
+        'email' => '',
+        'direccion' => '',
+        'horario' => '',
+        'logo' => 'img/logo-gym.png'
+    ];
+}
+
+$datos_empresa = getDatosEmpresa($conn);
+$logo_empresa = !empty($datos_empresa['logo']) && file_exists($datos_empresa['logo']) ? $datos_empresa['logo'] : 'img/logo-gym.png';
+
 ?>
 
 <!DOCTYPE html>
@@ -1299,33 +1340,48 @@ $total_clientes = $conn->query("SELECT COUNT(*) as total FROM clientes WHERE est
                         let fechaFin = $tds.eq(4).text().trim();
                         fechaFin = fechaFin.replace(/<[^>]*>/g, '').trim();
                         
-                        // Columna 5: Días Restantes
+                        // Columna 5: Días Restantes - Obtener el texto completo del badge
+                        let diasHtml = $tds.eq(5).html();
                         let dias = $tds.eq(5).text().trim();
                         dias = dias.replace(/<[^>]*>/g, '').trim();
                         let diasTexto = '';
                         let yaVencido = false;
                         
-                        // Parsear fecha fin para verificar vencimiento
-                        let fechaFinObj = null;
-                        if (fechaFin) {
-                            let partes = fechaFin.split('/');
-                            if (partes.length === 3) {
-                                fechaFinObj = new Date(partes[2], partes[1] - 1, partes[0]);
-                            }
-                        }
-                        let fechaActual = new Date();
-                        fechaActual.setHours(0, 0, 0, 0);
-                        
-                        let diasNum = parseInt(dias);
-                        if (fechaFinObj && fechaFinObj < fechaActual) {
+                        // Verificar si el badge indica "Vencido"
+                        if (diasHtml && diasHtml.includes('Vencido')) {
                             diasTexto = 'Vencido';
                             yaVencido = true;
-                        } else if (!isNaN(diasNum)) {
-                            diasTexto = diasNum;
-                        } else if (dias.includes('Por vencer')) {
+                        } 
+                        // Verificar si el badge indica "Por vencer"
+                        else if (diasHtml && diasHtml.includes('Por vencer')) {
                             diasTexto = 'Por vencer';
-                        } else {
-                            diasTexto = '-';
+                        }
+                        // Si no, intentar parsear la fecha
+                        else {
+                            // Parsear fecha fin para verificar vencimiento
+                            let fechaFinObj = null;
+                            if (fechaFin && fechaFin !== '-') {
+                                let partes = fechaFin.split('/');
+                                if (partes.length === 3) {
+                                    fechaFinObj = new Date(partes[2], partes[1] - 1, partes[0]);
+                                }
+                            }
+                            let fechaActual = new Date();
+                            fechaActual.setHours(0, 0, 0, 0);
+                            
+                            if (fechaFinObj && fechaFinObj < fechaActual) {
+                                diasTexto = 'Vencido';
+                                yaVencido = true;
+                            } else {
+                                let diasNum = parseInt(dias);
+                                if (!isNaN(diasNum)) {
+                                    diasTexto = diasNum;
+                                } else if (dias.includes('Por vencer')) {
+                                    diasTexto = 'Por vencer';
+                                } else {
+                                    diasTexto = '-';
+                                }
+                            }
                         }
                         
                         // Columna 6: Precio
@@ -1334,17 +1390,24 @@ $total_clientes = $conn->query("SELECT COUNT(*) as total FROM clientes WHERE est
                         let precioNum = parseFloat(precio);
                         let precioFormateado = !isNaN(precioNum) ? Math.round(precioNum) : 0;
                         
-                        // Columna 7: Estado
+                        // Columna 7: Estado - Obtener el texto del badge
+                        let estadoHtml = $tds.eq(7).html();
                         let estado = $tds.eq(7).text().trim();
                         estado = estado.replace(/<[^>]*>/g, '').trim();
                         
-                        // Contar estados
+                        // Verificar si el badge indica "Vencida"
+                        if (estadoHtml && estadoHtml.includes('Vencida')) {
+                            estado = 'Vencida';
+                            yaVencido = true;
+                        }
+                        
+                        // Contar estados correctamente
                         if (estado === 'Cancelada') {
                             totalCanceladas++;
-                        } else if (yaVencido) {
-                            estado = 'Vencido';
+                        } else if (estado === 'Vencida' || yaVencido || diasTexto === 'Vencido') {
+                            estado = 'Vencida';
                             totalVencidas++;
-                        } else if (estado === 'Activa') {
+                        } else if (estado === 'Activa' || estado === 'Visita Activa') {
                             totalActivas++;
                         }
                         
@@ -1369,12 +1432,19 @@ $total_clientes = $conn->query("SELECT COUNT(*) as total FROM clientes WHERE est
                     let totalRegistros = datosTabla.length;
                     let ingresoPromedio = totalRegistros > 0 ? Math.round(totalIngresos / totalRegistros) : 0;
                     
-                    // ==================== HOJA 1: DASHBOARD CON KPIS ====================
+                    // ==================== HOJA 1: DASHBOARD CON KPIS Y DATOS EMPRESA (SIN HORARIO) ====================
                     let dashboardData = [
+                        ['<?php echo addslashes($datos_empresa['nombre']); ?>'],
+                        [''],
+                        ['DATOS DE LA EMPRESA'],
+                        ['Teléfono:', '<?php echo addslashes($datos_empresa['telefono']); ?>'],
+                        ['Email:', '<?php echo addslashes($datos_empresa['email']); ?>'],
+                        ['Dirección:', '<?php echo addslashes($datos_empresa['direccion']); ?>'],
+                        [''],
                         ['REPORTE DE INSCRIPCIONES - DASHBOARD'],
                         [''],
                         ['INFORMACION DEL REPORTE'],
-                        ['Fecha de Generacion:', fechaStr],
+                        ['Fecha de Generación:', fechaStr],
                         ['Usuario:', '<?php echo htmlspecialchars($usuario_nombre); ?>'],
                         ['Rol:', '<?php echo htmlspecialchars($usuario_rol); ?>'],
                         [''],
@@ -1383,14 +1453,14 @@ $total_clientes = $conn->query("SELECT COUNT(*) as total FROM clientes WHERE est
                         ['KPI', 'VALOR'],
                         ['Total de Inscripciones', totalRegistros],
                         ['Ingresos Totales', '$' + totalIngresos.toLocaleString('es-MX')],
-                        ['Ingreso Promedio por Inscripcion', '$' + ingresoPromedio.toLocaleString('es-MX')],
+                        ['Ingreso Promedio por Inscripción', '$' + ingresoPromedio.toLocaleString('es-MX')],
                         ['Inscripciones Activas', totalActivas],
-                        ['Inscripciones por Vencer / Vencidas', totalVencidas],
+                        ['Inscripciones Vencidas', totalVencidas],
                         ['Inscripciones Canceladas', totalCanceladas],
                         [''],
                         ['RESUMEN POR ESTADO', 'CANTIDAD'],
                         ['Activas', totalActivas],
-                        ['Por Vencer / Vencidas', totalVencidas],
+                        ['Vencidas', totalVencidas],
                         ['Canceladas', totalCanceladas],
                         [''],
                         ['FILTROS APLICADOS'],
@@ -1401,16 +1471,21 @@ $total_clientes = $conn->query("SELECT COUNT(*) as total FROM clientes WHERE est
                     ];
                     
                     let wsDashboard = XLSX.utils.aoa_to_sheet(dashboardData);
-                    wsDashboard['!cols'] = [{wch: 32}, {wch: 25}];
+                    wsDashboard['!cols'] = [{wch: 35}, {wch: 40}];
                     wsDashboard['!merges'] = [
                         {s: {r: 0, c: 0}, e: {r: 0, c: 1}},
                         {s: {r: 7, c: 0}, e: {r: 7, c: 1}},
-                        {s: {r: 17, c: 0}, e: {r: 17, c: 1}}
+                        {s: {r: 14, c: 0}, e: {r: 14, c: 1}},
+                        {s: {r: 25, c: 0}, e: {r: 25, c: 1}}
                     ];
+                    
+                    // Aplicar formato al título
+                    wsDashboard['A1'].s = { font: { bold: true, sz: 16, color: { rgb: "003366" } } };
+                    
                     XLSX.utils.book_append_sheet(wb, wsDashboard, 'Dashboard KPIs');
                     
                     // ==================== HOJA 2: DETALLE DE INSCRIPCIONES ====================
-                    let headers = ['Cliente', 'Email', 'Telefono', 'Plan', 'Fecha Inicio', 'Fecha Fin', 'Dias', 'Precio (MXN)', 'Estado'];
+                    let headers = ['Cliente', 'Email', 'Teléfono', 'Plan', 'Fecha Inicio', 'Fecha Fin', 'Días', 'Precio (MXN)', 'Estado'];
                     let datosCompletos = [headers, ...datosTabla];
                     let wsDetalle = XLSX.utils.aoa_to_sheet(datosCompletos);
                     
@@ -1443,14 +1518,14 @@ $total_clientes = $conn->query("SELECT COUNT(*) as total FROM clientes WHERE est
                         planData.total++;
                         planData.ingresos += precio;
                         if (estado === 'Activa') planData.activas++;
-                        else if (estado === 'Vencido' || estado === 'Por vencer') planData.vencidas++;
+                        else if (estado === 'Vencida') planData.vencidas++;
                         else if (estado === 'Cancelada') planData.canceladas++;
                     });
                     
                     let analisisData = [
-                        ['ANALISIS POR PLAN DE INSCRIPCION'],
+                        ['ANÁLISIS POR PLAN DE INSCRIPCIÓN'],
                         [''],
-                        ['Plan', 'Total', 'Activas', 'Por Vencer', 'Canceladas', 'Ingresos Totales']
+                        ['Plan', 'Total', 'Activas', 'Vencidas', 'Canceladas', 'Ingresos Totales']
                     ];
                     
                     planesMap.forEach((data, plan) => {
@@ -1475,7 +1550,7 @@ $total_clientes = $conn->query("SELECT COUNT(*) as total FROM clientes WHERE est
                     wsAnalisis['!merges'] = [
                         {s: {r: 0, c: 0}, e: {r: 0, c: 5}}
                     ];
-                    XLSX.utils.book_append_sheet(wb, wsAnalisis, 'Analisis por Plan');
+                    XLSX.utils.book_append_sheet(wb, wsAnalisis, 'Análisis por Plan');
                     
                     // Generar archivo
                     const anio = fechaHora.getFullYear();
@@ -1489,14 +1564,14 @@ $total_clientes = $conn->query("SELECT COUNT(*) as total FROM clientes WHERE est
                     
                     Swal.fire({
                         icon: 'success',
-                        title: 'Exportacion Exitosa',
+                        title: 'Exportación Exitosa',
                         html: `Reporte generado correctamente.<br><small>${nombreArchivo}</small><br><small>${datosTabla.length} registros</small>`,
                         timer: 3000,
                         showConfirmButton: false
                     });
                 } catch (error) {
                     console.error('Error en Excel:', error);
-                    Swal.fire('Error', 'Ocurrio un error: ' + error.message, 'error');
+                    Swal.fire('Error', 'Ocurrió un error: ' + error.message, 'error');
                 }
             }, 100);
         }
@@ -1511,7 +1586,7 @@ $total_clientes = $conn->query("SELECT COUNT(*) as total FROM clientes WHERE est
                 }
             });
             
-            setTimeout(() => {
+            setTimeout(async () => {
                 try {
                     const { jsPDF } = window.jspdf;
                     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
@@ -1519,28 +1594,33 @@ $total_clientes = $conn->query("SELECT COUNT(*) as total FROM clientes WHERE est
                     const pageHeight = doc.internal.pageSize.getHeight();
                     const primaryColor = [31, 58, 147];
                     
+                    // Datos de la empresa desde PHP
+                    const datosEmpresa = {
+                        nombre: '<?php echo addslashes($datos_empresa['nombre']); ?>',
+                        telefono: '<?php echo addslashes($datos_empresa['telefono']); ?>',
+                        email: '<?php echo addslashes($datos_empresa['email']); ?>',
+                        direccion: '<?php echo addslashes($datos_empresa['direccion']); ?>',
+                        logo: '<?php echo $logo_empresa; ?>'
+                    };
+                    
                     // Obtener datos de la tabla actual (SOLO FILAS VISIBLES)
                     let datosTabla = [];
                     let totalVencidas = 0;
                     let totalCanceladas = 0;
+                    let totalActivas = 0;
                     
-                    // IMPORTANTE: Seleccionar SOLO las filas visibles (no ocultas por filtro)
                     $('#tablaReporte tbody tr').each(function() {
-                        // Verificar si la fila está visible (no tiene la clase 'hidden' o display:none)
                         let esVisible = $(this).css('display') !== 'none' && !$(this).hasClass('hidden');
-                        
                         if (!esVisible) return;
                         
                         let $tds = $(this).find('td');
                         if ($tds.length === 0) return;
                         
-                        // Columna 0: Cliente y Teléfono juntos - Separar
                         let clienteTelefono = $tds.eq(0).text().trim();
                         clienteTelefono = clienteTelefono.replace(/<[^>]*>/g, '');
                         clienteTelefono = clienteTelefono.replace(/\n/g, ' ');
                         clienteTelefono = clienteTelefono.replace(/\s+/g, ' ');
                         
-                        // Separar nombre y teléfono
                         let nombreCliente = clienteTelefono;
                         let telefono = '';
                         let matchTelefono = clienteTelefono.match(/(.+?)\s*(\d{6,})$/);
@@ -1550,30 +1630,25 @@ $total_clientes = $conn->query("SELECT COUNT(*) as total FROM clientes WHERE est
                         }
                         nombreCliente = nombreCliente.replace(/^\d+\.\s*/, '').replace(/^\d+\s+/, '');
                         
-                        // Columna 1: Email
                         let email = $tds.eq(1).text().trim();
                         email = email.replace(/<[^>]*>/g, '').replace(/\n/g, ' ').trim();
                         email = email.replace(/<i[^>]*>.*?<\/i>/g, '').trim();
                         if (email.includes('No registrado')) email = '';
                         
-                        // Columna 2: Plan
                         let plan = $tds.eq(2).text().trim();
                         plan = plan.replace(/<[^>]*>/g, '').trim();
                         plan = plan.replace(/<span[^>]*>.*?<\/span>/g, '').trim();
                         
-                        // Columna 3: Fecha Inicio
                         let fechaInicio = $tds.eq(3).text().trim();
                         fechaInicio = fechaInicio.replace(/<[^>]*>/g, '').trim();
                         
-                        // Columna 4: Fecha Fin
                         let fechaFin = $tds.eq(4).text().trim();
                         fechaFin = fechaFin.replace(/<[^>]*>/g, '').trim();
                         
-                        // Columna 5: Días Restantes (texto original de la tabla)
+                        let diasHtml = $tds.eq(5).html();
                         let diasOriginal = $tds.eq(5).text().trim();
                         diasOriginal = diasOriginal.replace(/<[^>]*>/g, '').trim();
                         
-                        // Columna 6: Precio
                         let precio = $tds.eq(6).text().trim();
                         precio = precio.replace(/<[^>]*>/g, '').replace('$', '').replace(/\s/g, '');
                         let precioNum = parseFloat(precio);
@@ -1582,26 +1657,30 @@ $total_clientes = $conn->query("SELECT COUNT(*) as total FROM clientes WHERE est
                             precioFormateado = '$' + Math.round(precioNum).toLocaleString('es-MX');
                         }
                         
-                        // Columna 7: Estado
+                        let estadoHtml = $tds.eq(7).html();
                         let estado = $tds.eq(7).text().trim();
                         estado = estado.replace(/<[^>]*>/g, '').trim();
-                        if (estado === 'Cancelada') totalCanceladas++;
                         
-                        // Determinar el texto para la columna Días
                         let diasTexto = '';
+                        let yaVencido = false;
                         
-                        // Primero, si el estado es Cancelada, no se considera vencida
-                        if (estado === 'Cancelada') {
-                            diasTexto = '-';
-                        } 
-                        // Si el estado es Activa, verificar si está vencida o por vencer
-                        else if (estado === 'Activa') {
-                            // Parsear fecha fin correctamente (formato: DD/MM/YYYY)
+                        if (estadoHtml && estadoHtml.includes('Vencida')) {
+                            estado = 'Vencida';
+                            yaVencido = true;
+                        }
+                        
+                        if (diasHtml && diasHtml.includes('Vencido')) {
+                            diasTexto = 'Vencido';
+                            yaVencido = true;
+                        }
+                        else if (diasHtml && diasHtml.includes('Por vencer')) {
+                            diasTexto = 'Por vencer';
+                        }
+                        else if (estado === 'Activa' || estado === 'Visita Activa') {
                             let fechaFinObj = null;
-                            if (fechaFin) {
+                            if (fechaFin && fechaFin !== '-') {
                                 let partes = fechaFin.split('/');
                                 if (partes.length === 3) {
-                                    // Formato: DD/MM/YYYY
                                     fechaFinObj = new Date(partes[2], partes[1] - 1, partes[0]);
                                 } else {
                                     fechaFinObj = new Date(fechaFin);
@@ -1609,28 +1688,37 @@ $total_clientes = $conn->query("SELECT COUNT(*) as total FROM clientes WHERE est
                             }
                             
                             let fechaActual = new Date();
-                            // Resetear horas para comparar solo fechas
                             fechaActual.setHours(0, 0, 0, 0);
                             
                             if (fechaFinObj && fechaFinObj < fechaActual) {
                                 diasTexto = 'Vencido';
-                                totalVencidas++;
+                                yaVencido = true;
                             } else if (diasOriginal.includes('Por vencer')) {
                                 diasTexto = 'Por vencer';
-                                totalVencidas++;
                             } else {
-                                // Extraer número de días del texto original
                                 let diasNum = parseInt(diasOriginal);
                                 if (!isNaN(diasNum)) {
-                                    diasTexto = diasNum + ' dias';
+                                    diasTexto = diasNum + ' días';
                                 } else {
                                     diasTexto = '-';
                                 }
                             }
                         } 
-                        // Otros estados
+                        else if (estado === 'Cancelada') {
+                            diasTexto = '-';
+                        } 
                         else {
                             diasTexto = diasOriginal;
+                        }
+                        
+                        // Contar estados correctamente
+                        if (estado === 'Cancelada') {
+                            totalCanceladas++;
+                        } else if (yaVencido || estado === 'Vencida') {
+                            estado = 'Vencida';
+                            totalVencidas++;
+                        } else if (estado === 'Activa' || estado === 'Visita Activa') {
+                            totalActivas++;
                         }
                         
                         if (nombreCliente && nombreCliente !== 'Cargando datos...') {
@@ -1643,68 +1731,112 @@ $total_clientes = $conn->query("SELECT COUNT(*) as total FROM clientes WHERE est
                         return;
                     }
                     
-                    let headers = ['Cliente', 'Email', 'Telefono', 'Plan', 'Fecha Inicio', 'Fecha Fin', 'Dias', 'Precio', 'Estado'];
+                    let headers = ['Cliente', 'Email', 'Teléfono', 'Plan', 'Fecha Inicio', 'Fecha Fin', 'Días', 'Precio', 'Estado'];
                     
-                    // Encabezado del reporte
+                    // Encabezado del reporte con logo y datos empresa
                     doc.setFillColor(primaryColor[0], primaryColor[1], primaryColor[2]);
-                    doc.rect(0, 0, pageWidth, 35, 'F');
+                    doc.rect(0, 0, pageWidth, 40, 'F');
+                    
+                    // Función para cargar y agregar el logo
+                    function cargarLogoEnPDF(doc, logoUrl, x, y, width, height) {
+                        return new Promise((resolve) => {
+                            if (!logoUrl || logoUrl === 'img/logo-gym.png' || logoUrl === 'https://via.placeholder.com/150x150?text=Sin+Logo') {
+                                doc.setFontSize(20);
+                                doc.setTextColor(255, 255, 255);
+                                doc.text('🏋️', x + 10, y + 20);
+                                resolve(false);
+                                return;
+                            }
+                            
+                            const img = new Image();
+                            img.crossOrigin = "Anonymous";
+                            img.src = logoUrl + '?v=' + Date.now();
+                            
+                            img.onload = function() {
+                                try {
+                                    const canvas = document.createElement('canvas');
+                                    canvas.width = img.width;
+                                    canvas.height = img.height;
+                                    const ctx = canvas.getContext('2d');
+                                    ctx.drawImage(img, 0, 0);
+                                    const imgData = canvas.toDataURL('image/png');
+                                    doc.addImage(imgData, 'PNG', x, y, width, height);
+                                    resolve(true);
+                                } catch(e) {
+                                    doc.setFontSize(20);
+                                    doc.setTextColor(255, 255, 255);
+                                    doc.text('🏋️', x + 10, y + 20);
+                                    resolve(false);
+                                }
+                            };
+                            
+                            img.onerror = function() {
+                                doc.setFontSize(20);
+                                doc.setTextColor(255, 255, 255);
+                                doc.text('🏋️', x + 10, y + 20);
+                                resolve(false);
+                            };
+                        });
+                    }
+                    
+                    await cargarLogoEnPDF(doc, datosEmpresa.logo, 10, 5, 30, 30);
+                    
+                    // Texto de la empresa
                     doc.setTextColor(255, 255, 255);
                     doc.setFontSize(16);
                     doc.setFont('helvetica', 'bold');
-                    doc.text('SISTEMA GIMNASIO', 20, 14);
-                    doc.setFontSize(11);
+                    doc.text(datosEmpresa.nombre, 50, 12);
+                    doc.setFontSize(8);
                     doc.setFont('helvetica', 'normal');
-                    doc.text('Reporte de Inscripciones', 20, 24);
-                    doc.setFontSize(7);
-                    doc.setTextColor(200, 200, 200);
-                    doc.text(`Generado: ${new Date().toLocaleString('es-ES')}`, 20, 32);
-                    doc.setTextColor(255, 255, 255);
-                    doc.text(`Usuario: <?php echo htmlspecialchars($usuario_nombre); ?>`, pageWidth - 50, 14);
-                    doc.text(`Rol: <?php echo htmlspecialchars($usuario_rol); ?>`, pageWidth - 50, 22);
+                    doc.text(datosEmpresa.direccion || '', 50, 20);
+                    doc.text('Tel: ' + (datosEmpresa.telefono || ''), 50, 26);
+                    doc.text('Email: ' + (datosEmpresa.email || ''), 50, 32);
                     
-                    // Tarjetas de estadisticas principales (solo 4)
-                    let yPos = 48;
-                    const stats = [
+                    doc.setFontSize(8);
+                    doc.text('REPORTE DE INSCRIPCIONES', pageWidth - 45, 12);
+                    doc.text(`Generado: ${new Date().toLocaleString('es-ES')}`, pageWidth - 45, 20);
+                    doc.text(`Usuario: <?php echo htmlspecialchars($usuario_nombre); ?>`, pageWidth - 45, 28);
+                    doc.text(`Rol: <?php echo htmlspecialchars($usuario_rol); ?>`, pageWidth - 45, 36);
+                    
+                    // ==================== 5 CARDS EN UNA SOLA LÍNEA (SIN COLORES) ====================
+                    let yPos = 52;
+                    const statsCards = [
                         { label: 'Clientes Activos', value: '<?php echo number_format($stats['total_clientes_activos'] ?? 0); ?>' },
                         { label: 'Inscripciones Activas', value: '<?php echo number_format($stats['total_inscripciones'] ?? 0); ?>' },
-                        { label: 'Ingresos Totales', value: '$<?php echo number_format(round($stats['total_ingresos'] ?? 0), 0); ?>' },
-                        { label: 'Total Clientes', value: '<?php echo number_format($total_clientes['total']); ?>' }
+                        { label: 'Inscripciones Vencidas', value: totalVencidas.toString() },
+                        { label: 'Inscripciones Canceladas', value: totalCanceladas.toString() },
+                        { label: 'Ingresos Totales', value: '$<?php echo number_format(round($stats['total_ingresos'] ?? 0), 0); ?>' }
                     ];
                     
-                    const cardWidth = (pageWidth - 40) / 4;
-                    stats.forEach((stat, index) => {
-                        const x = 15 + (index * (cardWidth + 5));
-                        doc.setFillColor(248, 250, 252);
-                        doc.roundedRect(x, yPos, cardWidth, 26, 3, 3, 'F');
+                    const cardWidth = (pageWidth - 30) / 5;
+                    statsCards.forEach((stat, index) => {
+                        const x = 10 + (index * (cardWidth + 2.5));
+                        
+                        // Fondo de la card (blanco)
+                        doc.setFillColor(255, 255, 255);
+                        doc.roundedRect(x, yPos, cardWidth, 24, 3, 3, 'F');
                         doc.setDrawColor(200, 200, 200);
-                        doc.roundedRect(x, yPos, cardWidth, 26, 3, 3, 'S');
-                        doc.setFontSize(8);
+                        doc.roundedRect(x, yPos, cardWidth, 24, 3, 3, 'S');
+                        
+                        // Texto del label
+                        doc.setFontSize(6);
                         doc.setTextColor(100, 100, 100);
+                        doc.setFont('helvetica', 'normal');
                         doc.text(stat.label, x + 4, yPos + 9);
-                        doc.setFontSize(12);
+                        
+                        // Texto del valor
+                        doc.setFontSize(11);
                         doc.setFont('helvetica', 'bold');
                         doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
-                        doc.text(stat.value, x + 4, yPos + 20);
+                        doc.text(stat.value, x + 4, yPos + 19);
                     });
                     
-                    // Linea de Totales: Vencidas y Canceladas
-                    yPos = 84;
+                    // Filtros aplicados (después de las cards)
+                    let yPosFiltros = yPos + 32;
                     doc.setFontSize(9);
                     doc.setFont('helvetica', 'bold');
                     doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
-                    doc.text('Totales:', 15, yPos);
-                    doc.setFontSize(9);
-                    doc.setFont('helvetica', 'normal');
-                    doc.setTextColor(80, 80, 80);
-                    doc.text(`Incripciones vencidas: ${totalVencidas}`, 45, yPos);
-                    doc.text(`Inscripciones canceladas: ${totalCanceladas}`, 85, yPos);
-                    
-                    // Filtros aplicados (tomando los valores actuales de los filtros)
-                    yPos = 98;
-                    doc.setFontSize(9);
-                    doc.setFont('helvetica', 'bold');
-                    doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
-                    doc.text('Filtros aplicados:', 15, yPos);
+                    doc.text('Filtros aplicados:', 15, yPosFiltros);
                     doc.setFontSize(8);
                     doc.setFont('helvetica', 'normal');
                     doc.setTextColor(80, 80, 80);
@@ -1719,9 +1851,9 @@ $total_clientes = $conn->query("SELECT COUNT(*) as total FROM clientes WHERE est
                     if (planValue && planValue !== 'Todos' && planValue !== 'Todos los planes') filtrosTexto.push(`Plan: ${planValue}`);
                     if (estadoValue && estadoValue !== 'Todos' && estadoValue !== 'Todos los estados') filtrosTexto.push(`Estado: ${estadoValue}`);
                     if (fechaValue && fechaValue !== '') filtrosTexto.push(`Fechas: ${fechaValue}`);
-                    if (filtrosTexto.length === 0) filtrosTexto = ['Ningun filtro aplicado'];
+                    if (filtrosTexto.length === 0) filtrosTexto = ['Ningún filtro aplicado'];
                     
-                    let filtrosY = yPos + 5;
+                    let filtrosY = yPosFiltros + 5;
                     let filtrosX = 70;
                     filtrosTexto.forEach((filtro) => {
                         const filtroWidth = doc.getStringUnitWidth(filtro) * 8 / doc.internal.scaleFactor;
@@ -1733,10 +1865,9 @@ $total_clientes = $conn->query("SELECT COUNT(*) as total FROM clientes WHERE est
                         filtrosX += filtroWidth + 8;
                     });
                     
-                    // Tabla principal - ocupando todo el espacio disponible
-                    let startY = filtrosY + 10;
+                    // Tabla principal
+                    let startY = filtrosY + 12;
                     
-                    // Calcular anchos de columna para ocupar todo el ancho
                     const availableWidth = pageWidth - 24;
                     const columnWidths = {
                         0: availableWidth * 0.18,
@@ -1789,11 +1920,10 @@ $total_clientes = $conn->query("SELECT COUNT(*) as total FROM clientes WHERE est
                         margin: { left: 12, right: 12 },
                         tableWidth: 'auto',
                         didDrawCell: function(data) {
-                            // Resaltar celdas de la columna Dias (índice 6)
                             if (data.column.index === 6) {
                                 const valorDias = data.cell.raw;
                                 if (valorDias === 'Vencido') {
-                                    doc.setTextColor(239, 68, Hakutatsu);
+                                    doc.setTextColor(239, 68, 68);
                                     doc.setFont('helvetica', 'bold');
                                 } else if (valorDias === 'Por vencer') {
                                     doc.setTextColor(245, 158, 11);
@@ -1801,10 +1931,9 @@ $total_clientes = $conn->query("SELECT COUNT(*) as total FROM clientes WHERE est
                                 }
                             }
                             
-                            // Resaltar celdas de estado
                             if (data.column.index === 8) {
                                 const estado = data.cell.raw;
-                                if (estado === 'Vencido') {
+                                if (estado === 'Vencida') {
                                     doc.setTextColor(239, 68, 68);
                                     doc.setFont('helvetica', 'bold');
                                 } else if (estado === 'Cancelada') {
@@ -1817,12 +1946,12 @@ $total_clientes = $conn->query("SELECT COUNT(*) as total FROM clientes WHERE est
                             }
                         },
                         didParseCell: function(data) {
-                            // Restaurar color después de cada celda
-                            if (data.column.index === 6 || data.column.index === 8) {
-                                if (data.cell.raw !== 'Vencido' && data.cell.raw !== 'Por vencer' && data.cell.raw !== 'Cancelada') {
-                                    data.cell.styles.textColor = [80, 80, 80];
-                                    data.cell.styles.fontStyle = 'normal';
-                                }
+                            if ((data.column.index === 6 || data.column.index === 8) && 
+                                data.cell.raw !== 'Vencido' && data.cell.raw !== 'Por vencer' && 
+                                data.cell.raw !== 'Cancelada' && data.cell.raw !== 'Activa' &&
+                                data.cell.raw !== 'Vencida') {
+                                data.cell.styles.textColor = [80, 80, 80];
+                                data.cell.styles.fontStyle = 'normal';
                             }
                         },
                         didDrawPage: function(data) {
@@ -1832,7 +1961,7 @@ $total_clientes = $conn->query("SELECT COUNT(*) as total FROM clientes WHERE est
                             doc.setFontSize(7);
                             doc.setTextColor(150, 150, 150);
                             doc.setFont('helvetica', 'italic');
-                            doc.text(`Pagina ${currentPage} de ${pageCount} | Total registros: ${datosTabla.length}`,
+                            doc.text(`Página ${currentPage} de ${pageCount} | Total registros: ${datosTabla.length} | ${datosEmpresa.nombre}`,
                                     pageWidth / 2, pageHeight - 6, { align: 'center' });
                             
                             doc.setDrawColor(200, 200, 200);
@@ -1859,7 +1988,7 @@ $total_clientes = $conn->query("SELECT COUNT(*) as total FROM clientes WHERE est
                     });
                 } catch (error) {
                     console.error('Error en PDF:', error);
-                    Swal.fire('Error', 'Ocurrio un error: ' + error.message, 'error');
+                    Swal.fire('Error', 'Ocurrió un error: ' + error.message, 'error');
                 }
             }, 100);
         }

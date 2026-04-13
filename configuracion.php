@@ -344,7 +344,46 @@ $total_proveedores = $conn->query("SELECT COUNT(*) as total FROM proveedores WHE
 $total_categorias = $conn->query("SELECT COUNT(*) as total FROM categorias_productos WHERE estado='activo'")->fetch_assoc();
 $total_clases = $conn->query("SELECT COUNT(*) as total FROM clases WHERE estado='activa'")->fetch_assoc();
 $total_clientes = $conn->query("SELECT COUNT(*) as total FROM clientes WHERE estado='activo'")->fetch_assoc();
+
+function getLastGitHubDateTime() {
+    $cache_file = __DIR__ . '/cache/github_datetime.json';
+    
+    if (file_exists($cache_file) && (time() - filemtime($cache_file)) < 3600) {
+        $cached = json_decode(file_get_contents($cache_file), true);
+        if ($cached) return $cached['datetime'];
+    }
+    
+    $url = "https://api.github.com/repos/Jesus3012/Sistema_gym/commits?per_page=1";
+    
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0');
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 5);
+    
+    $response = curl_exec($ch);
+    curl_close($ch);
+    
+    if ($response) {
+        $data = json_decode($response, true);
+        if (isset($data[0]['commit']['committer']['date'])) {
+            $date = new DateTime($data[0]['commit']['committer']['date']);
+            $date->setTimezone(new DateTimeZone('America/Mexico_City'));
+            $formatted = $date->format('d/m/Y H:i:s');
+            
+            if (!file_exists(__DIR__ . '/cache')) mkdir(__DIR__ . '/cache', 0777, true);
+            file_put_contents($cache_file, json_encode(['datetime' => $formatted]));
+            return $formatted;
+        }
+    }
+    
+    return date('d/m/Y H:i:s');
+}
+
+$ultima_actualizacion = getLastGitHubDateTime();
 ?>
+
 
 <!DOCTYPE html>
 <html lang="es">
@@ -874,7 +913,7 @@ $total_clientes = $conn->query("SELECT COUNT(*) as total FROM clientes WHERE est
                     <div class="col-md-6">
                         <ul class="list-unstyled">
                             <li><strong>Desarrollado por:</strong> Jesus Martinez</li>
-                            <li><strong>Última actualización:</strong> <?php echo date('d/m/Y'); ?></li>
+                            <li><strong>Última actualización:</strong> <?php echo $ultima_actualizacion; ?></li>
                         </ul>
                     </div>
                     <div class="col-md-6">

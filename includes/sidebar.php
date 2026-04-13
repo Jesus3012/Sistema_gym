@@ -13,19 +13,59 @@ if (!isset($_SESSION['user_id'])) {
     exit();
 }
 
+// Conectar a la base de datos para obtener configuración del gimnasio
+require_once __DIR__ . '/../config/database.php';
+$database = new Database();
+$conn = $database->getConnection();
+
+// Obtener configuración del gimnasio
+$gym_nombre = 'Gimnasio';
+$gym_logo = '';
+$gym_logo_url = '';
+
+$query = "SELECT nombre, logo FROM configuracion_gimnasio WHERE id = 1";
+$result = $conn->query($query);
+
+if ($result && $row = $result->fetch_assoc()) {
+    $gym_nombre = !empty($row['nombre']) ? $row['nombre'] : 'Gimnasio';
+    
+    // Verificar si el logo existe en la ruta guardada
+    if (!empty($row['logo']) && file_exists($row['logo'])) {
+        $gym_logo = $row['logo'];
+        $gym_logo_url = $row['logo'];
+    }
+}
+
+// Si no hay logo en la BD, buscar en la carpeta img con cualquier extensión
+if (empty($gym_logo)) {
+    $extensiones = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'ico'];
+    foreach ($extensiones as $ext) {
+        $ruta = "img/logo-gym." . $ext;
+        if (file_exists($ruta)) {
+            $gym_logo = $ruta;
+            $gym_logo_url = $ruta;
+            break;
+        }
+    }
+}
+
 // Determinar módulo activo basado en la página actual
 $current_page = basename($_SERVER['PHP_SELF']);
 $active_module = '';
 
 if ($current_page == 'dashboard.php') $active_module = 'dashboard';
 if ($current_page == 'productos.php') $active_module = 'products';
+if ($current_page == 'ventas.php') $active_module = 'ventas';
 if ($current_page == 'historial_stock.php') $active_module = 'historial';
+if ($current_page == 'historial_ventas.php') $active_module = 'historial_ventas';
 if ($current_page == 'inscripciones.php') $active_module = 'inscriptions';
+if ($current_page == 'asistencias.php') $active_module = 'assistance';
 if ($current_page == 'clases.php') $active_module = 'classes';
 if ($current_page == 'inscripciones_clases.php') $active_module = 'clases_inscriptions';
 if ($current_page == 'reportes.php') $active_module = 'reports';
 if ($current_page == 'notificaciones.php') $active_module = 'notificaciones';
 if ($current_page == 'configuracion.php') $active_module = 'settings';
+if ($current_page == 'mi_perfil.php') $active_module = 'perfil';
 
 // Obtener datos del usuario desde la sesión
 $user_name = isset($_SESSION['user_name']) ? $_SESSION['user_name'] : 'Usuario';
@@ -44,6 +84,7 @@ $user_rol_display = isset($rol_spanish[$user_rol]) ? $rol_spanish[$user_rol] : u
 <style>
 /* ============================================
    SIDEBAR STYLES - Azul Profesional
+   SCROLLBAR: Track azul como sidebar + Thumb gris
 ============================================ */
 :root {
     --sidebar-bg: #0a2540;
@@ -74,6 +115,91 @@ body {
     overflow-x: hidden;
 }
 
+/* ============================================
+   SCROLLBAR DEL SIDEBAR
+   Track: AZUL como el fondo del sidebar
+   Thumb: GRIS
+   ============================================ */
+
+/* Forzar estilos en sidebar y todos sus elementos */
+.sidebar,
+#sidebar,
+aside.sidebar {
+    scrollbar-width: thin !important;
+    scrollbar-color: #8c959d #0a2540 !important; /* thumb gris, track azul */
+}
+
+/* WebKit (Chrome, Safari, Edge) */
+.sidebar::-webkit-scrollbar,
+#sidebar::-webkit-scrollbar,
+aside.sidebar::-webkit-scrollbar {
+    width: 6px !important;
+    height: 6px !important;
+}
+
+/* Track (fondo) - AZUL como el sidebar */
+.sidebar::-webkit-scrollbar-track,
+#sidebar::-webkit-scrollbar-track,
+aside.sidebar::-webkit-scrollbar-track {
+    background: #0a2540 !important; /* Mismo color que el sidebar */
+    border-radius: 0px !important;
+}
+
+/* Thumb (barra deslizante) - GRIS */
+.sidebar::-webkit-scrollbar-thumb,
+#sidebar::-webkit-scrollbar-thumb,
+aside.sidebar::-webkit-scrollbar-thumb {
+    background: #6c757d !important; /* Gris */
+    border-radius: 10px !important;
+}
+
+/* Thumb al hacer hover - Gris más claro */
+.sidebar::-webkit-scrollbar-thumb:hover,
+#sidebar::-webkit-scrollbar-thumb:hover,
+aside.sidebar::-webkit-scrollbar-thumb:hover {
+    background: #8c959d !important;
+}
+
+/* Esquina del scrollbar */
+.sidebar::-webkit-scrollbar-corner,
+#sidebar::-webkit-scrollbar-corner,
+aside.sidebar::-webkit-scrollbar-corner {
+    background: #0a2540 !important;
+}
+
+/* Para elementos dentro del sidebar que puedan tener scroll */
+.sidebar *::-webkit-scrollbar,
+#sidebar *::-webkit-scrollbar {
+    width: 6px !important;
+    height: 6px !important;
+}
+
+.sidebar *::-webkit-scrollbar-track,
+#sidebar *::-webkit-scrollbar-track {
+    background: #0a2540 !important;
+}
+
+.sidebar *::-webkit-scrollbar-thumb,
+#sidebar *::-webkit-scrollbar-thumb {
+    background: #6c757d !important;
+    border-radius: 10px !important;
+}
+
+.sidebar *::-webkit-scrollbar-thumb:hover,
+#sidebar *::-webkit-scrollbar-thumb:hover {
+    background: #8c959d !important;
+}
+
+/* Firefox - Track azul, thumb gris */
+@-moz-document url-prefix() {
+    .sidebar,
+    #sidebar,
+    aside.sidebar {
+        scrollbar-width: thin !important;
+        scrollbar-color: #8c959d #0a2540 !important;
+    }
+}
+
 /* Sidebar - Ocupa toda la altura */
 .sidebar {
     position: fixed;
@@ -90,6 +216,14 @@ body {
     overflow-y: auto;
     overflow-x: hidden;
     box-shadow: 2px 0 12px rgba(0, 0, 0, 0.1);
+    /* Firefox */
+    scrollbar-width: thin !important;
+    scrollbar-color: #8c959d #0a2540 !important;
+}
+
+/* Aislar el sidebar para evitar conflictos */
+.sidebar {
+    isolation: isolate;
 }
 
 /* Botón de colapsar DENTRO del sidebar */
@@ -134,6 +268,10 @@ body {
     justify-content: center;
 }
 
+.sidebar.collapsed .logo-img {
+    margin: 0 auto;
+}
+
 .sidebar.collapsed .user-profile {
     justify-content: center;
     padding: 20px 0;
@@ -164,34 +302,6 @@ body {
 
 .sidebar.collapsed .sidebar-collapse-btn i {
     transform: rotate(180deg);
-}
-
-/* WebKit (Chrome, Safari, Edge) */
-::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
-}
-
-/* Fondo del scrollbar - color del sidebar */
-::-webkit-scrollbar-track {
-    background: #0a2540;  /* Mismo color que el sidebar */
-    border-radius: 10px;
-}
-
-/* Barra del scroll - gris */
-::-webkit-scrollbar-thumb {
-    background: #adb5bd;
-    border-radius: 10px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-    background: #6c757d;
-}
-
-/* Firefox */
-* {
-    scrollbar-width: thin;
-    scrollbar-color: #adb5bd #0a2540;
 }
 
 /* Botón Hamburguesa para móvil - Solo visible en móvil */
@@ -255,23 +365,31 @@ body {
     text-decoration: none;
 }
 
+.logo-img {
+    width: 35px;
+    height: 35px;
+    object-fit: contain;
+    border-radius: 10px;
+}
+
 .logo i {
     font-size: 1.8rem;
     color: var(--sidebar-accent);
 }
 
 .logo-text {
-    font-size: 1.1rem;
+    font-size: 1rem;
     font-weight: 600;
     color: white;
+    line-height: 1.3;
 }
 
 .logo-text small {
     display: block;
-    font-size: 0.7rem;
+    font-size: 0.65rem;
     font-weight: 400;
     color: var(--sidebar-text-light);
-    margin-top: 3px;
+    margin-top: 2px;
 }
 
 /* Perfil de Usuario */
@@ -315,6 +433,20 @@ body {
 .user-info p i {
     font-size: 0.65rem;
     margin-right: 3px;
+}
+
+/* Estilo para la imagen de perfil en el sidebar */
+.user-avatar img {
+    width: 45px;
+    height: 45px;
+    border-radius: 50%;
+    object-fit: cover;
+}
+
+/* Ajuste para el ícono cuando no hay imagen */
+.user-avatar i {
+    font-size: 2.5rem;
+    color: var(--sidebar-accent);
 }
 
 .rol-badge {
@@ -450,20 +582,6 @@ body {
     }
 }
 
-/* Scrollbar */
-.sidebar::-webkit-scrollbar {
-    width: 4px;
-}
-
-.sidebar::-webkit-scrollbar-track {
-    background: var(--sidebar-dark);
-}
-
-.sidebar::-webkit-scrollbar-thumb {
-    background: var(--sidebar-accent);
-    border-radius: 4px;
-}
-
 /* Overlay para móvil */
 .mobile-overlay {
     position: fixed;
@@ -521,6 +639,52 @@ body.sidebar-collapsed .main-content {
 .nav-link {
     animation: fadeIn 0.2s ease forwards;
 }
+
+/* ============================================
+   GARANTIZAR SCROLLBAR EN TODAS LAS SITUACIONES
+   ============================================ */
+@media screen {
+    /* Track azul, thumb gris */
+    .sidebar,
+    #sidebar,
+    aside.sidebar {
+        scrollbar-color: #8c959d #0a2540 !important;
+        scrollbar-width: thin !important;
+    }
+    
+    .sidebar::-webkit-scrollbar,
+    #sidebar::-webkit-scrollbar,
+    aside.sidebar::-webkit-scrollbar {
+        width: 6px !important;
+        background: #0a2540 !important;
+    }
+    
+    .sidebar::-webkit-scrollbar-track,
+    #sidebar::-webkit-scrollbar-track,
+    aside.sidebar::-webkit-scrollbar-track {
+        background: #0a2540 !important;
+    }
+    
+    .sidebar::-webkit-scrollbar-thumb,
+    #sidebar::-webkit-scrollbar-thumb,
+    aside.sidebar::-webkit-scrollbar-thumb {
+        background: #6c757d !important;
+        border-radius: 10px !important;
+    }
+    
+    .sidebar::-webkit-scrollbar-thumb:hover,
+    #sidebar::-webkit-scrollbar-thumb:hover,
+    aside.sidebar::-webkit-scrollbar-thumb:hover {
+        background: #8c959d !important;
+    }
+}
+
+/* Impresión */
+@media print {
+    .sidebar {
+        display: none;
+    }
+}
 </style>
 
 <!-- Botón Hamburguesa para móvil (solo visible en móvil) -->
@@ -537,9 +701,14 @@ body.sidebar-collapsed .main-content {
     
     <div class="sidebar-header">
         <a href="dashboard.php" class="logo">
-            <i class="fas fa-dumbbell"></i>
+            <?php if (!empty($gym_logo_url) && file_exists($gym_logo_url)): ?>
+                <img src="<?php echo htmlspecialchars($gym_logo_url); ?>" alt="Logo" class="logo-img" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                <i class="fas fa-dumbbell" style="display: none;"></i>
+            <?php else: ?>
+                <i class="fas fa-dumbbell"></i>
+            <?php endif; ?>
             <div class="logo-text">
-                Gym System
+                <?php echo htmlspecialchars($gym_nombre); ?>
                 <small>Panel de Control</small>
             </div>
         </a>
@@ -551,7 +720,24 @@ body.sidebar-collapsed .main-content {
 
     <div class="user-profile">
         <div class="user-avatar">
-            <i class="fas fa-user-circle"></i>
+            <?php 
+            // Verificar si el usuario tiene foto de perfil
+            $user_id = $_SESSION['user_id'];
+            $foto_perfil = '';
+            $query_foto = "SELECT foto_perfil FROM usuarios WHERE id = ?";
+            $stmt_foto = $conn->prepare($query_foto);
+            $stmt_foto->bind_param("i", $user_id);
+            $stmt_foto->execute();
+            $result_foto = $stmt_foto->get_result();
+            if ($result_foto && $row_foto = $result_foto->fetch_assoc()) {
+                $foto_perfil = $row_foto['foto_perfil'];
+            }
+            
+            if (!empty($foto_perfil) && file_exists($foto_perfil)): ?>
+                <img src="<?php echo htmlspecialchars($foto_perfil); ?>" alt="Foto de perfil" style="width: 45px; height: 45px; border-radius: 50%; object-fit: cover;">
+            <?php else: ?>
+                <i class="fas fa-user-circle"></i>
+            <?php endif; ?>
         </div>
         <div class="user-info">
             <h4><?php echo htmlspecialchars($user_name); ?></h4>
@@ -568,61 +754,174 @@ body.sidebar-collapsed .main-content {
 
     <nav class="sidebar-nav">
         <ul>
-            <li class="nav-item">
-                <a href="dashboard.php" class="nav-link <?php echo $active_module == 'dashboard' ? 'active' : ''; ?>">
-                    <i class="fas fa-chart-line"></i>
-                    <span class="nav-text">Dashboard</span>
-                </a>
-            </li>
-            <li class="nav-item">
-                <a href="productos.php" class="nav-link <?php echo $active_module == 'products' ? 'active' : ''; ?>">
-                    <i class="fas fa-box"></i>
-                    <span class="nav-text">Productos</span>
-                </a>
-            </li>
-
-            <li class="nav-item">
-                <a href="historial_stock.php" class="nav-link <?php echo $active_module == 'historial' ? 'active' : ''; ?>">
-                    <i class="fas fa-history"></i>
-                    <span class="nav-text">Historial Stock</span>
-                </a>
-            </li>
-            <li class="nav-item">
-                <a href="inscripciones.php" class="nav-link <?php echo $active_module == 'inscriptions' ? 'active' : ''; ?>">
-                    <i class="fas fa-users"></i>
-                    <span class="nav-text">Inscripciones</span>
-                </a>
-            </li>
-            <li class="nav-item">
-                <a href="clases.php" class="nav-link <?php echo $active_module == 'classes' ? 'active' : ''; ?>">
-                    <i class="fas fa-calendar-alt"></i>
-                    <span class="nav-text">Clases</span>
-                </a>
-            </li>
-
-            <li class="nav-item">
-                <a href="inscripciones_clases.php" class="nav-link <?php echo $active_module == 'clases_inscriptions' ? 'active' : ''; ?>">
-                    <i class="fas fa-user-check"></i>
-                    <span class="nav-text">Inscripciones a Clases</span>
-                </a>
-            </li>
-            <li class="nav-item">
-                <a href="reportes.php" class="nav-link <?php echo $active_module == 'reports' ? 'active' : ''; ?>">
-                    <i class="fas fa-chart-bar"></i>
-                    <span class="nav-text">Reportes</span>
-                </a>
-            </li>
-            <li class="nav-item">
-                <a href="notificaciones.php" class="nav-link <?php echo $active_module == 'notificaciones' ? 'active' : ''; ?>">
-                    <i class="fas fa-bell"></i>
-                    <span class="nav-text">Notificaciones</span>
-                </a>
-            </li>
+            <!-- Módulos según el rol -->
+            
+            <?php if ($user_rol == 'admin'): ?>
+                <!-- ADMIN: Acceso a todos los módulos -->
+                <li class="nav-item">
+                    <a href="dashboard.php" class="nav-link <?php echo $active_module == 'dashboard' ? 'active' : ''; ?>">
+                        <i class="fas fa-chart-line"></i>
+                        <span class="nav-text">Dashboard</span>
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a href="productos.php" class="nav-link <?php echo $active_module == 'products' ? 'active' : ''; ?>">
+                        <i class="fas fa-box"></i>
+                        <span class="nav-text">Productos</span>
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a href="historial_stock.php" class="nav-link <?php echo $active_module == 'historial' ? 'active' : ''; ?>">
+                        <i class="fas fa-history"></i>
+                        <span class="nav-text">Historial Stock</span>
+                    </a>
+                </li>
+                <!-- Dentro del bloque de admin y recepcionista, después de Dashboard -->
+                <li class="nav-item">
+                    <a href="ventas.php" class="nav-link <?php echo $active_module == 'ventas' ? 'active' : ''; ?>">
+                        <i class="fas fa-shopping-cart"></i>
+                        <span class="nav-text">Venta de Productos</span>
+                    </a>
+                </li>
+                <?php if ($user_rol == 'admin' || $user_rol == 'recepcionista'): ?>
+                    <li class="nav-item">
+                        <a href="historial_ventas.php" class="nav-link <?php echo $active_module == 'historial_ventas' ? 'active' : ''; ?>">
+                            <i class="fas fa-history"></i>
+                            <span class="nav-text">Historial Ventas</span>
+                        </a>
+                    </li>
+                <?php endif; ?>
+                <li class="nav-item">
+                    <a href="inscripciones.php" class="nav-link <?php echo $active_module == 'inscriptions' ? 'active' : ''; ?>">
+                        <i class="fas fa-users"></i>
+                        <span class="nav-text">Inscripciones</span>
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a href="asistencias.php" class="nav-link <?php echo $active_module == 'assistance' ? 'active' : ''; ?>">
+                        <i class="fas fa-fingerprint"></i>
+                        <span class="nav-text">Asistencias</span>
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a href="clases.php" class="nav-link <?php echo $active_module == 'classes' ? 'active' : ''; ?>">
+                        <i class="fas fa-calendar-alt"></i>
+                        <span class="nav-text">Clases</span>
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a href="inscripciones_clases.php" class="nav-link <?php echo $active_module == 'clases_inscriptions' ? 'active' : ''; ?>">
+                        <i class="fas fa-user-check"></i>
+                        <span class="nav-text">Inscripciones a Clases</span>
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a href="reportes.php" class="nav-link <?php echo $active_module == 'reports' ? 'active' : ''; ?>">
+                        <i class="fas fa-chart-bar"></i>
+                        <span class="nav-text">Reportes</span>
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a href="notificaciones.php" class="nav-link <?php echo $active_module == 'notificaciones' ? 'active' : ''; ?>">
+                        <i class="fas fa-bell"></i>
+                        <span class="nav-text">Notificaciones</span>
+                    </a>
+                </li>
+                <li class="nav-divider"></li>
+                <li class="nav-item">
+                    <a href="configuracion.php" class="nav-link <?php echo $active_module == 'settings' ? 'active' : ''; ?>">
+                        <i class="fas fa-cog"></i>
+                        <span class="nav-text">Configuración</span>
+                    </a>
+                </li>
+                
+            <?php elseif ($user_rol == 'recepcionista'): ?>
+                <!-- RECEPCIONISTA: Sin productos, historial stock, ni configuración -->
+                <li class="nav-item">
+                    <a href="dashboard.php" class="nav-link <?php echo $active_module == 'dashboard' ? 'active' : ''; ?>">
+                        <i class="fas fa-chart-line"></i>
+                        <span class="nav-text">Dashboard</span>
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a href="inscripciones.php" class="nav-link <?php echo $active_module == 'inscriptions' ? 'active' : ''; ?>">
+                        <i class="fas fa-users"></i>
+                        <span class="nav-text">Inscripciones</span>
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a href="asistencias.php" class="nav-link <?php echo $active_module == 'assistance' ? 'active' : ''; ?>">
+                        <i class="fas fa-fingerprint"></i>
+                        <span class="nav-text">Asistencias</span>
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a href="clases.php" class="nav-link <?php echo $active_module == 'classes' ? 'active' : ''; ?>">
+                        <i class="fas fa-calendar-alt"></i>
+                        <span class="nav-text">Clases</span>
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a href="inscripciones_clases.php" class="nav-link <?php echo $active_module == 'clases_inscriptions' ? 'active' : ''; ?>">
+                        <i class="fas fa-user-check"></i>
+                        <span class="nav-text">Inscripciones a Clases</span>
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a href="reportes.php" class="nav-link <?php echo $active_module == 'reports' ? 'active' : ''; ?>">
+                        <i class="fas fa-chart-bar"></i>
+                        <span class="nav-text">Reportes</span>
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a href="ventas.php" class="nav-link <?php echo $active_module == 'ventas' ? 'active' : ''; ?>">
+                        <i class="fas fa-shopping-cart"></i>
+                        <span class="nav-text">Venta de Productos</span>
+                    </a>
+                </li>
+                <?php if ($user_rol == 'admin' || $user_rol == 'recepcionista'): ?>
+                <li class="nav-item">
+                    <a href="historial_ventas.php" class="nav-link <?php echo $active_module == 'historial_ventas' ? 'active' : ''; ?>">
+                        <i class="fas fa-history"></i>
+                        <span class="nav-text">Historial Ventas</span>
+                    </a>
+                </li>
+                <?php endif; ?>
+                
+            <?php elseif ($user_rol == 'entrenador'): ?>
+                <!-- ENTRENADOR: Solo clases, inscripciones a clases y asistencias -->
+                <li class="nav-item">
+                    <a href="dashboard.php" class="nav-link <?php echo $active_module == 'dashboard' ? 'active' : ''; ?>">
+                        <i class="fas fa-chart-line"></i>
+                        <span class="nav-text">Dashboard</span>
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a href="clases.php" class="nav-link <?php echo $active_module == 'classes' ? 'active' : ''; ?>">
+                        <i class="fas fa-calendar-alt"></i>
+                        <span class="nav-text">Clases</span>
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a href="inscripciones_clases.php" class="nav-link <?php echo $active_module == 'clases_inscriptions' ? 'active' : ''; ?>">
+                        <i class="fas fa-user-check"></i>
+                        <span class="nav-text">Inscripciones a Clases</span>
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a href="asistencias.php" class="nav-link <?php echo $active_module == 'assistance' ? 'active' : ''; ?>">
+                        <i class="fas fa-fingerprint"></i>
+                        <span class="nav-text">Asistencias</span>
+                    </a>
+                </li>
+            <?php endif; ?>
+            
+            <!-- Mi Perfil - Visible para todos los roles -->
             <li class="nav-divider"></li>
             <li class="nav-item">
-                <a href="configuracion.php" class="nav-link <?php echo $active_module == 'settings' ? 'active' : ''; ?>">
-                    <i class="fas fa-cog"></i>
-                    <span class="nav-text">Configuración</span>
+                <a href="mi_perfil.php" class="nav-link <?php echo $active_module == 'perfil' ? 'active' : ''; ?>">
+                    <i class="fas fa-user-circle"></i>
+                    <span class="nav-text">Mi Perfil</span>
                 </a>
             </li>
         </ul>
@@ -650,16 +949,13 @@ body.sidebar-collapsed .main-content {
     let startWidth = 0;
     let savedWidth = 280;
     
-    // Función para colapsar/expandir el sidebar
     function toggleCollapse() {
         if (window.innerWidth <= 768) return;
         
         if (isCollapsed) {
-            // Expandir
             sidebar.classList.remove('collapsed');
             document.body.classList.remove('sidebar-collapsed');
             
-            // Restaurar el ancho guardado
             const storedWidth = localStorage.getItem('sidebarWidth');
             if (storedWidth && storedWidth > 70) {
                 sidebar.style.width = storedWidth + 'px';
@@ -672,8 +968,6 @@ body.sidebar-collapsed .main-content {
             isCollapsed = false;
             localStorage.setItem('sidebarCollapsed', 'false');
         } else {
-            // Colapsar
-            // Guardar el ancho actual antes de colapsar
             const currentWidth = sidebar.offsetWidth;
             if (currentWidth > 70) {
                 savedWidth = currentWidth;
@@ -689,12 +983,10 @@ body.sidebar-collapsed .main-content {
         }
     }
     
-    // Función para manejar el redimensionamiento
     function initDragResize() {
         if (!dragHandle) return;
         
         dragHandle.addEventListener('mousedown', (e) => {
-            // No permitir redimensionar si está colapsado o en móvil
             if (window.innerWidth <= 768) return;
             if (isCollapsed) return;
             
@@ -721,7 +1013,6 @@ body.sidebar-collapsed .main-content {
                 document.body.style.cursor = '';
                 document.body.style.userSelect = '';
                 
-                // Guardar el nuevo ancho
                 if (!isCollapsed && window.innerWidth > 768) {
                     const currentWidth = sidebar.offsetWidth;
                     if (currentWidth >= 200 && currentWidth <= 320) {
@@ -733,7 +1024,6 @@ body.sidebar-collapsed .main-content {
         });
     }
     
-    // Función para manejar el sidebar en móvil
     function toggleMobileSidebar() {
         if (window.innerWidth <= 768) {
             sidebar.classList.toggle('mobile-open');
@@ -748,10 +1038,8 @@ body.sidebar-collapsed .main-content {
         document.body.classList.remove('sidebar-open');
     }
     
-    // Función para manejar cambios de tamaño de pantalla
     function handleResize() {
         if (window.innerWidth <= 768) {
-            // Modo móvil
             if (!isCollapsed && document.body.classList.contains('sidebar-collapsed')) {
                 document.body.classList.remove('sidebar-collapsed');
             }
@@ -761,12 +1049,10 @@ body.sidebar-collapsed .main-content {
             }
             closeMobileSidebar();
         } else {
-            // Modo desktop
             sidebar.classList.remove('mobile-open');
             mobileOverlay.classList.remove('active');
             document.body.classList.remove('sidebar-open');
             
-            // Restaurar estado colapsado desde localStorage
             const storedCollapsed = localStorage.getItem('sidebarCollapsed');
             const storedWidthVal = localStorage.getItem('sidebarWidth');
             
@@ -794,7 +1080,6 @@ body.sidebar-collapsed .main-content {
         }
     }
     
-    // Cargar estado inicial
     const loadInitialState = () => {
         if (window.innerWidth > 768) {
             const storedCollapsed = localStorage.getItem('sidebarCollapsed');
@@ -820,7 +1105,6 @@ body.sidebar-collapsed .main-content {
         }
     };
     
-    // Event listeners
     if (sidebarCollapseBtn) {
         sidebarCollapseBtn.addEventListener('click', toggleCollapse);
     }

@@ -79,6 +79,24 @@ $usuario_id = $_SESSION['user_id'];
             .sidebar { transform: translateX(-100%); } 
             .main-content { margin-left: 0; } 
         }
+        
+        .empty-state-simple {
+            text-align: center;
+            padding: 40px 20px;
+        }
+
+        .empty-state-simple i {
+            opacity: 0.5;
+        }
+
+        .empty-state-simple a {
+            text-decoration: none;
+            font-weight: 500;
+        }
+
+        .empty-state-simple a:hover {
+            text-decoration: underline;
+        }
     </style>
 </head>
 <body>
@@ -328,9 +346,24 @@ $usuario_id = $_SESSION['user_id'];
                             </tr>
                         `);
                     });
-                } else {
-                    tbody.html('<tr><td colspan="6" class="text-center py-4"><i class="fas fa-info-circle"></i> No hay asistencias registradas hoy</td></tr>');
-                }
+                    } else {
+                        tbody.html(`
+                            <tr>
+                                <td colspan="6" class="text-center py-5">
+                                    <div class="empty-state-simple">
+                                        <i class="fas fa-clipboard-list fa-4x mb-3" style="color: #cbd5e1;"></i>
+                                        <h5 class="text-muted mb-2">No hay asistencias registradas hoy</h5>
+                                        <p class="text-muted small mb-0">
+                                            <i class="fas fa-fingerprint"></i> Use el lector de huellas o 
+                                            <a href="#" onclick="$('#modalRegistroManual').modal('show'); return false;" style="color: #1e3a8a;">
+                                                <i class="fas fa-hand-pointer"></i> registro manual
+                                            </a>
+                                        </p>
+                                    </div>
+                                </td>
+                            </tr>
+                        `);
+                    }
             }, 'json').fail(function() {
                 $('#tablaAsistencias').html('<tr><td colspan="6" class="text-center py-4 text-danger">Error al cargar asistencias</td></tr>');
             });

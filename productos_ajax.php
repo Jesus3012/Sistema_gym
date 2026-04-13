@@ -93,6 +93,8 @@ if ($action == 'list') {
     $busqueda = $busqueda;
     $categoria_filtro = $categoria;
     $estado_filtro = $estado;
+    $total_registros = $total_registros;
+    $total_paginas = $total_paginas;
     
     // Incluir el template de tabla
     include 'productos_table.php';
@@ -101,14 +103,27 @@ elseif ($action == 'get') {
     $id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
     
     if ($id > 0) {
-        $stmt = $conn->prepare("SELECT id, nombre, categoria_id, proveedor_id, precio_compra, precio_venta, foto FROM productos WHERE id = ?");
+        // Solo devolver campos editables, NO stock ni stock_minimo
+        $stmt = $conn->prepare("SELECT id, nombre, descripcion, categoria_id, proveedor_id, precio_compra, precio_venta, foto FROM productos WHERE id = ?");
         $stmt->bind_param("i", $id);
         $stmt->execute();
         $result = $stmt->get_result();
         $producto = $result->fetch_assoc();
         
         if ($producto) {
-            echo json_encode(['success' => true, 'producto' => $producto]);
+            echo json_encode([
+                'success' => true, 
+                'producto' => [
+                    'id' => $producto['id'],
+                    'nombre' => $producto['nombre'],
+                    'descripcion' => $producto['descripcion'],
+                    'categoria_id' => $producto['categoria_id'],
+                    'proveedor_id' => $producto['proveedor_id'],
+                    'precio_compra' => $producto['precio_compra'],
+                    'precio_venta' => $producto['precio_venta'],
+                    'foto' => $producto['foto']
+                ]
+            ]);
         } else {
             echo json_encode(['success' => false, 'error' => 'Producto no encontrado']);
         }
@@ -118,7 +133,7 @@ elseif ($action == 'get') {
     }
 }
 elseif ($action == 'update') {
-    // Procesar actualización de producto
+    // Procesar actualización de producto - SIN modificar stock
     $id = isset($_POST['producto_id']) ? (int)$_POST['producto_id'] : 0;
     $nombre = trim($_POST['nombre']);
     $categoria_id = $_POST['categoria_id'];
@@ -129,6 +144,11 @@ elseif ($action == 'update') {
     
     if (empty($nombre)) {
         echo json_encode(['success' => false, 'error' => 'El nombre del producto es obligatorio']);
+        exit();
+    }
+    
+    if ($categoria_id == 0 || empty($categoria_id)) {
+        echo json_encode(['success' => false, 'error' => 'Debe seleccionar una categoría']);
         exit();
     }
     
@@ -151,6 +171,7 @@ elseif ($action == 'update') {
         }
     }
     
+    // Actualizar SOLO los campos editables (NO stock ni stock_minimo)
     if ($foto_ruta) {
         $sql = "UPDATE productos SET nombre=?, categoria_id=?, proveedor_id=?, precio_compra=?, precio_venta=?, descripcion=?, foto=? WHERE id=?";
         $stmt = $conn->prepare($sql);
