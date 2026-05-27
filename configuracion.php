@@ -735,6 +735,78 @@ $ultima_actualizacion = getLastGitHubDateTime();
             border-left: inherit;
             border-radius: 0 0.25rem 0.25rem 0;
         }
+
+        .config-nav {
+            background: white;
+            border-radius: 16px;
+            margin-bottom: 25px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+            overflow-x: auto;
+        }
+
+        .config-nav ul {
+            display: flex;
+            justify-content: space-evenly;
+            list-style: none;
+            padding: 0;
+            margin: 0;
+            flex-wrap: wrap;
+        }
+
+        .config-nav li {
+            flex: 1;
+            min-width: fit-content;
+            text-align: center;
+        }
+
+        .config-nav a {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            padding: 15px 12px;
+            color: #64748b;
+            text-decoration: none;
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: all 0.2s;
+            border-bottom: 3px solid transparent;
+            white-space: nowrap;
+        }
+
+        .config-nav a:hover {
+            color: #1e3a8a;
+            background: #f8fafc;
+        }
+
+        .config-nav a.active {
+            color: #1e3a8a;
+            border-bottom-color: #1e3a8a;
+        }
+
+        .config-nav a i {
+            font-size: 1rem;
+        }
+
+        /* Responsive */
+        @media (max-width: 1024px) {
+            .config-nav a {
+                padding: 12px 10px;
+                font-size: 0.8rem;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .config-nav ul {
+                flex-wrap: nowrap;
+                justify-content: flex-start;
+            }
+            
+            .config-nav li {
+                flex: none;
+            }
+        }
+
     </style>
 </head>
 <body class="hold-transition sidebar-mini">
@@ -754,7 +826,7 @@ $ultima_actualizacion = getLastGitHubDateTime();
         <div class="config-nav">
             <ul>
                 <li><a href="?section=general" class="<?php echo $seccion == 'general' ? 'active' : ''; ?>"><i class="fas fa-sliders-h"></i> General</a></li>
-                <li><a href="?section=clientes" class="<?php echo $seccion == 'clientes' ? 'active' : ''; ?>"><i class="fas fa-users"></i> Clientes</a></li>
+                <li><a href="?section=clientes" class="<?php echo $seccion == 'clientes' ? 'active' : ''; ?>"><i class="fas fa-users"></i> Socios</a></li>
                 <li><a href="?section=planes" class="<?php echo $seccion == 'planes' ? 'active' : ''; ?>"><i class="fas fa-tags"></i> Planes</a></li>
                 <li><a href="?section=productos" class="<?php echo $seccion == 'productos' ? 'active' : ''; ?>"><i class="fas fa-box"></i> Productos</a></li>
                 <li><a href="?section=categorias" class="<?php echo $seccion == 'categorias' ? 'active' : ''; ?>"><i class="fas fa-folder"></i> Categorías</a></li>
@@ -763,6 +835,7 @@ $ultima_actualizacion = getLastGitHubDateTime();
                 <li><a href="?section=usuarios" class="<?php echo $seccion == 'usuarios' ? 'active' : ''; ?>"><i class="fas fa-user-shield"></i> Usuarios</a></li>
             </ul>
         </div>
+
 
         <?php if ($seccion == 'general'): ?>
         <div class="row">
@@ -932,10 +1005,10 @@ $ultima_actualizacion = getLastGitHubDateTime();
         <?php if ($seccion == 'clientes'): ?>
         <div class="card">
             <div class="card-header">
-                <h3 class="card-title"><i class="fas fa-users"></i> Gestión de Clientes</h3>
+                <h3 class="card-title"><i class="fas fa-users"></i> Gestión de Socios</h3>
                 <div class="card-tools">
                     <button class="btn btn-primary btn-sm" onclick="abrirModal('modalCliente')">
-                        <i class="fas fa-plus"></i> Nuevo Cliente
+                        <i class="fas fa-plus"></i> Nuevo Socio
                     </button>
                 </div>
             </div>
@@ -1455,7 +1528,6 @@ $ultima_actualizacion = getLastGitHubDateTime();
 
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-
     
     <script>
         // Funciones de Modal
@@ -1467,6 +1539,19 @@ $ultima_actualizacion = getLastGitHubDateTime();
             $('#' + modalId).removeClass('active');
             $('#' + modalId + ' form')[0]?.reset();
             $('#' + modalId + ' input[name="id"]').val('');
+            // Restaurar título del modal a su estado original
+            let tituloOriginal = '';
+            switch(modalId) {
+                case 'modalPlan': tituloOriginal = 'Nuevo Plan'; break;
+                case 'modalCategoria': tituloOriginal = 'Nueva Categoría'; break;
+                case 'modalProveedor': tituloOriginal = 'Nuevo Proveedor'; break;
+                case 'modalProducto': tituloOriginal = 'Nuevo Producto'; break;
+                case 'modalClase': tituloOriginal = 'Nueva Clase'; break;
+                case 'modalUsuario': tituloOriginal = 'Nuevo Usuario'; break;
+                case 'modalCliente': tituloOriginal = 'Nuevo Cliente'; break;
+                default: tituloOriginal = 'Nuevo Registro';
+            }
+            $('#' + modalId + ' .modal-header h4').html('<i class="fas fa-plus"></i> ' + tituloOriginal);
         }
 
         $(document).ready(function() {
@@ -1480,23 +1565,58 @@ $ultima_actualizacion = getLastGitHubDateTime();
 
         // Funciones genéricas para editar y eliminar
         function editarRegistro(tabla, id, modalId) {
+            console.log('Editando registro - Tabla:', tabla, 'ID:', id, 'Modal:', modalId);
+            
             $.ajax({
                 url: 'configuracion.php',
                 method: 'POST',
                 data: { action: 'get_registro', tabla: tabla, id: id },
                 dataType: 'json',
                 success: function(data) {
+                    console.log('Datos recibidos:', data);
+                    
                     let form = $('#' + modalId + ' form');
+                    let modal = $('#' + modalId);
+                    
+                    // Limpiar el formulario primero
+                    if (form[0]) form[0].reset();
+                    
+                    // Asignar el ID
                     form.find('input[name="id"]').val(data.id);
+                    
+                    // Llenar los demás campos
                     for(let key in data) {
                         let input = form.find('[name="' + key + '"]');
-                        if(input.length) input.val(data[key]);
+                        if(input.length) {
+                            input.val(data[key]);
+                            console.log('Campo ' + key + ' asignado con valor:', data[key]);
+                        }
                     }
-                    $('#' + modalId + ' .modal-header h4').html('<i class="fas fa-edit"></i> Editar');
+                    
+                    // Cambiar el título del modal
+                    let titulo = '';
+                    switch(tabla) {
+                        case 'planes': titulo = 'Editar Plan'; break;
+                        case 'categorias_productos': titulo = 'Editar Categoría'; break;
+                        case 'proveedores': titulo = 'Editar Proveedor'; break;
+                        case 'productos': titulo = 'Editar Producto'; break;
+                        case 'clases': titulo = 'Editar Clase'; break;
+                        case 'usuarios': titulo = 'Editar Usuario'; break;
+                        default: titulo = 'Editar Registro';
+                    }
+                    modal.find('.modal-header h4').html('<i class="fas fa-edit"></i> ' + titulo);
+                    
+                    // Abrir el modal
                     abrirModal(modalId);
                 },
-                error: function() {
-                    Swal.fire({ icon: 'error', title: 'Error', text: 'No se pudo cargar el registro', target: document.body });
+                error: function(xhr, status, error) {
+                    console.error('Error:', error);
+                    Swal.fire({ 
+                        icon: 'error', 
+                        title: 'Error', 
+                        text: 'No se pudo cargar el registro. Detalles: ' + error,
+                        target: document.body 
+                    });
                 }
             });
         }
@@ -1694,39 +1814,22 @@ $ultima_actualizacion = getLastGitHubDateTime();
             });
         }
 
-        // ==================== FUNCIONES PARA ALERTAS OCULTABLES (Mejoradas) ====================
+        // ==================== FUNCIONES PARA ALERTAS OCULTABLES ====================
         function ocultarAlerta(alertaId) {
-            // Guardar estado en localStorage
             localStorage.setItem('alerta_oculta_' + alertaId, 'true');
             let $alerta = $('[data-alerta-id="' + alertaId + '"]');
             $alerta.addClass('oculto');
             
-            // Determinar el texto del botón según el ID de la alerta
             let textoBoton = '';
             let iconoBoton = '';
             switch(alertaId) {
-                case 'info_gimnasio':
-                    textoBoton = 'Ver consejo';
-                    iconoBoton = 'fa-lightbulb';
-                    break;
-                case 'huella_info':
-                    textoBoton = 'Ver instrucciones';
-                    iconoBoton = 'fa-fingerprint';
-                    break;
-                case 'usuario_info':
-                    textoBoton = 'Más información';
-                    iconoBoton = 'fa-info-circle';
-                    break;
-                case 'logo_info':
-                    textoBoton = 'Mostrar recomendaciones';
-                    iconoBoton = 'fa-image';
-                    break;
-                default:
-                    textoBoton = 'Mostrar alerta';
-                    iconoBoton = 'fa-eye';
+                case 'info_gimnasio': textoBoton = 'Ver consejo'; iconoBoton = 'fa-lightbulb'; break;
+                case 'huella_info': textoBoton = 'Ver instrucciones'; iconoBoton = 'fa-fingerprint'; break;
+                case 'usuario_info': textoBoton = 'Más información'; iconoBoton = 'fa-info-circle'; break;
+                case 'logo_info': textoBoton = 'Mostrar recomendaciones'; iconoBoton = 'fa-image'; break;
+                default: textoBoton = 'Mostrar alerta'; iconoBoton = 'fa-eye';
             }
             
-            // Crear contenedor para el botón si no existe
             if ($alerta.next('.alert-boton-container').length === 0) {
                 let $contenedor = $('<div class="alert-boton-container"></div>');
                 let $botonMostrar = $('<button class="btn-mostrar-alerta" onclick="mostrarAlertaEspecifica(\'' + alertaId + '\')" title="Mostrar esta alerta nuevamente"><i class="fas ' + iconoBoton + '"></i> ' + textoBoton + '</button>');
@@ -1750,32 +1853,16 @@ $ultima_actualizacion = getLastGitHubDateTime();
                     if (estaOculta) {
                         $(this).addClass('oculto');
                         
-                        // Determinar el texto del botón según el ID de la alerta
                         let textoBoton = '';
                         let iconoBoton = '';
                         switch(alertaId) {
-                            case 'info_gimnasio':
-                                textoBoton = 'Ver consejo';
-                                iconoBoton = 'fa-lightbulb';
-                                break;
-                            case 'huella_info':
-                                textoBoton = 'Ver instrucciones';
-                                iconoBoton = 'fa-fingerprint';
-                                break;
-                            case 'usuario_info':
-                                textoBoton = 'Más información';
-                                iconoBoton = 'fa-info-circle';
-                                break;
-                            case 'logo_info':
-                                textoBoton = 'Mostrar recomendaciones';
-                                iconoBoton = 'fa-image';
-                                break;
-                            default:
-                                textoBoton = 'Mostrar alerta';
-                                iconoBoton = 'fa-eye';
+                            case 'info_gimnasio': textoBoton = 'Ver consejo'; iconoBoton = 'fa-lightbulb'; break;
+                            case 'huella_info': textoBoton = 'Ver instrucciones'; iconoBoton = 'fa-fingerprint'; break;
+                            case 'usuario_info': textoBoton = 'Más información'; iconoBoton = 'fa-info-circle'; break;
+                            case 'logo_info': textoBoton = 'Mostrar recomendaciones'; iconoBoton = 'fa-image'; break;
+                            default: textoBoton = 'Mostrar alerta'; iconoBoton = 'fa-eye';
                         }
                         
-                        // Crear contenedor para el botón si no existe
                         if ($(this).next('.alert-boton-container').length === 0) {
                             let $contenedor = $('<div class="alert-boton-container"></div>');
                             let $botonMostrar = $('<button class="btn-mostrar-alerta" onclick="mostrarAlertaEspecifica(\'' + alertaId + '\')" title="Mostrar esta alerta nuevamente"><i class="fas ' + iconoBoton + '"></i> ' + textoBoton + '</button>');
@@ -1790,41 +1877,106 @@ $ultima_actualizacion = getLastGitHubDateTime();
             });
         }
 
-        // Envío de formularios
-        $('#formPlan, #formCategoria, #formProveedor, #formProducto, #formClase, #formUsuario, #formCliente, #formInfoGimnasio').on('submit', function(e) {
-            e.preventDefault();
-            let action = '';
-            if ($(this).attr('id') === 'formPlan') action = 'save_plan';
-            else if ($(this).attr('id') === 'formCategoria') action = 'save_categoria';
-            else if ($(this).attr('id') === 'formProveedor') action = 'save_proveedor';
-            else if ($(this).attr('id') === 'formProducto') action = 'save_producto';
-            else if ($(this).attr('id') === 'formClase') action = 'save_clase';
-            else if ($(this).attr('id') === 'formUsuario') action = 'save_usuario';
-            else if ($(this).attr('id') === 'formCliente') action = 'save_cliente';
-            else if ($(this).attr('id') === 'formInfoGimnasio') action = 'save_config';
-            
-            let data = $(this).serialize() + '&action=' + action;
-            $.ajax({
-                url: 'configuracion.php',
-                method: 'POST',
-                data: data,
-                success: function(response) {
-                    let res;
-                    try { res = typeof response === 'string' ? JSON.parse(response) : response; } catch(e) { res = { success: true }; }
-                    if (res.success) {
-                        Swal.fire({ icon: 'success', title: 'Guardado', text: 'Registro guardado correctamente', target: document.body, timer: 1500, showConfirmButton: false });
-                        setTimeout(() => location.reload(), 1500);
-                    } else if (res.error) {
-                        Swal.fire({ icon: 'error', title: 'Error', text: res.error, target: document.body });
+        // ==================== ENVÍO DE FORMULARIOS (UN SOLO MANEJADOR) ====================
+        $(document).ready(function() {
+            // Vista previa del logo
+            $('#logo').on('change', function(e) {
+                const file = e.target.files[0];
+                if (file) {
+                    const tiposPermitidos = ['image/jpeg', 'image/jpg', 'image/png'];
+                    if (!tiposPermitidos.includes(file.type)) {
+                        Swal.fire({ icon: 'error', title: 'Error', text: 'Solo se permiten archivos JPG, JPEG y PNG', target: document.body });
+                        $(this).val('');
+                        return;
                     }
-                },
-                error: function(xhr, status, error) {
-                    Swal.fire({ icon: 'error', title: 'Error', text: 'Ocurrió un error: ' + error, target: document.body });
+                    if (file.size > 2 * 1024 * 1024) {
+                        Swal.fire({ icon: 'error', title: 'Error', text: 'El archivo no puede superar los 2MB', target: document.body });
+                        $(this).val('');
+                        return;
+                    }
+                    const reader = new FileReader();
+                    reader.onload = function(e) { $('#preview_logo').attr('src', e.target.result); }
+                    reader.readAsDataURL(file);
+                    $(this).next('.custom-file-label').html(file.name);
+                } else {
+                    $(this).next('.custom-file-label').html('Seleccionar logo (PNG, JPG, JPEG)');
                 }
+            });
+            
+            // Formulario de Información del Gimnasio (con logo)
+            $('#formInfoGimnasio').on('submit', function(e) {
+                e.preventDefault();
+                const formData = new FormData(this);
+                formData.append('action', 'save_config');
+                
+                $.ajax({
+                    url: 'configuracion.php',
+                    type: 'POST',
+                    data: formData,
+                    processData: false,
+                    contentType: false,
+                    dataType: 'json',
+                    success: function(response) {
+                        if (response.success) {
+                            Swal.fire({ icon: 'success', title: '¡Éxito!', text: response.message, target: document.body, showConfirmButton: false, timer: 2000 })
+                                .then(() => { location.reload(); });
+                        } else {
+                            Swal.fire({ icon: 'error', title: 'Error', text: response.message, target: document.body });
+                        }
+                    },
+                    error: function(xhr, status, error) {
+                        Swal.fire({ icon: 'error', title: 'Error', text: 'Ocurrió un error al guardar la configuración: ' + error, target: document.body });
+                    }
+                });
+            });
+            
+            // UN SOLO MANEJADOR PARA TODOS LOS DEMÁS FORMULARIOS
+            $('#formPlan, #formCategoria, #formProveedor, #formProducto, #formClase, #formUsuario, #formCliente').on('submit', function(e) {
+                e.preventDefault();
+                
+                let action = '';
+                const formId = $(this).attr('id');
+                if (formId === 'formPlan') action = 'save_plan';
+                else if (formId === 'formCategoria') action = 'save_categoria';
+                else if (formId === 'formProveedor') action = 'save_proveedor';
+                else if (formId === 'formProducto') action = 'save_producto';
+                else if (formId === 'formClase') action = 'save_clase';
+                else if (formId === 'formUsuario') action = 'save_usuario';
+                else if (formId === 'formCliente') action = 'save_cliente';
+                
+                let data = $(this).serialize() + '&action=' + action;
+                
+                // Mostrar loading
+                Swal.fire({ title: 'Guardando...', text: 'Por favor espere', allowOutsideClick: false, didOpen: () => { Swal.showLoading(); }, target: document.body });
+                
+                $.ajax({
+                    url: 'configuracion.php',
+                    method: 'POST',
+                    data: data,
+                    success: function(response) {
+                        let res;
+                        try { 
+                            res = typeof response === 'string' ? JSON.parse(response) : response; 
+                        } catch(e) { 
+                            res = { success: true }; 
+                        }
+                        if (res.success) {
+                            Swal.fire({ icon: 'success', title: 'Guardado', text: 'Registro guardado correctamente', target: document.body, timer: 1500, showConfirmButton: false });
+                            setTimeout(() => location.reload(), 1500);
+                        } else if (res.error) {
+                            Swal.fire({ icon: 'error', title: 'Error', text: res.error, target: document.body });
+                        } else {
+                            Swal.fire({ icon: 'error', title: 'Error', text: 'Ocurrió un error inesperado', target: document.body });
+                        }
+                    },
+                    error: function(xhr, status, error) {
+                        Swal.fire({ icon: 'error', title: 'Error', text: 'Ocurrió un error: ' + error, target: document.body });
+                    }
+                });
             });
         });
 
-        // Agrega esta función para eliminar el logo
+        // Función para eliminar logo
         function eliminarLogo() {
             Swal.fire({
                 title: '¿Eliminar logo?',
@@ -1844,161 +1996,19 @@ $ultima_actualizacion = getLastGitHubDateTime();
                         dataType: 'json',
                         success: function(response) {
                             if (response.success) {
-                                Swal.fire({
-                                    icon: 'success',
-                                    title: 'Eliminado',
-                                    text: response.message,
-                                    target: document.body,
-                                    showConfirmButton: false,
-                                    timer: 1500
-                                }).then(() => {
-                                    location.reload();
-                                });
+                                Swal.fire({ icon: 'success', title: 'Eliminado', text: response.message, target: document.body, showConfirmButton: false, timer: 1500 })
+                                    .then(() => { location.reload(); });
                             } else {
-                                Swal.fire({
-                                    icon: 'error',
-                                    title: 'Error',
-                                    text: response.message,
-                                    target: document.body
-                                });
+                                Swal.fire({ icon: 'error', title: 'Error', text: response.message, target: document.body });
                             }
                         },
                         error: function() {
-                            Swal.fire({
-                                icon: 'error',
-                                title: 'Error',
-                                text: 'Ocurrió un error al eliminar el logo',
-                                target: document.body
-                            });
+                            Swal.fire({ icon: 'error', title: 'Error', text: 'Ocurrió un error al eliminar el logo', target: document.body });
                         }
                     });
                 }
             });
         }
-
-        // Modifica el envío del formulario de información del gimnasio
-        $(document).ready(function() {
-            // Vista previa del logo
-            $('#logo').on('change', function(e) {
-                const file = e.target.files[0];
-                if (file) {
-                    // Validar tipo de archivo
-                    const tiposPermitidos = ['image/jpeg', 'image/jpg', 'image/png'];
-                    if (!tiposPermitidos.includes(file.type)) {
-                        Swal.fire({
-                            icon: 'error',
-                            title: 'Error',
-                            text: 'Solo se permiten archivos JPG, JPEG y PNG',
-                            target: document.body
-                        });
-                        $(this).val('');
-                        return;
-                    }
-                    
-                    // Validar tamaño (máximo 2MB)
-                    if (file.size > 2 * 1024 * 1024) {
-                        Swal.fire({
-                            icon: 'error',
-                            title: 'Error',
-                            text: 'El archivo no puede superar los 2MB',
-                            target: document.body
-                        });
-                        $(this).val('');
-                        return;
-                    }
-                    
-                    const reader = new FileReader();
-                    reader.onload = function(e) {
-                        $('#preview_logo').attr('src', e.target.result);
-                    }
-                    reader.readAsDataURL(file);
-                    
-                    // Mostrar nombre del archivo
-                    $(this).next('.custom-file-label').html(file.name);
-                } else {
-                    $(this).next('.custom-file-label').html('Seleccionar logo (PNG, JPG, JPEG)');
-                }
-            });
-            
-            // Los demás eventos de formularios...
-            $('#formPlan, #formCategoria, #formProveedor, #formProducto, #formClase, #formUsuario, #formCliente').on('submit', function(e) {
-                e.preventDefault();
-                let action = '';
-                if ($(this).attr('id') === 'formPlan') action = 'save_plan';
-                else if ($(this).attr('id') === 'formCategoria') action = 'save_categoria';
-                else if ($(this).attr('id') === 'formProveedor') action = 'save_proveedor';
-                else if ($(this).attr('id') === 'formProducto') action = 'save_producto';
-                else if ($(this).attr('id') === 'formClase') action = 'save_clase';
-                else if ($(this).attr('id') === 'formUsuario') action = 'save_usuario';
-                else if ($(this).attr('id') === 'formCliente') action = 'save_cliente';
-                
-                let data = $(this).serialize() + '&action=' + action;
-                $.ajax({
-                    url: 'configuracion.php',
-                    method: 'POST',
-                    data: data,
-                    success: function(response) {
-                        let res;
-                        try { res = typeof response === 'string' ? JSON.parse(response) : response; } catch(e) { res = { success: true }; }
-                        if (res.success) {
-                            Swal.fire({ icon: 'success', title: 'Guardado', text: 'Registro guardado correctamente', target: document.body, timer: 1500, showConfirmButton: false });
-                            setTimeout(() => location.reload(), 1500);
-                        } else if (res.error) {
-                            Swal.fire({ icon: 'error', title: 'Error', text: res.error, target: document.body });
-                        }
-                    },
-                    error: function(xhr, status, error) {
-                        Swal.fire({ icon: 'error', title: 'Error', text: 'Ocurrió un error: ' + error, target: document.body });
-                    }
-                });
-            });
-            
-            // Formulario específico de configuración del gimnasio (con logo)
-            $('#formInfoGimnasio').on('submit', function(e) {
-                e.preventDefault();
-                
-                const formData = new FormData(this);
-                formData.append('action', 'save_config');
-                
-                $.ajax({
-                    url: 'configuracion.php',
-                    type: 'POST',
-                    data: formData,
-                    processData: false,
-                    contentType: false,
-                    dataType: 'json',
-                    success: function(response) {
-                        if (response.success) {
-                            Swal.fire({
-                                icon: 'success',
-                                title: '¡Éxito!',
-                                text: response.message,
-                                target: document.body,
-                                showConfirmButton: false,
-                                timer: 2000
-                            }).then(() => {
-                                location.reload();
-                            });
-                        } else {
-                            Swal.fire({
-                                icon: 'error',
-                                title: 'Error',
-                                text: response.message,
-                                target: document.body
-                            });
-                        }
-                    },
-                    error: function(xhr, status, error) {
-                        Swal.fire({
-                            icon: 'error',
-                            title: 'Error',
-                            text: 'Ocurrió un error al guardar la configuración: ' + error,
-                            target: document.body
-                        });
-                    }
-                });
-            });
-        });
     </script>
 </body>
 </html>

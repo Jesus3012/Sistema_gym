@@ -4,9 +4,13 @@ date_default_timezone_set('America/Mexico_City');
 require_once 'includes/auth_check.php';
 require_once 'config/database.php';
 
+// Obtener el rol del usuario desde la sesión
+$user_rol = $_SESSION['user_rol'] ?? '';
+$user_id = $_SESSION['user_id'];
+$user_name = $_SESSION['user_name'];
+
 // Verificar si el usuario necesita cambiar la contraseña
 $require_password_change = false;
-$user_id = $_SESSION['user_id'];
 
 $database = new Database();
 $db = $database->getConnection();
@@ -27,7 +31,6 @@ if ($result->num_rows > 0) {
     $user_data = $result->fetch_assoc();
     $require_password_change = ($user_data['password_change_required'] == 1);
     
-    // Verificar si el usuario está activo
     if ($user_data['estado'] == 'inactivo') {
         session_destroy();
         header("Location: login.php?error=usuario_inactivo");
@@ -36,7 +39,7 @@ if ($result->num_rows > 0) {
 }
 $stmt->close();
 
-// Mostrar mensajes de cambio de contraseña
+// Mensajes de cambio de contraseña
 if (isset($_SESSION['password_change_success'])) {
     echo "<script>
         document.addEventListener('DOMContentLoaded', function() {
@@ -65,172 +68,303 @@ if (isset($_SESSION['password_change_error'])) {
     unset($_SESSION['password_change_error']);
 }
 
-// Obtener estadísticas de la base de datos
-// Total de clientes activos
-$query = "SELECT COUNT(*) as total FROM clientes WHERE estado = 'activo'";
-$result = $db->query($query);
-if ($result && $result->num_rows > 0) {
-    $total_clientes = $result->fetch_assoc()['total'];
-} else {
-    $total_clientes = 0;
-}
+// ============================================
+// CONSULTAS SEGÚN EL ROL
+// ============================================
 
-// Total de productos activos
-$query = "SELECT COUNT(*) as total FROM productos WHERE estado = 'activo'";
-$result = $db->query($query);
-if ($result && $result->num_rows > 0) {
-    $total_productos = $result->fetch_assoc()['total'];
-} else {
-    $total_productos = 0;
-}
-
-// Total de inscripciones activas
-$query = "SELECT COUNT(*) as total FROM inscripciones WHERE estado = 'activa'";
-$result = $db->query($query);
-if ($result && $result->num_rows > 0) {
-    $total_inscripciones = $result->fetch_assoc()['total'];
-} else {
-    $total_inscripciones = 0;
-}
-
-// Total de clases activas
-$query = "SELECT COUNT(*) as total FROM clases WHERE estado = 'activa'";
-$result = $db->query($query);
-if ($result && $result->num_rows > 0) {
-    $total_clases = $result->fetch_assoc()['total'];
-} else {
-    $total_clases = 0;
-}
-
-// Ingresos del mes actual
-$query = "SELECT SUM(monto) as total FROM pagos WHERE MONTH(fecha_pago) = MONTH(CURDATE()) AND YEAR(fecha_pago) = YEAR(CURDATE()) AND estado = 'completado'";
-$result = $db->query($query);
-if ($result && $result->num_rows > 0) {
-    $ingresos_mes = $result->fetch_assoc()['total'] ?? 0;
-} else {
-    $ingresos_mes = 0;
-}
-
-// Asistencias del día de hoy
-$query = "SELECT COUNT(*) as total FROM asistencias WHERE fecha = CURDATE()";
-$result = $db->query($query);
-if ($result && $result->num_rows > 0) {
-    $asistencias_hoy = $result->fetch_assoc()['total'] ?? 0;
-} else {
-    $asistencias_hoy = 0;
-}
-
-// Obtener TODOS los clientes para el modal
-$query = "SELECT id, nombre, apellido, telefono, email, fecha_registro FROM clientes ORDER BY fecha_registro DESC";
-$result = $db->query($query);
+// --- Variables base ---
+$total_clientes = 0;
+$total_inscripciones = 0;
+$total_productos = 0;
+$total_clases = 0;
+$ingresos_mes = 0;
+$asistencias_hoy = 0;
 $todos_clientes = [];
-if ($result && $result->num_rows > 0) {
-    while ($row = $result->fetch_assoc()) {
-        $todos_clientes[] = $row;
-    }
-}
-
-// Últimos 5 clientes registrados
-$ultimos_clientes = array_slice($todos_clientes, 0, 5);
-
-// Obtener TODOS los productos para el modal
-$query = "SELECT p.id, p.nombre, p.descripcion, p.stock, p.stock_minimo, p.precio_venta, 
-          c.nombre as categoria 
-          FROM productos p 
-          LEFT JOIN categorias_productos c ON p.categoria_id = c.id 
-          WHERE p.estado = 'activo' 
-          ORDER BY p.nombre ASC";
-$result = $db->query($query);
+$ultimos_clientes = [];
 $todos_productos = [];
-if ($result && $result->num_rows > 0) {
-    while ($row = $result->fetch_assoc()) {
-        $todos_productos[] = $row;
-    }
-}
-
-// Obtener TODAS las inscripciones para el modal
-$query = "SELECT i.id, c.nombre as cliente_nombre, c.apellido as cliente_apellido, 
-          p.nombre as plan_nombre, i.fecha_inicio, i.fecha_fin, i.precio_pagado, i.estado
-          FROM inscripciones i 
-          JOIN clientes c ON i.cliente_id = c.id 
-          JOIN planes p ON i.plan_id = p.id 
-          WHERE i.estado = 'activa' 
-          ORDER BY i.fecha_fin ASC";
-$result = $db->query($query);
-$todas_inscripciones = [];
-if ($result && $result->num_rows > 0) {
-    while ($row = $result->fetch_assoc()) {
-        $todas_inscripciones[] = $row;
-    }
-}
-
-// Obtener TODAS las clases para el modal
-$query = "SELECT c.id, c.nombre, c.descripcion, c.horario, c.instructor, 
-          c.cupo_maximo, c.cupo_actual, c.duracion_minutos, c.estado
-          FROM clases c 
-          WHERE c.estado = 'activa' 
-          ORDER BY c.horario ASC";
-$result = $db->query($query);
-$todas_clases = [];
-if ($result && $result->num_rows > 0) {
-    while ($row = $result->fetch_assoc()) {
-        $todas_clases[] = $row;
-    }
-}
-
-// Próximas clases (primeras 5)
-$proximas_clases = array_slice($todas_clases, 0, 5);
-
-// Productos con bajo stock
-$query = "SELECT p.id, p.nombre, p.stock, p.stock_minimo, c.nombre as categoria 
-          FROM productos p 
-          LEFT JOIN categorias_productos c ON p.categoria_id = c.id 
-          WHERE p.stock <= p.stock_minimo AND p.estado = 'activo' 
-          ORDER BY p.stock ASC LIMIT 5";
-$result = $db->query($query);
 $productos_bajo_stock = [];
-if ($result && $result->num_rows > 0) {
-    while ($row = $result->fetch_assoc()) {
-        $productos_bajo_stock[] = $row;
-    }
-}
-
-// Inscripciones que vencen en los próximos 7 días
-$query = "SELECT COUNT(*) as total FROM inscripciones i 
-          JOIN clientes c ON i.cliente_id = c.id 
-          WHERE i.fecha_fin BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY) 
-          AND i.estado = 'activa'";
-$result = $db->query($query);
-if ($result && $result->num_rows > 0) {
-    $vencimientos_proximos = $result->fetch_assoc()['total'] ?? 0;
-} else {
-    $vencimientos_proximos = 0;
-}
-
-// Ingresos por mes para el gráfico (últimos 6 meses)
-$query = "SELECT 
-            DATE_FORMAT(fecha_pago, '%Y-%m') as mes,
-            SUM(monto) as total 
-          FROM pagos 
-          WHERE fecha_pago >= DATE_SUB(CURDATE(), INTERVAL 5 MONTH)
-          AND estado = 'completado'
-          GROUP BY DATE_FORMAT(fecha_pago, '%Y-%m')
-          ORDER BY mes ASC";
-$result = $db->query($query);
-$ingresos_por_mes = [];
-if ($result && $result->num_rows > 0) {
-    while ($row = $result->fetch_assoc()) {
-        $ingresos_por_mes[$row['mes']] = $row['total'];
-    }
-}
-
-// Preparar datos para el gráfico (últimos 6 meses)
+$todas_inscripciones = [];
+$vencimientos_proximos = 0;
+$todas_clases = [];
+$proximas_clases = [];
 $labels = [];
 $datos = [];
-for ($i = 5; $i >= 0; $i--) {
-    $fecha = date('Y-m', strtotime("-$i months"));
-    $labels[] = date('M Y', strtotime("-$i months"));
-    $datos[] = isset($ingresos_por_mes[$fecha]) ? (float)$ingresos_por_mes[$fecha] : 0;
+
+// ========== ADMIN: Dashboard completo ==========
+if ($user_rol == 'admin') {
+    // Totales
+    $query = "SELECT COUNT(*) as total FROM clientes WHERE estado = 'activo'";
+    $result = $db->query($query);
+    $total_clientes = ($result && $result->num_rows > 0) ? $result->fetch_assoc()['total'] : 0;
+
+    $query = "SELECT COUNT(*) as total FROM inscripciones WHERE estado = 'activa'";
+    $result = $db->query($query);
+    $total_inscripciones = ($result && $result->num_rows > 0) ? $result->fetch_assoc()['total'] : 0;
+
+    $query = "SELECT COUNT(*) as total FROM productos WHERE estado = 'activo'";
+    $result = $db->query($query);
+    $total_productos = ($result && $result->num_rows > 0) ? $result->fetch_assoc()['total'] : 0;
+
+    $query = "SELECT COUNT(*) as total FROM clases WHERE estado = 'activa'";
+    $result = $db->query($query);
+    $total_clases = ($result && $result->num_rows > 0) ? $result->fetch_assoc()['total'] : 0;
+
+    // Ingresos del mes
+    $query = "SELECT SUM(monto) as total FROM pagos WHERE MONTH(fecha_pago) = MONTH(CURDATE()) AND YEAR(fecha_pago) = YEAR(CURDATE()) AND estado = 'completado'";
+    $result = $db->query($query);
+    $ingresos_mes = ($result && $result->num_rows > 0) ? ($result->fetch_assoc()['total'] ?? 0) : 0;
+
+    // Asistencias hoy
+    $query = "SELECT COUNT(*) as total FROM asistencias WHERE fecha = CURDATE()";
+    $result = $db->query($query);
+    $asistencias_hoy = ($result && $result->num_rows > 0) ? ($result->fetch_assoc()['total'] ?? 0) : 0;
+
+    // Clientes
+    $query = "SELECT id, nombre, apellido, telefono, email, fecha_registro FROM clientes ORDER BY fecha_registro DESC";
+    $result = $db->query($query);
+    if ($result && $result->num_rows > 0) {
+        while ($row = $result->fetch_assoc()) {
+            $todos_clientes[] = $row;
+        }
+    }
+    $ultimos_clientes = array_slice($todos_clientes, 0, 5);
+
+    // Productos
+    $query = "SELECT p.id, p.nombre, p.descripcion, p.stock, p.stock_minimo, p.precio_venta, c.nombre as categoria 
+              FROM productos p 
+              LEFT JOIN categorias_productos c ON p.categoria_id = c.id 
+              WHERE p.estado = 'activo' 
+              ORDER BY p.nombre ASC";
+    $result = $db->query($query);
+    if ($result && $result->num_rows > 0) {
+        while ($row = $result->fetch_assoc()) {
+            $todos_productos[] = $row;
+        }
+    }
+
+    // Stock bajo
+    $query = "SELECT p.id, p.nombre, p.stock, p.stock_minimo, c.nombre as categoria 
+              FROM productos p 
+              LEFT JOIN categorias_productos c ON p.categoria_id = c.id 
+              WHERE p.stock <= p.stock_minimo AND p.estado = 'activo' 
+              ORDER BY p.stock ASC LIMIT 5";
+    $result = $db->query($query);
+    if ($result && $result->num_rows > 0) {
+        while ($row = $result->fetch_assoc()) {
+            $productos_bajo_stock[] = $row;
+        }
+    }
+
+    // Inscripciones
+    $query = "SELECT i.id, c.nombre as cliente_nombre, c.apellido as cliente_apellido, 
+              p.nombre as plan_nombre, i.fecha_inicio, i.fecha_fin, i.precio_pagado, i.estado
+              FROM inscripciones i 
+              JOIN clientes c ON i.cliente_id = c.id 
+              JOIN planes p ON i.plan_id = p.id 
+              WHERE i.estado = 'activa' 
+              ORDER BY i.fecha_fin ASC";
+    $result = $db->query($query);
+    if ($result && $result->num_rows > 0) {
+        while ($row = $result->fetch_assoc()) {
+            $todas_inscripciones[] = $row;
+        }
+    }
+
+    // Vencimientos próximos
+    $query = "SELECT COUNT(*) as total FROM inscripciones i 
+              WHERE i.fecha_fin BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY) 
+              AND i.estado = 'activa'";
+    $result = $db->query($query);
+    $vencimientos_proximos = ($result && $result->num_rows > 0) ? ($result->fetch_assoc()['total'] ?? 0) : 0;
+
+    // Clases
+    $query = "SELECT c.id, c.nombre, c.descripcion, c.horario, c.instructor, 
+              c.cupo_maximo, c.cupo_actual, c.duracion_minutos, c.estado
+              FROM clases c 
+              WHERE c.estado = 'activa' 
+              ORDER BY c.horario ASC";
+    $result = $db->query($query);
+    if ($result && $result->num_rows > 0) {
+        while ($row = $result->fetch_assoc()) {
+            $todas_clases[] = $row;
+        }
+    }
+    $proximas_clases = array_slice($todas_clases, 0, 5);
+
+    // Gráfico ingresos (últimos 6 meses)
+    $query = "SELECT 
+                DATE_FORMAT(fecha_pago, '%Y-%m') as mes,
+                SUM(monto) as total 
+              FROM pagos 
+              WHERE fecha_pago >= DATE_SUB(CURDATE(), INTERVAL 5 MONTH)
+              AND estado = 'completado'
+              GROUP BY DATE_FORMAT(fecha_pago, '%Y-%m')
+              ORDER BY mes ASC";
+    $result = $db->query($query);
+    $ingresos_por_mes = [];
+    if ($result && $result->num_rows > 0) {
+        while ($row = $result->fetch_assoc()) {
+            $ingresos_por_mes[$row['mes']] = $row['total'];
+        }
+    }
+    for ($i = 5; $i >= 0; $i--) {
+        $fecha = date('Y-m', strtotime("-$i months"));
+        $labels[] = date('M Y', strtotime("-$i months"));
+        $datos[] = isset($ingresos_por_mes[$fecha]) ? (float)$ingresos_por_mes[$fecha] : 0;
+    }
+}
+
+// ========== RECEPCIONISTA: Dashboard atención al cliente ==========
+elseif ($user_rol == 'recepcionista') {
+    // Totales
+    $query = "SELECT COUNT(*) as total FROM clientes WHERE estado = 'activo'";
+    $result = $db->query($query);
+    $total_clientes = ($result && $result->num_rows > 0) ? $result->fetch_assoc()['total'] : 0;
+
+    $query = "SELECT COUNT(*) as total FROM inscripciones WHERE estado = 'activa'";
+    $result = $db->query($query);
+    $total_inscripciones = ($result && $result->num_rows > 0) ? $result->fetch_assoc()['total'] : 0;
+
+    $query = "SELECT COUNT(*) as total FROM productos WHERE estado = 'activo'";
+    $result = $db->query($query);
+    $total_productos = ($result && $result->num_rows > 0) ? $result->fetch_assoc()['total'] : 0;
+
+    $query = "SELECT COUNT(*) as total FROM clases WHERE estado = 'activa'";
+    $result = $db->query($query);
+    $total_clases = ($result && $result->num_rows > 0) ? $result->fetch_assoc()['total'] : 0;
+
+    // Asistencias hoy
+    $query = "SELECT COUNT(*) as total FROM asistencias WHERE fecha = CURDATE()";
+    $result = $db->query($query);
+    $asistencias_hoy = ($result && $result->num_rows > 0) ? ($result->fetch_assoc()['total'] ?? 0) : 0;
+
+    // Clientes
+    $query = "SELECT id, nombre, apellido, telefono, email, fecha_registro FROM clientes ORDER BY fecha_registro DESC";
+    $result = $db->query($query);
+    if ($result && $result->num_rows > 0) {
+        while ($row = $result->fetch_assoc()) {
+            $todos_clientes[] = $row;
+        }
+    }
+    $ultimos_clientes = array_slice($todos_clientes, 0, 5);
+
+    // Productos
+    $query = "SELECT p.id, p.nombre, p.descripcion, p.stock, p.stock_minimo, p.precio_venta, c.nombre as categoria 
+              FROM productos p 
+              LEFT JOIN categorias_productos c ON p.categoria_id = c.id 
+              WHERE p.estado = 'activo' 
+              ORDER BY p.nombre ASC";
+    $result = $db->query($query);
+    if ($result && $result->num_rows > 0) {
+        while ($row = $result->fetch_assoc()) {
+            $todos_productos[] = $row;
+        }
+    }
+
+    // Stock bajo
+    $query = "SELECT p.id, p.nombre, p.stock, p.stock_minimo, c.nombre as categoria 
+              FROM productos p 
+              LEFT JOIN categorias_productos c ON p.categoria_id = c.id 
+              WHERE p.stock <= p.stock_minimo AND p.estado = 'activo' 
+              ORDER BY p.stock ASC LIMIT 5";
+    $result = $db->query($query);
+    if ($result && $result->num_rows > 0) {
+        while ($row = $result->fetch_assoc()) {
+            $productos_bajo_stock[] = $row;
+        }
+    }
+
+    // Inscripciones
+    $query = "SELECT i.id, c.nombre as cliente_nombre, c.apellido as cliente_apellido, 
+              p.nombre as plan_nombre, i.fecha_inicio, i.fecha_fin, i.precio_pagado, i.estado
+              FROM inscripciones i 
+              JOIN clientes c ON i.cliente_id = c.id 
+              JOIN planes p ON i.plan_id = p.id 
+              WHERE i.estado = 'activa' 
+              ORDER BY i.fecha_fin ASC";
+    $result = $db->query($query);
+    if ($result && $result->num_rows > 0) {
+        while ($row = $result->fetch_assoc()) {
+            $todas_inscripciones[] = $row;
+        }
+    }
+
+    // Vencimientos próximos
+    $query = "SELECT COUNT(*) as total FROM inscripciones i 
+              WHERE i.fecha_fin BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY) 
+              AND i.estado = 'activa'";
+    $result = $db->query($query);
+    $vencimientos_proximos = ($result && $result->num_rows > 0) ? ($result->fetch_assoc()['total'] ?? 0) : 0;
+
+    // Clases
+    $query = "SELECT c.id, c.nombre, c.horario, c.instructor, 
+              c.cupo_maximo, c.cupo_actual, c.duracion_minutos
+              FROM clases c 
+              WHERE c.estado = 'activa' 
+              ORDER BY c.horario ASC";
+    $result = $db->query($query);
+    if ($result && $result->num_rows > 0) {
+        while ($row = $result->fetch_assoc()) {
+            $todas_clases[] = $row;
+        }
+    }
+    $proximas_clases = array_slice($todas_clases, 0, 5);
+}
+
+// ========== ENTRENADOR: Dashboard de clases y alumnos ==========
+elseif ($user_rol == 'entrenador') {
+    // Totales de clientes e inscripciones
+    $query = "SELECT COUNT(*) as total FROM clientes WHERE estado = 'activo'";
+    $result = $db->query($query);
+    $total_clientes = ($result && $result->num_rows > 0) ? $result->fetch_assoc()['total'] : 0;
+
+    $query = "SELECT COUNT(*) as total FROM inscripciones WHERE estado = 'activa'";
+    $result = $db->query($query);
+    $total_inscripciones = ($result && $result->num_rows > 0) ? $result->fetch_assoc()['total'] : 0;
+
+    // Asistencias hoy
+    $query = "SELECT COUNT(*) as total FROM asistencias WHERE fecha = CURDATE()";
+    $result = $db->query($query);
+    $asistencias_hoy = ($result && $result->num_rows > 0) ? ($result->fetch_assoc()['total'] ?? 0) : 0;
+
+    // Clientes
+    $query = "SELECT id, nombre, apellido, telefono, email, fecha_registro FROM clientes ORDER BY fecha_registro DESC";
+    $result = $db->query($query);
+    if ($result && $result->num_rows > 0) {
+        while ($row = $result->fetch_assoc()) {
+            $todos_clientes[] = $row;
+        }
+    }
+    $ultimos_clientes = array_slice($todos_clientes, 0, 5);
+
+    // SOLO LAS CLASES QUE IMPARTE ESTE ENTRENADOR
+    $todas_clases = [];
+    $query = "SELECT c.id, c.nombre, c.descripcion, c.horario, c.instructor, 
+              c.cupo_maximo, c.cupo_actual, c.duracion_minutos, c.estado
+              FROM clases c 
+              WHERE c.estado = 'activa' 
+              ORDER BY c.horario ASC";
+    $result = $db->query($query);
+    if ($result && $result->num_rows > 0) {
+        while ($row = $result->fetch_assoc()) {
+            // Verificar si el instructor coincide con el nombre del usuario
+            if (stripos($row['instructor'], $user_name) !== false || stripos($user_name, $row['instructor']) !== false) {
+                $todas_clases[] = $row;
+            }
+        }
+    }
+    $total_clases = count($todas_clases);
+    $proximas_clases = array_slice($todas_clases, 0, 5);
+    
+    // Alumnos para el entrenador
+    $alumnos_entrenador = [];
+    $query = "SELECT id, nombre, apellido, telefono, email FROM clientes WHERE estado = 'activo' ORDER BY nombre ASC LIMIT 20";
+    $result = $db->query($query);
+    if ($result && $result->num_rows > 0) {
+        while ($row = $result->fetch_assoc()) {
+            $alumnos_entrenador[] = $row;
+        }
+    }
 }
 
 // Incluir el sidebar
@@ -931,6 +1065,18 @@ include 'includes/sidebar.php';
             height: 100%;
             max-height: 100%;
         }
+        
+        /* Badge para rol */
+        .rol-badge {
+            display: inline-block;
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+        .rol-badge.admin { background: #dc3545; color: white; }
+        .rol-badge.recepcionista { background: #17a2b8; color: white; }
+        .rol-badge.entrenador { background: #28a745; color: white; }
     </style>
     
     <!-- AdminLTE CSS -->
@@ -943,11 +1089,11 @@ include 'includes/sidebar.php';
             <div class="row">
                 <div class="col-md-8">
                     <h3>
-                        <i class="fas fa-hand-wave"></i> ¡Bienvenido, <?php echo htmlspecialchars($_SESSION['user_name']); ?>!
+                        <i class="fas fa-hand-wave"></i> ¡Bienvenido, <?php echo htmlspecialchars($user_name); ?>!
                     </h3>
                     <p>
                         <i class="fas fa-sign-in-alt"></i> Accediendo al sistema como 
-                        <strong><?php echo htmlspecialchars($_SESSION['user_rol']); ?></strong>
+                        <strong><?php echo htmlspecialchars($user_rol); ?></strong>
                     </p>
                     <p class="access-time">
                         <i class="fas fa-clock"></i> 
@@ -968,7 +1114,8 @@ include 'includes/sidebar.php';
             </div>
         </div>
 
-        <!-- Small boxes (Stat box) -->
+        <!-- Small boxes (Stat box) - VISTA ADMIN -->
+        <?php if ($user_rol == 'admin'): ?>
         <div class="row">
             <div class="col-lg-3 col-6">
                 <div class="small-box bg-info">
@@ -1030,8 +1177,140 @@ include 'includes/sidebar.php';
                 </div>
             </div>
         </div>
+        <?php endif; ?>
 
-        <!-- Charts and Tables Row -->
+        <!-- Small boxes - VISTA RECEPCIONISTA -->
+        <?php if ($user_rol == 'recepcionista'): ?>
+        <div class="row">
+            <div class="col-lg-3 col-6">
+                <div class="small-box bg-info">
+                    <div class="inner">
+                        <h3><?php echo $total_clientes; ?></h3>
+                        <p>Clientes Registrados</p>
+                    </div>
+                    <div class="icon">
+                        <i class="fas fa-users"></i>
+                    </div>
+                    <a href="javascript:void(0)" onclick="verTodosClientes()" class="small-box-footer">
+                        Ver más <i class="fas fa-arrow-circle-right"></i>
+                    </a>
+                </div>
+            </div>
+            
+            <div class="col-lg-3 col-6">
+                <div class="small-box bg-success">
+                    <div class="inner">
+                        <h3><?php echo $total_inscripciones; ?></h3>
+                        <p>Inscripciones Activas</p>
+                    </div>
+                    <div class="icon">
+                        <i class="fas fa-id-card"></i>
+                    </div>
+                    <a href="javascript:void(0)" onclick="verTodasInscripciones()" class="small-box-footer">
+                        Ver más <i class="fas fa-arrow-circle-right"></i>
+                    </a>
+                </div>
+            </div>
+            
+            <div class="col-lg-3 col-6">
+                <div class="small-box bg-warning">
+                    <div class="inner">
+                        <h3><?php echo $total_productos; ?></h3>
+                        <p>Productos en Stock</p>
+                    </div>
+                    <div class="icon">
+                        <i class="fas fa-boxes"></i>
+                    </div>
+                    <a href="javascript:void(0)" onclick="verTodosProductos()" class="small-box-footer">
+                        Ver más <i class="fas fa-arrow-circle-right"></i>
+                    </a>
+                </div>
+            </div>
+            
+            <div class="col-lg-3 col-6">
+                <div class="small-box bg-danger">
+                    <div class="inner">
+                        <h3><?php echo $total_clases; ?></h3>
+                        <p>Clases Activas</p>
+                    </div>
+                    <div class="icon">
+                        <i class="fas fa-calendar-alt"></i>
+                    </div>
+                    <a href="javascript:void(0)" onclick="verTodasClases()" class="small-box-footer">
+                        Ver más <i class="fas fa-arrow-circle-right"></i>
+                    </a>
+                </div>
+            </div>
+        </div>
+        <?php endif; ?>
+
+        <!-- Small boxes - VISTA ENTRENADOR -->
+        <?php if ($user_rol == 'entrenador'): ?>
+        <div class="row">
+            <div class="col-lg-3 col-6">
+                <div class="small-box bg-info">
+                    <div class="inner">
+                        <h3><?php echo $total_clientes; ?></h3>
+                        <p>Alumnos Registrados</p>
+                    </div>
+                    <div class="icon">
+                        <i class="fas fa-users"></i>
+                    </div>
+                    <a href="javascript:void(0)" onclick="verTodosClientes()" class="small-box-footer">
+                        Ver más <i class="fas fa-arrow-circle-right"></i>
+                    </a>
+                </div>
+            </div>
+            
+            <div class="col-lg-3 col-6">
+                <div class="small-box bg-success">
+                    <div class="inner">
+                        <h3><?php echo $total_inscripciones; ?></h3>
+                        <p>Inscripciones Activas</p>
+                    </div>
+                    <div class="icon">
+                        <i class="fas fa-id-card"></i>
+                    </div>
+                    <a href="javascript:void(0)" onclick="verTodasInscripciones()" class="small-box-footer">
+                        Ver más <i class="fas fa-arrow-circle-right"></i>
+                    </a>
+                </div>
+            </div>
+            
+            <div class="col-lg-3 col-6">
+                <div class="small-box bg-danger">
+                    <div class="inner">
+                        <h3><?php echo $total_clases; ?></h3>
+                        <p>Mis Clases</p>
+                    </div>
+                    <div class="icon">
+                        <i class="fas fa-chalkboard-teacher"></i>
+                    </div>
+                    <a href="javascript:void(0)" onclick="verTodasClases()" class="small-box-footer">
+                        Ver más <i class="fas fa-arrow-circle-right"></i>
+                    </a>
+                </div>
+            </div>
+            
+            <div class="col-lg-3 col-6">
+                <div class="small-box bg-warning">
+                    <div class="inner">
+                        <h3><?php echo $asistencias_hoy; ?></h3>
+                        <p>Asistencias Hoy</p>
+                    </div>
+                    <div class="icon">
+                        <i class="fas fa-fingerprint"></i>
+                    </div>
+                    <a href="asistencias.php" class="small-box-footer">
+                        Registrar <i class="fas fa-arrow-circle-right"></i>
+                    </a>
+                </div>
+            </div>
+        </div>
+        <?php endif; ?>
+
+        <!-- Charts and Tables Row - SOLO PARA ADMIN (tiene gráfico) -->
+        <?php if ($user_rol == 'admin'): ?>
         <div class="row equal-height-cards">
             <div class="col-md-6">
                 <div class="card">
@@ -1073,6 +1352,57 @@ include 'includes/sidebar.php';
                                         <th>Nombre</th>
                                         <th>Teléfono</th>
                                         <th>Fecha</th>
+                                    </td>
+                                </thead>
+                                <tbody>
+                                    <?php foreach ($ultimos_clientes as $cliente): ?>
+                                    <tr>
+                                        <td><?php echo htmlspecialchars($cliente['nombre'] . ' ' . $cliente['apellido']); ?></td>
+                                        <td><?php echo htmlspecialchars($cliente['telefono'] ?? 'N/A'); ?></td>
+                                        <td><?php echo date('d/m/Y', strtotime($cliente['fecha_registro'])); ?></td>
+                                    </tr>
+                                    <?php endforeach; ?>
+                                    <?php if (empty($ultimos_clientes)): ?>
+                                    <tr>
+                                        <td colspan="3" class="text-center">No hay clientes registrados</td>
+                                    </tr>
+                                    <?php endif; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="card-footer text-center">
+                        <a href="javascript:void(0)" onclick="verTodosClientes()" class="btn btn-sm btn-primary">Ver todos los clientes</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <?php endif; ?>
+
+        <!-- Últimos Clientes - PARA RECEPCIONISTA Y ENTRENADOR -->
+        <?php if ($user_rol != 'admin'): ?>
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">
+                            <i class="fas fa-user-plus mr-2"></i>
+                            Últimos Clientes Registrados
+                        </h3>
+                        <div class="card-tools">
+                            <button type="button" class="btn btn-tool" data-card-widget="collapse">
+                                <i class="fas fa-minus"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="table-responsive">
+                            <table class="table table-striped">
+                                <thead>
+                                    <tr>
+                                        <th>Nombre</th>
+                                        <th>Teléfono</th>
+                                        <th>Fecha</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -1098,8 +1428,10 @@ include 'includes/sidebar.php';
                 </div>
             </div>
         </div>
+        <?php endif; ?>
 
-        <!-- Second Row -->
+        <!-- Second Row - ADMIN: Próximas Clases + Stock Bajo -->
+        <?php if ($user_rol == 'admin'): ?>
         <div class="row">
             <div class="col-md-6">
                 <div class="card">
@@ -1205,9 +1537,228 @@ include 'includes/sidebar.php';
                 </div>
             </div>
         </div>
+        <?php endif; ?>
 
-        <!-- Alertas de Vencimientos -->
-        <?php if ($vencimientos_proximos > 0): ?>
+        <!-- Second Row - RECEPCIONISTA: Próximas Clases + Stock Bajo -->
+        <?php if ($user_rol == 'recepcionista'): ?>
+        <div class="row">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">
+                            <i class="fas fa-calendar-check mr-2"></i>
+                            Próximas Clases
+                        </h3>
+                        <div class="card-tools">
+                            <button type="button" class="btn btn-tool" data-card-widget="collapse">
+                                <i class="fas fa-minus"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="table-responsive">
+                            <table class="table table-striped">
+                                <thead>
+                                    <tr>
+                                        <th>Clase</th>
+                                        <th>Horario</th>
+                                        <th>Instructor</th>
+                                        <th>Cupo</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php foreach ($proximas_clases as $clase): ?>
+                                    <tr>
+                                        <td><?php echo htmlspecialchars($clase['nombre']); ?></td>
+                                        <td><?php echo htmlspecialchars($clase['horario']); ?></td>
+                                        <td><?php echo htmlspecialchars($clase['instructor'] ?? 'Por asignar'); ?></td>
+                                        <td>
+                                            <span class="badge badge-info"><?php echo $clase['cupo_actual']; ?>/<?php echo $clase['cupo_maximo']; ?></span>
+                                        </td>
+                                    </tr>
+                                    <?php endforeach; ?>
+                                    <?php if (empty($proximas_clases)): ?>
+                                    <tr>
+                                        <td colspan="4" class="text-center">No hay clases programadas</td>
+                                    </tr>
+                                    <?php endif; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="card-footer text-center">
+                        <a href="javascript:void(0)" onclick="verTodasClases()" class="btn btn-sm btn-primary">Ver todas las clases</a>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">
+                            <i class="fas fa-exclamation-triangle mr-2"></i>
+                            Productos con Bajo Stock
+                        </h3>
+                        <div class="card-tools">
+                            <button type="button" class="btn btn-tool" data-card-widget="collapse">
+                                <i class="fas fa-minus"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="table-responsive">
+                            <table class="table table-striped">
+                                <thead>
+                                    <tr>
+                                        <th>Producto</th>
+                                        <th>Stock Actual</th>
+                                        <th>Estado</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php foreach ($productos_bajo_stock as $producto): ?>
+                                    <tr>
+                                        <td><?php echo htmlspecialchars($producto['nombre']); ?></td>
+                                        <td><?php echo $producto['stock']; ?> unidades</td>
+                                        <td>
+                                            <?php if ($producto['stock'] <= 5): ?>
+                                                <span class="badge badge-danger">Stock Crítico</span>
+                                            <?php else: ?>
+                                                <span class="badge badge-warning">Stock Bajo</span>
+                                            <?php endif; ?>
+                                        </td>
+                                    </tr>
+                                    <?php endforeach; ?>
+                                    <?php if (empty($productos_bajo_stock)): ?>
+                                    <tr>
+                                        <td colspan="3" class="text-center text-success">
+                                            <i class="fas fa-check-circle"></i> Todos los productos tienen stock suficiente
+                                        </td>
+                                    </tr>
+                                    <?php endif; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="card-footer text-center">
+                        <a href="javascript:void(0)" onclick="verTodosProductos()" class="btn btn-sm btn-primary">Ver inventario</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <?php endif; ?>
+
+        <!-- ENTRENADOR: Mis Clases (detalladas) -->
+        <?php if ($user_rol == 'entrenador'): ?>
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">
+                            <i class="fas fa-chalkboard-teacher mr-2"></i>
+                            Mis Clases
+                        </h3>
+                        <div class="card-tools">
+                            <button type="button" class="btn btn-tool" data-card-widget="collapse">
+                                <i class="fas fa-minus"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="table-responsive">
+                            <table class="table table-striped">
+                                <thead>
+                                    <tr>
+                                        <th>Clase</th>
+                                        <th>Horario</th>
+                                        <th>Duración</th>
+                                        <th>Cupo Actual</th>
+                                        <th>Cupo Máximo</th>
+                                        <th>Ocupación</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php foreach ($todas_clases as $clase): 
+                                        $porcentaje = ($clase['cupo_maximo'] > 0) ? ($clase['cupo_actual'] / $clase['cupo_maximo']) * 100 : 0;
+                                        $ocupacion_color = $porcentaje >= 90 ? 'danger' : ($porcentaje >= 70 ? 'warning' : 'success');
+                                    ?>
+                                    <tr>
+                                        <td><strong><?php echo htmlspecialchars($clase['nombre']); ?></strong></td>
+                                        <td><?php echo htmlspecialchars($clase['horario']); ?></td>
+                                        <td><?php echo $clase['duracion_minutos']; ?> min</td>
+                                        <td><?php echo $clase['cupo_actual']; ?></td>
+                                        <td><?php echo $clase['cupo_maximo']; ?></td>
+                                        <td><div class="progress" style="width: 100px;"><div class="progress-bar bg-<?php echo $ocupacion_color; ?>" style="width: <?php echo $porcentaje; ?>%"></div></div></td>
+                                    </tr>
+                                    <?php endforeach; ?>
+                                    <?php if (empty($todas_clases)): ?>
+                                    <tr>
+                                        <td colspan="6" class="text-center">No tienes clases asignadas</td>
+                                    </tr>
+                                    <?php endif; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="card-footer text-center">
+                        <a href="clases.php" class="btn btn-sm btn-primary">Ver todas mis clases</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ENTRENADOR: Alumnos Activos -->
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">
+                            <i class="fas fa-users mr-2"></i>
+                            Alumnos Activos
+                        </h3>
+                        <div class="card-tools">
+                            <button type="button" class="btn btn-tool" data-card-widget="collapse">
+                                <i class="fas fa-minus"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="table-responsive">
+                            <table class="table table-striped">
+                                <thead>
+                                    <tr>
+                                        <th>Alumno</th>
+                                        <th>Teléfono</th>
+                                        <th>Email</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php foreach ($alumnos_entrenador as $alumno): ?>
+                                    <tr>
+                                        <td><?php echo htmlspecialchars($alumno['nombre'] . ' ' . $alumno['apellido']); ?></td>
+                                        <td><?php echo htmlspecialchars($alumno['telefono'] ?? 'N/A'); ?></td>
+                                        <td><?php echo htmlspecialchars($alumno['email'] ?? 'N/A'); ?></td>
+                                    </tr>
+                                    <?php endforeach; ?>
+                                    <?php if (empty($alumnos_entrenador)): ?>
+                                    <tr>
+                                        <td colspan="3" class="text-center">No hay alumnos registrados</td>
+                                    </tr>
+                                    <?php endif; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="card-footer text-center">
+                        <a href="clientes.php" class="btn btn-sm btn-primary">Ver todos los alumnos</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <?php endif; ?>
+
+        <!-- Alertas de Vencimientos (solo admin y recepcionista) -->
+        <?php if (($user_rol == 'admin' || $user_rol == 'recepcionista') && $vencimientos_proximos > 0): ?>
         <div class="row">
             <div class="col-12">
                 <div class="card" style="border-left: 4px solid #ffc107;">
@@ -1228,7 +1779,8 @@ include 'includes/sidebar.php';
         </div>
         <?php endif; ?>
 
-        <!-- Quick Actions Row -->
+        <!-- Acciones Rápidas - ADMIN (tiene acceso a clases) -->
+        <?php if ($user_rol == 'admin'): ?>
         <div class="row">
             <div class="col-12">
                 <div class="card">
@@ -1275,8 +1827,95 @@ include 'includes/sidebar.php';
                 </div>
             </div>
         </div>
+        <?php endif; ?>
+
+        <!-- Acciones Rápidas - RECEPCIONISTA (sin acceso a clases) -->
+        <?php if ($user_rol == 'recepcionista'): ?>
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">
+                            <i class="fas fa-bolt mr-2"></i>
+                            Acciones Rápidas
+                        </h3>
+                    </div>
+                    <div class="card-body">
+                        <div class="row text-center justify-content-center">
+                            <div class="col-md-2 col-6 mb-3">
+                                <a href="inscripciones.php?action=nuevo_cliente" class="btn-app">
+                                    <i class="fas fa-user-plus"></i> Nuevo Cliente
+                                </a>
+                            </div>
+                            <div class="col-md-2 col-6 mb-3">
+                                <a href="inscripciones.php?action=create" class="btn-app">
+                                    <i class="fas fa-id-card"></i> Nueva Inscripción
+                                </a>
+                            </div>
+                            <div class="col-md-2 col-6 mb-3">
+                                <a href="asistencias.php" class="btn-app">
+                                    <i class="fas fa-fingerprint"></i> Registrar Asistencia
+                                </a>
+                            </div>
+                            <div class="col-md-2 col-6 mb-3">
+                                <a href="productos.php?action=create" class="btn-app">
+                                    <i class="fas fa-box"></i> Agregar Producto
+                                </a>
+                            </div>
+                            <div class="col-md-2 col-6 mb-3">
+                                <a href="reportes.php" class="btn-app">
+                                    <i class="fas fa-chart-bar"></i> Generar Reporte
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <?php endif; ?>
+
+        <!-- Quick Actions Row para ENTRENADOR -->
+        <?php if ($user_rol == 'entrenador'): ?>
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">
+                            <i class="fas fa-bolt mr-2"></i>
+                            Acciones Rápidas
+                        </h3>
+                    </div>
+                    <div class="card-body">
+                        <div class="row text-center">
+                            <div class="col-md-3 col-6 mb-3">
+                                <a href="asistencias.php" class="btn-app">
+                                    <i class="fas fa-fingerprint"></i> Registrar Asistencia
+                                </a>
+                            </div>
+                            <div class="col-md-3 col-6 mb-3">
+                                <a href="clases.php" class="btn-app">
+                                    <i class="fas fa-chalkboard-teacher"></i> Ver Mis Clases
+                                </a>
+                            </div>
+                            <div class="col-md-3 col-6 mb-3">
+                                <a href="clientes.php" class="btn-app">
+                                    <i class="fas fa-users"></i> Ver Alumnos
+                                </a>
+                            </div>
+                            <div class="col-md-3 col-6 mb-3">
+                                <a href="reportes.php?tipo=clases" class="btn-app">
+                                    <i class="fas fa-chart-bar"></i> Reporte de Clases
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <?php endif; ?>
     </div>
 
+    <!-- MODALES (Clientes, Productos, Inscripciones, Clases) -->
     <!-- Modal de Clientes -->
     <div class="modal fade" id="modalClientes" tabindex="-1" role="dialog">
         <div class="modal-dialog modal-xl" role="document">
@@ -1900,7 +2539,8 @@ include 'includes/sidebar.php';
         }
     }
     
-    // Gráfico de ingresos mensuales
+    // Gráfico de ingresos mensuales (solo para admin)
+    <?php if ($user_rol == 'admin'): ?>
     document.addEventListener('DOMContentLoaded', function() {
         const ctx = document.getElementById('incomeChart').getContext('2d');
         
@@ -2013,6 +2653,75 @@ include 'includes/sidebar.php';
         resetInactivityTimer();
         <?php endif; ?>
     });
+    <?php else: ?>
+    // Para recepcionista y entrenador (sin gráfico)
+    document.addEventListener('DOMContentLoaded', function() {
+        // Mostrar alerta de bienvenida
+        const alertaMostradaStorage = sessionStorage.getItem('welcomeAlertShown_' + <?php echo $_SESSION['user_id']; ?>);
+        
+        if (!alertaMostradaStorage) {
+            <?php if ($require_password_change): ?>
+            Swal.fire({
+                icon: 'info',
+                title: '¡Bienvenido al Sistema!',
+                html: `
+                    <div style="text-align: center; padding: 10px;">
+                        <h3 style="color: #003366; margin-bottom: 15px;">¡Hola, <?php echo htmlspecialchars($_SESSION['user_name']); ?>!</h3>
+                        <p style="font-size: 16px; margin-bottom: 10px;">
+                            <i class="fas fa-shield-alt"></i> <strong>Por seguridad, necesitas cambiar tu contraseña</strong>
+                        </p>
+                        <p style="font-size: 14px; color: #666;">
+                            La contraseña actual es temporal y debe ser actualizada.
+                        </p>
+                    </div>
+                `,
+                confirmButtonColor: '#003366',
+                confirmButtonText: 'Continuar',
+                allowOutsideClick: false,
+                allowEscapeKey: false
+            }).then(() => {
+                sessionStorage.setItem('welcomeAlertShown_' + <?php echo $_SESSION['user_id']; ?>, 'true');
+                showPasswordModal();
+            });
+            <?php else: ?>
+            Swal.fire({
+                icon: 'success',
+                title: '¡Bienvenido al Sistema!',
+                html: `
+                    <div style="text-align: center; padding: 10px;">
+                        <h3 style="color: #28a745; margin-bottom: 15px;">¡Hola, <?php echo htmlspecialchars($_SESSION['user_name']); ?>!</h3>
+                        <p style="font-size: 16px; margin-bottom: 10px;">
+                            <i class="fas fa-sign-in-alt"></i> <strong>Accediendo al sistema como</strong><br>
+                            <span style="color: #ff6b6b; font-size: 18px;"><?php echo htmlspecialchars($_SESSION['user_rol']); ?></span>
+                        </p>
+                    </div>
+                `,
+                showConfirmButton: false,
+                timer: 2000,
+                timerProgressBar: true,
+                allowOutsideClick: false,
+                allowEscapeKey: false
+            }).then(() => {
+                sessionStorage.setItem('welcomeAlertShown_' + <?php echo $_SESSION['user_id']; ?>, 'true');
+            });
+            <?php endif; ?>
+        } else if (<?php echo $require_password_change ? 'true' : 'false'; ?>) {
+            showPasswordModal();
+        }
+        
+        // Iniciar temporizadores
+        <?php if (!$require_password_change): ?>
+        actualizarTemporizador();
+        tiempoRestanteInterval = setInterval(actualizarTemporizador, 1000);
+        
+        const events = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart', 'click'];
+        events.forEach(event => {
+            document.addEventListener(event, resetInactivityTimer);
+        });
+        resetInactivityTimer();
+        <?php endif; ?>
+    });
+    <?php endif; ?>
     
     // Validación del formulario de cambio de contraseña
     document.getElementById('changePasswordForm')?.addEventListener('submit', function(e) {
