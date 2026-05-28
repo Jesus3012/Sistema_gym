@@ -4,6 +4,33 @@ date_default_timezone_set('America/Mexico_City');
 // inscripciones.php
 session_start();
 require_once 'config/database.php';
+require_once 'includes/qr_helper.php'; // Incluir el helper de QR
+
+// ==================== FUNCIÓN PARA GENERAR CÓDIGO QR ÚNICO ====================
+function generarCodigoQRUnico($conn) {
+    $codigo_unico = false;
+    $intentos = 0;
+    $max_intentos = 5;
+    
+    while (!$codigo_unico && $intentos < $max_intentos) {
+        // Generar un código único
+        $codigo = 'GYM_' . uniqid() . '_' . bin2hex(random_bytes(8));
+        
+        // Verificar si ya existe
+        $stmt = $conn->prepare("SELECT id FROM clientes WHERE codigo_qr = ?");
+        $stmt->bind_param("s", $codigo);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        
+        if ($result->num_rows === 0) {
+            $codigo_unico = $codigo;
+        }
+        $intentos++;
+    }
+    
+    return $codigo_unico;
+}
+// ==================== FIN FUNCIÓN QR ====================
 
 // Crear instancia de la base de datos y obtener la conexión
 $database = new Database();
@@ -32,41 +59,11 @@ $error = '';
 // Verificar si se debe abrir el modal automáticamente
 $abrir_modal_nuevo = isset($_GET['action']) && $_GET['action'] == 'nuevo_cliente';
 
-// ==================== FUNCIONES PARA LECTOR DE HUELLAS ====================
-function capturarHuellaDigital() {
-    $huella_simulada = 'FP_' . date('YmdHis') . '_' . uniqid();
-    
-    return [
-        'success' => true,
-        'huella_data' => $huella_simulada,
-        'template' => base64_encode('simulated_fingerprint_template_' . $huella_simulada)
-    ];
-}
-
-function verificarHuellaDigital($huella_data) {
-    global $conn;
-    
-    $stmt = $conn->prepare("SELECT id, nombre, apellido FROM clientes WHERE huella_digital = ? AND estado = 'activo'");
-    $stmt->bind_param("s", $huella_data);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    
-    if ($result->num_rows > 0) {
-        $cliente = $result->fetch_assoc();
-        return [
-            'success' => true,
-            'cliente_id' => $cliente['id'],
-            'nombre' => $cliente['nombre'] . ' ' . $cliente['apellido']
-        ];
-    }
-    
-    return ['success' => false, 'message' => 'Huella no registrada'];
-}
-// ==================== FIN FUNCIONES LECTOR HUELLAS ====================
 
 // Crear nuevo cliente e inscripción
+
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['action'] == 'crear_cliente_inscripcion') {
-    // Verificar token CSRF para evitar doble envío
+    // Verificar token CSRF
     if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== $_SESSION['csrf_token']) {
         $_SESSION['error'] = 'Token de seguridad inválido. Por favor, intente nuevamente.';
         header('Location: inscripciones.php');
@@ -82,12 +79,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
             $precio_pagado = $_POST['precio_pagado'];
             $metodo_pago = $_POST['metodo_pago'];
             $referencia = $_POST['referencia'] ?? null;
-            $huella_digital = $_POST['huella_digital'] ?? null;
             
             if (empty($nombre) || empty($apellido) || empty($telefono) || empty($plan_id)) {
                 throw new Exception('Por favor complete todos los campos requeridos');
             }
             
+            // Validar que no exista cliente con mismo teléfono o email
             $stmt = $conn->prepare("SELECT id FROM clientes WHERE telefono = ? OR (email = ? AND email != '')");
             $stmt->bind_param("ss", $telefono, $email);
             $stmt->execute();
@@ -97,6 +94,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
                 throw new Exception('Ya existe un cliente con ese teléfono o email');
             }
             
+            // Obtener datos del plan
             $stmt = $conn->prepare("SELECT duracion_dias, precio, nombre as plan_nombre FROM planes WHERE id = ? AND estado = 'activo'");
             $stmt->bind_param("i", $plan_id);
             $stmt->execute();
@@ -107,9 +105,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
                 throw new Exception('Plan no válido');
             }
             
-            // Calcular fecha fin según el plan
+            // Calcular fecha fin
             if ($plan['duracion_dias'] > 0) {
-                // Para plan Visita o cualquier plan de 1 día, la fecha fin es la misma fecha de inicio
                 if ($plan['duracion_dias'] == 1) {
                     $fecha_fin = $fecha_inicio;
                 } else {
@@ -119,22 +116,47 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
                 $fecha_fin = null;
             }
             
+            // ========== GENERAR CÓDIGO QR ÚNICO ==========
+            // Generar código único
+            $codigo_qr = generarCodigoQRUnico($conn);
+            if (!$codigo_qr) {
+                throw new Exception('No se pudo generar un código QR único. Intente nuevamente.');
+            }
+            
+            // Crear directorio para QR si no existe
+            $qr_dir = 'qrcodes/';
+            if (!file_exists($qr_dir)) {
+                mkdir($qr_dir, 0777, true);
+            }
+            
+            // Generar el archivo de imagen QR
+            $nombre_archivo_qr = preg_replace('/[^a-zA-Z0-9_-]/', '_', $codigo_qr) . '.png';
+            $ruta_qr_completa = $qr_dir . $nombre_archivo_qr;
+            
+            // Generar el QR
+            $qr_generado = generarCodigoQR($codigo_qr, $ruta_qr_completa);
+            
+            if (!$qr_generado) {
+                // Si falla la generación del QR, igual creamos el cliente pero con advertencia
+                error_log("Error al generar QR para código: " . $codigo_qr);
+            }
+            
             $conn->begin_transaction();
             
-            // Insertar cliente
-            $stmt = $conn->prepare("INSERT INTO clientes (nombre, apellido, telefono, email, huella_digital, estado) VALUES (?, ?, ?, ?, ?, 'activo')");
-            $stmt->bind_param("sssss", $nombre, $apellido, $telefono, $email, $huella_digital);
+            // Insertar cliente (guardamos el código QR)
+            $stmt = $conn->prepare("INSERT INTO clientes (nombre, apellido, telefono, email, codigo_qr, estado) VALUES (?, ?, ?, ?, ?, 'activo')");
+            $stmt->bind_param("sssss", $nombre, $apellido, $telefono, $email, $codigo_qr);
             $stmt->execute();
             $cliente_id = $conn->insert_id;
             
             // Insertar inscripción
-            $fecha_actual_db = date('Y-m-d');
             $stmt = $conn->prepare("INSERT INTO inscripciones (cliente_id, plan_id, fecha_inicio, fecha_fin, precio_pagado, estado) VALUES (?, ?, ?, ?, ?, 'activa')");
             $stmt->bind_param("iisss", $cliente_id, $plan_id, $fecha_inicio, $fecha_fin, $precio_pagado);
             $stmt->execute();
             $inscripcion_id = $conn->insert_id;
             
             // Insertar pago
+            $fecha_actual_db = date('Y-m-d');
             $stmt = $conn->prepare("INSERT INTO pagos (inscripcion_id, cliente_id, monto, fecha_pago, metodo_pago, referencia, estado) VALUES (?, ?, ?, ?, ?, ?, 'completado')");
             $stmt->bind_param("iidsss", $inscripcion_id, $cliente_id, $precio_pagado, $fecha_actual_db, $metodo_pago, $referencia);
             $stmt->execute();
@@ -146,44 +168,57 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
             
             $conn->commit();
 
-            // Obtener el email del cliente recién creado
-            $email_cliente = $email;
+// ========== ENVIAR CORREO DE BIENVENIDA CON QR ==========
+$envio_correo = false;
+if (!empty($email)) {
+    require_once 'includes/enviar_correo_phpmailer.php';
+    $nombre_completo = $nombre . ' ' . $apellido;
+    
+    // Llamar a la función con todos los parámetros
+    $envio_correo = enviarTicketInscripcion(
+        $email,                    // email del cliente
+        $nombre_completo,          // nombre completo
+        $plan['plan_nombre'],      // plan
+        $fecha_inicio,             // fecha inicio
+        $fecha_fin,                // fecha fin
+        $precio_pagado,            // monto
+        $metodo_pago,              // método de pago
+        $referencia,               // referencia
+        $codigo_qr,                // ← código QR
+        $ruta_qr_completa          // ← ruta del archivo QR
+    );
+    
+    if (!$envio_correo) {
+        error_log("Error al enviar correo a: " . $email);
+    }
+}
+// ========== FIN ENVÍO DE CORREO ==========
 
-            // Enviar correo solo si el cliente proporcionó un email
-            if (!empty($email_cliente)) {
-                require_once 'includes/enviar_correo_phpmailer.php';
-                $nombre_completo = $nombre . ' ' . $apellido;
-                $envio_correo = enviarTicketInscripcion(
-                    $email_cliente,
-                    $nombre_completo,
-                    $plan['plan_nombre'],
-                    $fecha_inicio,
-                    $fecha_fin,
-                    $precio_pagado,
-                    $metodo_pago,
-                    $referencia
-                );
-                
-                if (!$envio_correo) {
-                    error_log("Error al enviar correo a: " . $email_cliente);
-                }
-            }
+// Mensaje de éxito con información del QR
+$mensaje_exito = "Cliente e inscripción creados exitosamente. ";
+$mensaje_exito .= "Código QR: <strong>{$codigo_qr}</strong><br>";
+if ($qr_generado && file_exists($ruta_qr_completa)) {
+    $mensaje_exito .= "QR generado en: <strong>{$ruta_qr_completa}</strong><br>";
+    $mensaje_exito .= '<img src="' . $ruta_qr_completa . '" alt="QR" style="max-width: 150px; margin-top: 10px;">';
+} else {
+    $mensaje_exito .= "<span class='text-warning'>No se pudo generar la imagen del código QR. El código es: {$codigo_qr}</span>";
+}
 
-            // Limpiar token después de uso exitoso
+// Agregar información del correo al mensaje
+if (!empty($email)) {
+    if ($envio_correo) {
+        $mensaje_exito .= "<br><span class='text-success'>✓ Se ha enviado un correo de confirmación a {$email}</span>";
+    } else {
+        $mensaje_exito .= "<br><span class='text-warning'>⚠ No se pudo enviar el correo a {$email}. Verifique la configuración SMTP.</span>";
+    }
+}
+
+$_SESSION['mensaje_exito'] = $mensaje_exito;
+
+            // Limpiar token
             unset($_SESSION['csrf_token']);
-            
-            // Generar nuevo token para el siguiente formulario
             $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
-
-            // Guardar mensaje en sesión
-            if (!empty($email_cliente) && $envio_correo) {
-                $_SESSION['mensaje_exito'] = 'Cliente e inscripción creados exitosamente. Se ha enviado un ticket a su correo electrónico.';
-            } elseif (!empty($email_cliente) && !$envio_correo) {
-                $_SESSION['mensaje_exito'] = 'Cliente e inscripción creados exitosamente. No se pudo enviar el correo electrónico.';
-            } else {
-                $_SESSION['mensaje_exito'] = 'Cliente e inscripción creados exitosamente. No se envió correo porque no proporcionó email.';
-            }
-
+            
             header('Location: inscripciones.php');
             exit;
             
@@ -203,6 +238,8 @@ if (!isset($_SESSION['csrf_token'])) {
 
 // Renovar inscripción
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['action'] == 'renovar_inscripcion') {
+    // ... (el código de renovación se mantiene igual, sin cambios relacionados con QR) ...
+    // Mantengo el código original de renovación ya que no necesita modificación
     try {
         $inscripcion_id = $_POST['inscripcion_id'];
         $cliente_id = $_POST['cliente_id'];
@@ -301,25 +338,28 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
         $email_cliente = $cliente_data['email'];
         $nombre_completo = $cliente_data['nombre'] . ' ' . $cliente_data['apellido'];
 
-        // Enviar correo solo si el cliente tiene email
-        $envio_correo = false;
-        if (!empty($email_cliente)) {
-            require_once 'includes/enviar_correo_phpmailer.php';
-            $envio_correo = enviarTicketRenovacion(
-                $email_cliente,
-                $nombre_completo,
-                $plan['plan_nombre'],
-                $fecha_inicio,
-                $fecha_fin,
-                $precio_pagado,
-                $metodo_pago,
-                $referencia
-            );
-            
-            if (!$envio_correo) {
-                error_log("Error al enviar correo de renovación a: " . $email_cliente);
-            }
-        }
+// Enviar correo solo si el cliente proporcionó un email
+if (!empty($email_cliente)) {
+    require_once 'includes/enviar_correo_phpmailer.php';
+    $nombre_completo = $cliente_data['nombre'] . ' ' . $cliente_data['apellido'];
+    
+    $envio_correo = enviarTicketRenovacion(
+        $email_cliente,
+        $nombre_completo,
+        $plan['plan_nombre'],
+        $fecha_inicio,
+        $fecha_fin,
+        $precio_pagado,
+        $metodo_pago,
+        $referencia
+    );
+    
+    if (!$envio_correo) {
+        error_log("Error al enviar correo a: " . $email_cliente);
+        // Agregar advertencia visible
+        $_SESSION['warning_correo'] = "No se pudo enviar el correo electrónico, pero la inscripción se guardó correctamente.";
+    }
+}
 
         // Limpiar la marca de tiempo después de procesar
         unset($_SESSION[$clave_renovacion]);
@@ -688,17 +728,17 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
             background: #152c6b;
         }
         
-        .fingerprint-area {
+        .qr-area {
             border: 2px dashed #3b82f6;
             border-radius: 8px;
             padding: 20px;
             text-align: center;
-            cursor: pointer;
             background: #f8f9fa;
         }
         
-        .fingerprint-area:hover {
-            background: #e8f0fe;
+        .qr-area i {
+            font-size: 48px;
+            color: #1e3a8a;
         }
         
         .pagination {
@@ -866,6 +906,12 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
         .precio-readonly {
             background-color: #e9ecef;
             cursor: not-allowed;
+        }
+        
+        .qr-preview {
+            max-width: 100%;
+            max-height: 150px;
+            margin-top: 10px;
         }
     </style>
 </head>
@@ -1040,6 +1086,10 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
                                             <i class="fas fa-eye"></i> <span>Ver</span>
                                         </button>
                                         
+                                        <a href="ver_qr.php?id=<?php echo $ins['cliente_id']; ?>" class="btn-accion btn-primary" target="_blank" title="Ver/Imprimir QR">
+                                            <i class="fas fa-qrcode"></i> <span>QR</span>
+                                        </a>
+                                        
                                         <button class="btn-accion btn-renovar" 
                                                 onclick="abrirRenovar(<?php echo $ins['id']; ?>, <?php echo $ins['cliente_id']; ?>, <?php echo $renovar_disabled ? 'true' : 'false'; ?>, '<?php echo addslashes($mensaje_renovar ?: $renovar_title); ?>')"
                                                 <?php echo $renovar_disabled ? 'disabled style="opacity: 0.5; cursor: not-allowed;"' : ''; ?>
@@ -1089,7 +1139,7 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
         </div>
     </div>
     
-    <!-- Modal Nuevo Cliente -->
+    <!-- Modal Nuevo Cliente (MODIFICADO: Reemplazar huella por QR) -->
     <div class="modal fade" id="modalNuevoCliente" tabindex="-1">
         <div class="modal-dialog modal-lg">
             <div class="modal-content">
@@ -1100,7 +1150,6 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
                 <form id="formNuevoCliente" method="POST">
                     <input type="hidden" name="action" value="crear_cliente_inscripcion">
                     <input type="hidden" name="csrf_token" value="<?php echo $_SESSION['csrf_token']; ?>">
-                    <input type="hidden" name="huella_digital" id="huella_digital" value="">
                     
                     <div class="modal-body">
                         <div class="row">
@@ -1163,10 +1212,11 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
                             <input type="text" class="form-control" name="referencia" placeholder="Número de referencia (opcional)">
                         </div>
                         
-                        <div class="fingerprint-area" onclick="capturarHuella()">
-                            <i class="fas fa-fingerprint" style="font-size: 48px; color: #1e3a8a;"></i>
-                            <div class="mt-2">Capturar Huella Digital</div>
-                            <div class="small text-muted" id="huellaStatus">No registrada</div>
+                        <!-- Área de información de QR (reemplazo de huella) -->
+                        <div class="qr-area">
+                            <i class="fas fa-qrcode"></i>
+                            <div class="mt-2">Código QR para el Socio</div>
+                            <div class="small text-muted">Se generará automáticamente al registrar</div>
                         </div>
                     </div>
                     
@@ -1179,7 +1229,7 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
         </div>
     </div>
     
-    <!-- Modal Renovar - PRECIO SOLO LECTURA -->
+    <!-- Modal Renovar -->
     <div class="modal fade" id="modalRenovar" tabindex="-1">
         <div class="modal-dialog">
             <div class="modal-content">
@@ -1290,23 +1340,7 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
             }
         }
         
-        function capturarHuella() {
-            Swal.fire({
-                title: 'Capturando huella',
-                text: 'Coloque su dedo en el lector...',
-                icon: 'info',
-                showConfirmButton: false,
-                didOpen: () => Swal.showLoading()
-            });
-            
-            setTimeout(() => {
-                Swal.close();
-                const huellaData = 'FP_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-                document.getElementById('huella_digital').value = huellaData;
-                document.getElementById('huellaStatus').innerHTML = '<i class="fas fa-check-circle text-success"></i> Huella registrada';
-                Swal.fire('Éxito', 'Huella registrada correctamente', 'success');
-            }, 2000);
-        }
+        // Eliminada la función capturarHuella() ya que no se usa más
         
         $('#formNuevoCliente').on('submit', function(e) {
             if (formularioEnviando) {

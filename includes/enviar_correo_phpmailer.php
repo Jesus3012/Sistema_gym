@@ -19,13 +19,11 @@ function getConfiguracionGimnasio() {
     $result = $conn->query($query);
     
     if ($result && $row = $result->fetch_assoc()) {
-        // Verificar si el logo existe en la ruta guardada
         if (!empty($row['logo']) && file_exists($row['logo'])) {
             return $row;
         }
     }
     
-    // Buscar logo con cualquier extension en la carpeta img
     $extensiones = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'ico'];
     foreach ($extensiones as $ext) {
         $ruta = "img/logo-gym." . $ext;
@@ -49,26 +47,54 @@ function getConfiguracionGimnasio() {
     ];
 }
 
-// Funcion para obtener URL absoluta del logo
 function getLogoUrlAbsoluta($ruta_relativa) {
     if (empty($ruta_relativa)) {
         return '';
     }
     
-    // Obtener la URL base del sitio
     $protocol = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 'https://' : 'http://';
     $host = $_SERVER['HTTP_HOST'];
     $base_url = $protocol . $host . '/';
-    
-    // Eliminar slash inicial si existe
     $ruta_limpia = ltrim($ruta_relativa, '/');
     
     return $base_url . $ruta_limpia;
 }
 
-function enviarTicketInscripcion($email, $nombre_cliente, $plan_nombre, $fecha_inicio, $fecha_fin, $monto, $metodo_pago, $referencia) {
+// ========== FUNCIÓN PRINCIPAL PARA ENVIAR TICKET DE INSCRIPCIÓN ==========
+function enviarTicketInscripcion($email, $nombre_cliente, $plan_nombre, $fecha_inicio, $fecha_fin, $monto, $metodo_pago, $referencia, $codigo_qr = null, $ruta_qr = null) {
     $config = getConfiguracionGimnasio();
     $logo_url_absoluta = getLogoUrlAbsoluta($config['logo']);
+    
+    // ========== PREPARAR QR PARA ADJUNTAR ==========
+    $qr_content = null;
+    $qr_adjuntado = false;
+    
+    if ($ruta_qr && file_exists($ruta_qr)) {
+        $qr_content = file_get_contents($ruta_qr);
+        if ($qr_content !== false) {
+            $qr_adjuntado = true;
+        }
+    }
+    
+    // HTML del correo (sin imagen QR incrustada, solo texto informativo)
+    $qr_html = '';
+    if ($codigo_qr) {
+        $qr_html = '
+        <div style="text-align: center; margin: 25px 0; padding: 20px; background: #f0fdf4; border-radius: 10px; border: 1px solid #bbf7d0;">
+            <div style="background: #1e3a8a; color: white; padding: 10px; border-radius: 8px; margin-bottom: 15px;">
+                <strong>📎 CÓDIGO QR ADJUNTO</strong>
+            </div>
+            <p style="font-size: 14px; color: #166534;">
+                Tu código QR personal ha sido <strong>adjuntado a este correo</strong> como archivo PNG.
+            </p>
+            <p style="font-size: 12px; color: #666; margin-top: 10px;">
+                Por favor, revisa los archivos adjuntos para encontrar tu código.
+            </p>
+            <p style="font-size: 11px; background: #f8fafc; padding: 8px; border-radius: 5px; word-break: break-all; margin-top: 15px;">
+                Código de membresía: <strong>' . htmlspecialchars($codigo_qr) . '</strong>
+            </p>
+        </div>';
+    }
     
     $asunto = "Bienvenido al Gimnasio - Ticket de Inscripcion";
     
@@ -257,6 +283,8 @@ function enviarTicketInscripcion($email, $nombre_cliente, $plan_nombre, $fecha_i
     $cuerpo_html .= '
                 </div>
                 
+                ' . $qr_html . '
+                
                 <div class="total">
                     <div>TOTAL PAGADO</div>
                     <div class="amount">$ ' . number_format($monto, 2) . '</div>
@@ -281,7 +309,7 @@ function enviarTicketInscripcion($email, $nombre_cliente, $plan_nombre, $fecha_i
                 
                 <div style="text-align: center; margin-top: 20px;">
                     <p style="font-size: 13px; color: #666;">
-                        <strong>Adjunto a este correo encontraras tu ticket en formato PDF.</strong>
+                        <strong>Adjunto a este correo encontraras tu ticket en formato PDF y tu código QR.</strong>
                     </p>
                 </div>
             </div>
@@ -294,9 +322,12 @@ function enviarTicketInscripcion($email, $nombre_cliente, $plan_nombre, $fecha_i
     </html>';
     
     $pdf_content = generarPDFTicket($nombre_cliente, $plan_nombre, $fecha_inicio, $fecha_fin, $monto, $metodo_pago, $referencia, 'inscripcion');
-    return enviarCorreoSMTP($email, $nombre_cliente, $asunto, $cuerpo_html, $pdf_content);
+    
+    // Enviar correo con QR adjunto
+    return enviarCorreoSMTP($email, $nombre_cliente, $asunto, $cuerpo_html, $pdf_content, $qr_content, 'codigo_qr.png');
 }
 
+// ========== FUNCIÓN PARA ENVIAR TICKET DE RENOVACIÓN ==========
 function enviarTicketRenovacion($email, $nombre_cliente, $plan_nombre, $fecha_inicio, $fecha_fin, $monto, $metodo_pago, $referencia) {
     $config = getConfiguracionGimnasio();
     $logo_url_absoluta = getLogoUrlAbsoluta($config['logo']);
@@ -528,7 +559,8 @@ function enviarTicketRenovacion($email, $nombre_cliente, $plan_nombre, $fecha_in
     return enviarCorreoSMTP($email, $nombre_cliente, $asunto, $cuerpo_html, $pdf_content);
 }
 
-function enviarCorreoSMTP($email, $nombre, $asunto, $cuerpo_html, $pdf_content = null) {
+// ========== FUNCIÓN PRINCIPAL DE ENVÍO SMTP ==========
+function enviarCorreoSMTP($email, $nombre, $asunto, $cuerpo_html, $pdf_content = null, $qr_content = null, $qr_nombre = null) {
     $config = getConfiguracionGimnasio();
     $mail = new PHPMailer(true);
     
@@ -553,8 +585,14 @@ function enviarCorreoSMTP($email, $nombre, $asunto, $cuerpo_html, $pdf_content =
         $mail->setFrom('jesusgabrielmtz78@gmail.com', $nombre_gimnasio);
         $mail->addAddress($email, $nombre);
         
+        // Adjuntar PDF del ticket
         if ($pdf_content) {
             $mail->addStringAttachment($pdf_content, 'ticket_gimnasio.pdf', 'base64', 'application/pdf');
+        }
+        
+        // ========== ADJUNTAR CÓDIGO QR ==========
+        if ($qr_content && $qr_nombre) {
+            $mail->addStringAttachment($qr_content, $qr_nombre, 'base64', 'image/png');
         }
         
         $mail->isHTML(true);
