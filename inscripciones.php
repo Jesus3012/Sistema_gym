@@ -6,30 +6,7 @@ session_start();
 require_once 'config/database.php';
 require_once 'includes/qr_helper.php'; // Incluir el helper de QR
 
-// ==================== FUNCIÓN PARA GENERAR CÓDIGO QR ÚNICO ====================
-function generarCodigoQRUnico($conn) {
-    $codigo_unico = false;
-    $intentos = 0;
-    $max_intentos = 5;
-    
-    while (!$codigo_unico && $intentos < $max_intentos) {
-        // Generar un código único
-        $codigo = 'GYM_' . uniqid() . '_' . bin2hex(random_bytes(8));
-        
-        // Verificar si ya existe
-        $stmt = $conn->prepare("SELECT id FROM clientes WHERE codigo_qr = ?");
-        $stmt->bind_param("s", $codigo);
-        $stmt->execute();
-        $result = $stmt->get_result();
-        
-        if ($result->num_rows === 0) {
-            $codigo_unico = $codigo;
-        }
-        $intentos++;
-    }
-    
-    return $codigo_unico;
-}
+
 // ==================== FIN FUNCIÓN QR ====================
 
 // Crear instancia de la base de datos y obtener la conexión
