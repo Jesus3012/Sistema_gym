@@ -13,6 +13,133 @@ if (!isset($_SESSION['user_id'])) {
     exit();
 }
 
+/* ============================================================
+   PROTECCIÓN DE RUTAS POR ROL
+   ------------------------------------------------------------
+   Esta validación se ejecuta en el servidor. No solo oculta los
+   enlaces del sidebar: también impide entrar escribiendo la URL.
+
+   IMPORTANTE: este archivo debe cargarse antes de imprimir HTML
+   y antes de ejecutar acciones sensibles en cada módulo.
+   ============================================================ */
+$user_rol = strtolower(trim((string) ($_SESSION['user_rol'] ?? '')));
+$current_page = basename(parse_url($_SERVER['PHP_SELF'] ?? '', PHP_URL_PATH));
+
+$rutas_permitidas_por_rol = [
+    'admin' => [
+        'dashboard.php',
+        'productos.php',
+        'historial_stock.php',
+        'ventas.php',
+        'historial_ventas.php',
+        'inscripciones.php',
+        'asistencias.php',
+        'clases.php',
+        'inscripciones_clases.php',
+        'reportes.php',
+        'notificaciones.php',
+        'configuracion.php',
+        'mi_perfil.php',
+    ],
+    'recepcionista' => [
+        'dashboard.php',
+        'inscripciones.php',
+        'asistencias.php',
+        'reportes.php',
+        'ventas.php',
+        'historial_ventas.php',
+        'mi_perfil.php',
+    ],
+    'entrenador' => [
+        'dashboard.php',
+        'clases.php',
+        'inscripciones_clases.php',
+        'asistencias.php',
+        'mi_perfil.php',
+    ],
+];
+
+// Si el rol guardado en la sesión no existe, cerrar la sesión.
+if (!array_key_exists($user_rol, $rutas_permitidas_por_rol)) {
+    $_SESSION = [];
+
+    if (ini_get('session.use_cookies')) {
+        $params = session_get_cookie_params();
+        setcookie(
+            session_name(),
+            '',
+            time() - 42000,
+            $params['path'],
+            $params['domain'],
+            $params['secure'],
+            $params['httponly']
+        );
+    }
+
+    session_destroy();
+    header('Location: login.php?error=rol_invalido');
+    exit();
+}
+
+/* ============================================================
+   MENSAJE AMIGABLE PARA ACCESO DENEGADO
+   ============================================================ */
+$nombres_roles = [
+    'admin' => 'Administrador',
+    'recepcionista' => 'Recepcionista',
+    'entrenador' => 'Entrenador',
+];
+
+$nombres_modulos = [
+    'dashboard.php' => 'Dashboard',
+    'productos.php' => 'Productos',
+    'historial_stock.php' => 'Historial de stock',
+    'ventas.php' => 'Venta de productos',
+    'historial_ventas.php' => 'Historial de ventas',
+    'inscripciones.php' => 'Inscripciones',
+    'asistencias.php' => 'Asistencias',
+    'clases.php' => 'Clases',
+    'inscripciones_clases.php' => 'Inscripciones a clases',
+    'reportes.php' => 'Reportes',
+    'notificaciones.php' => 'Notificaciones',
+    'configuracion.php' => 'Configuración',
+    'mi_perfil.php' => 'Mi perfil',
+];
+
+// Seguridad por defecto: toda página no registrada queda bloqueada.
+if (!in_array($current_page, $rutas_permitidas_por_rol[$user_rol], true)) {
+    $nombre_rol = $nombres_roles[$user_rol] ?? ucfirst($user_rol);
+    $nombre_modulo = $nombres_modulos[$current_page] ?? 'este módulo';
+
+    // Mensaje flash: se mostrará una sola vez al regresar al dashboard.
+    $_SESSION['alerta_acceso_denegado'] = [
+        'titulo' => 'Acceso restringido',
+        'mensaje' => "Tu perfil de {$nombre_rol} no tiene permiso para ingresar al módulo {$nombre_modulo}.",
+        'rol' => $nombre_rol,
+        'modulo' => $nombre_modulo,
+    ];
+
+    $destino = 'dashboard.php';
+
+    // Redirección normal cuando todavía no se ha enviado HTML.
+    if (!headers_sent()) {
+        header('Location: ' . $destino);
+    } else {
+        // Respaldo para evitar el warning de headers si el sidebar fue incluido tarde.
+        echo '<script>window.location.replace(' . json_encode($destino) . ');</script>';
+        echo '<noscript><meta http-equiv="refresh" content="0;url=' . htmlspecialchars($destino, ENT_QUOTES, 'UTF-8') . '"></noscript>';
+    }
+
+    exit();
+}
+
+// Recuperar la alerta únicamente en el dashboard y eliminarla de la sesión.
+$alerta_acceso_denegado = null;
+if ($current_page === 'dashboard.php' && isset($_SESSION['alerta_acceso_denegado'])) {
+    $alerta_acceso_denegado = $_SESSION['alerta_acceso_denegado'];
+    unset($_SESSION['alerta_acceso_denegado']);
+}
+
 // Conectar a la base de datos para obtener configuración del gimnasio
 require_once __DIR__ . '/../config/database.php';
 $database = new Database();
@@ -70,7 +197,7 @@ if ($current_page == 'mi_perfil.php') $active_module = 'perfil';
 // Obtener datos del usuario desde la sesión
 $user_name = isset($_SESSION['user_name']) ? $_SESSION['user_name'] : 'Usuario';
 $user_email = isset($_SESSION['user_email']) ? $_SESSION['user_email'] : 'usuario@email.com';
-$user_rol = isset($_SESSION['user_rol']) ? $_SESSION['user_rol'] : 'recepcionista';
+$user_rol = strtolower(trim((string) ($_SESSION['user_rol'] ?? 'recepcionista')));
 
 // Mostrar rol en español
 $rol_spanish = [
@@ -679,6 +806,82 @@ body.sidebar-collapsed .main-content {
     }
 }
 
+/* SweetAlert de acceso restringido */
+.swal-gym-popup {
+    width: min(470px, calc(100vw - 32px)) !important;
+    border-radius: 22px !important;
+    padding: 12px 10px 20px !important;
+    box-shadow: 0 24px 65px rgba(15, 37, 64, 0.24) !important;
+}
+
+.swal-gym-title {
+    color: #0a2540 !important;
+    font-size: 1.55rem !important;
+    font-weight: 800 !important;
+}
+
+.swal-gym-confirm {
+    min-width: 145px !important;
+    border: none !important;
+    border-radius: 11px !important;
+    padding: 11px 24px !important;
+    font-weight: 700 !important;
+    box-shadow: 0 8px 20px rgba(37, 99, 235, 0.24) !important;
+}
+
+.swal-gym-access-content {
+    padding: 2px 8px 0;
+    color: #475569;
+}
+
+.swal-gym-access-content > p {
+    margin: 0 0 16px;
+    font-size: 0.96rem;
+    line-height: 1.6;
+}
+
+.swal-gym-access-data {
+    display: grid;
+    gap: 9px;
+    padding: 13px;
+    margin: 0 0 15px;
+    border: 1px solid #dbeafe;
+    border-radius: 14px;
+    background: #f8fbff;
+    text-align: left;
+}
+
+.swal-gym-access-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    font-size: 0.88rem;
+}
+
+.swal-gym-access-row span {
+    color: #64748b;
+}
+
+.swal-gym-access-row span i {
+    width: 19px;
+    color: #3b82f6;
+}
+
+.swal-gym-access-row strong {
+    max-width: 58%;
+    color: #0f172a;
+    text-align: right;
+}
+
+.swal-gym-access-help {
+    margin: 0 !important;
+    padding-top: 12px;
+    border-top: 1px solid #e2e8f0;
+    color: #64748b;
+    font-size: 0.82rem !important;
+}
+
 /* Impresión */
 @media print {
     .sidebar {
@@ -856,18 +1059,6 @@ body.sidebar-collapsed .main-content {
                     </a>
                 </li>
                 <li class="nav-item">
-                    <a href="clases.php" class="nav-link <?php echo $active_module == 'classes' ? 'active' : ''; ?>">
-                        <i class="fas fa-calendar-alt"></i>
-                        <span class="nav-text">Clases</span>
-                    </a>
-                </li>
-                <li class="nav-item">
-                    <a href="inscripciones_clases.php" class="nav-link <?php echo $active_module == 'clases_inscriptions' ? 'active' : ''; ?>">
-                        <i class="fas fa-user-check"></i>
-                        <span class="nav-text">Inscripciones a Clases</span>
-                    </a>
-                </li>
-                <li class="nav-item">
                     <a href="reportes.php" class="nav-link <?php echo $active_module == 'reports' ? 'active' : ''; ?>">
                         <i class="fas fa-chart-bar"></i>
                         <span class="nav-text">Reportes</span>
@@ -934,6 +1125,62 @@ body.sidebar-collapsed .main-content {
         </a>
     </div>
 </aside>
+
+<?php if (is_array($alerta_acceso_denegado)): ?>
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const alertaAcceso = <?php echo json_encode(
+        $alerta_acceso_denegado,
+        JSON_UNESCAPED_UNICODE |
+        JSON_HEX_TAG |
+        JSON_HEX_AMP |
+        JSON_HEX_APOS |
+        JSON_HEX_QUOT
+    ); ?>;
+
+    if (typeof Swal === 'undefined') {
+        alert(alertaAcceso.mensaje || 'No tienes permiso para acceder a este módulo.');
+        return;
+    }
+
+    Swal.fire({
+        icon: 'warning',
+        title: alertaAcceso.titulo || 'Acceso restringido',
+        html: `
+            <div class="swal-gym-access-content">
+                <p>${alertaAcceso.mensaje}</p>
+
+                <div class="swal-gym-access-data">
+                    <div class="swal-gym-access-row">
+                        <span><i class="fas fa-user-shield"></i> Rol actual</span>
+                        <strong>${alertaAcceso.rol}</strong>
+                    </div>
+                    <div class="swal-gym-access-row">
+                        <span><i class="fas fa-ban"></i> Módulo solicitado</span>
+                        <strong>${alertaAcceso.modulo}</strong>
+                    </div>
+                </div>
+
+                <p class="swal-gym-access-help">
+                    Si necesitas utilizar esta función, solicita autorización a un administrador del sistema.
+                </p>
+            </div>
+        `,
+        confirmButtonText: 'Entendido',
+        confirmButtonColor: '#2563eb',
+        allowOutsideClick: false,
+        allowEscapeKey: true,
+        buttonsStyling: true,
+        customClass: {
+            popup: 'swal-gym-popup',
+            title: 'swal-gym-title',
+            confirmButton: 'swal-gym-confirm'
+        }
+    });
+});
+</script>
+<?php endif; ?>
 
 <script>
 (function() {
