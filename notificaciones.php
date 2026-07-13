@@ -33,6 +33,93 @@ if (!in_array($usuario_rol, ['admin', 'recepcionista'])) {
     exit;
 }
 
+
+/**
+ * Devuelve etiquetas legibles de los grupos seleccionados.
+ * También conserva compatibilidad con registros antiguos.
+ */
+function obtenerEtiquetasDestinatarios($valor)
+{
+    $mapa = array(
+        'socios_membresia_activa' => 'Socios con membresía activa',
+        'socios_membresia_activa_vencida' => 'Socios con membresía activa o vencida',
+        'usuarios_sistema' => 'Usuarios del sistema',
+
+        // Valores anteriores.
+        'todos_clientes_activos' => 'Clientes activos del sistema',
+        'clientes_membresia_activa' => 'Clientes con membresía activa',
+        'todos_usuarios' => 'Usuarios del sistema',
+        'todos_membresia_usuarios' => 'Clientes con membresía activa y usuarios',
+        'todos' => 'Todos los destinatarios'
+    );
+
+    $valores = array();
+
+    if (is_array($valor)) {
+        $valores = $valor;
+    } else {
+        $texto = trim((string) $valor);
+
+        if ($texto !== '') {
+            $json = json_decode($texto, true);
+            $valores = is_array($json)
+                ? $json
+                : explode(',', $texto);
+        }
+    }
+
+    $etiquetas = array();
+
+    foreach ($valores as $item) {
+        $clave = trim((string) $item);
+
+        if ($clave === '') {
+            continue;
+        }
+
+        $etiquetas[] = isset($mapa[$clave])
+            ? $mapa[$clave]
+            : $clave;
+    }
+
+    return array_values(array_unique($etiquetas));
+}
+
+function textoDestinatariosNotificacion($valor)
+{
+    $etiquetas = obtenerEtiquetasDestinatarios($valor);
+
+    return empty($etiquetas)
+        ? 'Sin destinatarios registrados'
+        : implode(' + ', $etiquetas);
+}
+
+function agregarDestinatarioUnico(
+    &$lista,
+    $email,
+    $nombre,
+    $tipo
+) {
+    $email = trim((string) $email);
+
+    if (
+        $email === '' ||
+        !filter_var($email, FILTER_VALIDATE_EMAIL)
+    ) {
+        return;
+    }
+
+    $clave = strtolower($email);
+
+    if (!isset($lista[$clave])) {
+        $lista[$clave] = array(
+            'email' => $email,
+            'nombre' => trim((string) $nombre),
+            'tipo' => $tipo
+        );
+    }
+}
+
 // Obtener numero de pagina para paginacion
 $pagina_manual = isset($_GET['pagina_manual']) ? (int)$_GET['pagina_manual'] : 1;
 $pagina_automatica = isset($_GET['pagina_automatica']) ? (int)$_GET['pagina_automatica'] : 1;
@@ -82,7 +169,13 @@ function enviarCorreo($email, $nombre, $titulo, $mensaje, $tipo) {
         $mensaje_limpio = str_replace(array('\r\n', '\r', '\n', "\r\n", "\r", "\n"), "\n", $mensaje);
         $mensaje_limpio = str_replace('\\r\\n', "\n", $mensaje_limpio);
         $mensaje_limpio = str_replace('\\n', "\n", $mensaje_limpio);
-        $mensaje_html = nl2br(trim($mensaje_limpio));
+        $mensaje_html = nl2br(
+            htmlspecialchars(
+                trim($mensaje_limpio),
+                ENT_QUOTES,
+                'UTF-8'
+            )
+        );
         
         $color = '#3b82f6';
         if ($tipo == 'aviso') $color = '#f59e0b';
@@ -140,140 +233,362 @@ function enviarCorreo($email, $nombre, $titulo, $mensaje, $tipo) {
 // Procesar envio de notificacion
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     if ($_POST['action'] === 'enviar_notificacion') {
-        $titulo = $conn->real_escape_string($_POST['titulo']);
-        $mensaje_raw = $_POST['mensaje'];
-        $mensaje_limpio = str_replace(array('\r\n', '\r', '\n', "\r\n", "\r", "\n", '\\r\\n', '\\n'), "\n", $mensaje_raw);
-        $mensaje = $conn->real_escape_string($mensaje_limpio);
-        $tipo = $conn->real_escape_string($_POST['tipo']);
-        $destinatarios = $conn->real_escape_string($_POST['destinatarios']);
-        $fecha_envio = date('Y-m-d H:i:s');
-        
-        $query = "INSERT INTO notificaciones (titulo, mensaje, tipo, destinatarios, fecha_envio, enviado_por, estado) 
-                  VALUES ('$titulo', '$mensaje', '$tipo', '$destinatarios', '$fecha_envio', $usuario_id, 'enviado')";
-        
-        if ($conn->query($query)) {
-            $notificacion_id = $conn->insert_id;
-            $destinatarios_lista = array();
-            
-            switch($destinatarios) {
-                case 'todos_clientes_activos':
-                    $query_dest = "SELECT id, nombre, apellido, email FROM clientes WHERE estado = 'activo' AND email IS NOT NULL AND email != ''";
-                    $result = $conn->query($query_dest);
-                    if ($result && $result->num_rows > 0) {
-                        while($row = $result->fetch_assoc()) {
-                            $destinatarios_lista[] = array(
-                                'email' => $row['email'],
-                                'nombre' => $row['nombre'] . ' ' . $row['apellido'],
-                                'tipo' => 'cliente'
-                            );
-                        }
-                    }
-                    break;
-                    
-                case 'clientes_membresia_activa':
-                    $query_dest = "SELECT DISTINCT c.id, c.nombre, c.apellido, c.email 
-                                  FROM clientes c 
-                                  INNER JOIN inscripciones i ON c.id = i.cliente_id 
-                                  WHERE c.estado = 'activo' 
-                                  AND i.estado = 'activa' 
-                                  AND i.fecha_fin >= CURDATE()
-                                  AND c.email IS NOT NULL AND c.email != ''";
-                    $result = $conn->query($query_dest);
-                    if ($result && $result->num_rows > 0) {
-                        while($row = $result->fetch_assoc()) {
-                            $destinatarios_lista[] = array(
-                                'email' => $row['email'],
-                                'nombre' => $row['nombre'] . ' ' . $row['apellido'],
-                                'tipo' => 'cliente'
-                            );
-                        }
-                    }
-                    break;
-                    
-                case 'todos_usuarios':
-                    $query_dest = "SELECT id, nombre, email FROM usuarios WHERE estado = 'activo' AND email IS NOT NULL AND email != ''";
-                    $result = $conn->query($query_dest);
-                    if ($result && $result->num_rows > 0) {
-                        while($row = $result->fetch_assoc()) {
-                            $destinatarios_lista[] = array(
-                                'email' => $row['email'],
-                                'nombre' => $row['nombre'],
-                                'tipo' => 'usuario'
-                            );
-                        }
-                    }
-                    break;
-                    
-                case 'todos_membresia_usuarios':
-                    $query_clientes = "SELECT DISTINCT c.id, c.nombre, c.apellido, c.email 
-                                  FROM clientes c 
-                                  INNER JOIN inscripciones i ON c.id = i.cliente_id 
-                                  WHERE c.estado = 'activo' 
-                                  AND i.estado = 'activa' 
-                                  AND i.fecha_fin >= CURDATE()
-                                  AND c.email IS NOT NULL AND c.email != ''";
-                    $result = $conn->query($query_clientes);
-                    if ($result && $result->num_rows > 0) {
-                        while($row = $result->fetch_assoc()) {
-                            $destinatarios_lista[] = array(
-                                'email' => $row['email'],
-                                'nombre' => $row['nombre'] . ' ' . $row['apellido'],
-                                'tipo' => 'cliente'
-                            );
-                        }
-                    }
-                    $query_usuarios = "SELECT id, nombre, email FROM usuarios WHERE estado = 'activo' AND email IS NOT NULL AND email != ''";
-                    $result = $conn->query($query_usuarios);
-                    if ($result && $result->num_rows > 0) {
-                        while($row = $result->fetch_assoc()) {
-                            $destinatarios_lista[] = array(
-                                'email' => $row['email'],
-                                'nombre' => $row['nombre'],
-                                'tipo' => 'usuario'
-                            );
-                        }
-                    }
-                    break;
+        header('Content-Type: application/json; charset=utf-8');
+
+        $titulo = isset($_POST['titulo'])
+            ? trim((string) $_POST['titulo'])
+            : '';
+
+        $mensaje_raw = isset($_POST['mensaje'])
+            ? (string) $_POST['mensaje']
+            : '';
+
+        $mensaje_limpio = str_replace(
+            array(
+                '\r\n',
+                '\r',
+                '\n',
+                "\r\n",
+                "\r",
+                "\n",
+                '\\r\\n',
+                '\\n'
+            ),
+            "\n",
+            $mensaje_raw
+        );
+
+        $tipo = isset($_POST['tipo'])
+            ? strtolower(trim((string) $_POST['tipo']))
+            : 'info';
+
+        $seleccionRecibida = isset($_POST['destinatarios'])
+            ? $_POST['destinatarios']
+            : array();
+
+        if (!is_array($seleccionRecibida)) {
+            $seleccionRecibida = array($seleccionRecibida);
+        }
+
+        $gruposPermitidos = array(
+            'socios_membresia_activa',
+            'socios_membresia_activa_vencida',
+            'usuarios_sistema'
+        );
+
+        $tiposPermitidos = array(
+            'info',
+            'aviso',
+            'alerta',
+            'promocion'
+        );
+
+        $seleccionados = array();
+
+        foreach ($seleccionRecibida as $grupo) {
+            $grupo = trim((string) $grupo);
+
+            if (
+                in_array($grupo, $gruposPermitidos, true) &&
+                !in_array($grupo, $seleccionados, true)
+            ) {
+                $seleccionados[] = $grupo;
             }
-            
-            $enviados = 0;
-            $fallidos = 0;
-            $errores = array();
-            
-            foreach($destinatarios_lista as $destinatario) {
-                $envio_exitoso = enviarCorreo(
-                    $destinatario['email'],
-                    $destinatario['nombre'],
-                    $titulo,
-                    $mensaje,
-                    $tipo
-                );
-                
-                if ($envio_exitoso) {
-                    $enviados++;
-                    $insert_detalle = "INSERT INTO notificaciones_enviadas (notificacion_id, destinatario_email, destinatario_nombre, tipo_destinatario, fecha_envio) 
-                                       VALUES ($notificacion_id, '{$destinatario['email']}', '{$destinatario['nombre']}', '{$destinatario['tipo']}', '$fecha_envio')";
-                    $conn->query($insert_detalle);
-                } else {
-                    $fallidos++;
-                    $errores[] = $destinatario['email'];
-                }
-            }
-            
+        }
+
+        if ($titulo === '' || trim($mensaje_limpio) === '') {
             echo json_encode(array(
-                'success' => true, 
-                'enviados' => $enviados, 
-                'fallidos' => $fallidos, 
-                'total' => count($destinatarios_lista),
-                'errores' => $errores
+                'success' => false,
+                'error' => 'El título y el mensaje son obligatorios.'
             ));
             exit;
-        } else {
-            echo json_encode(array('success' => false, 'error' => 'Error al guardar la notificacion: ' . $conn->error));
+        }
+
+        if (!in_array($tipo, $tiposPermitidos, true)) {
+            echo json_encode(array(
+                'success' => false,
+                'error' => 'El tipo de notificación no es válido.'
+            ));
             exit;
         }
+
+        if (count($seleccionados) < 1) {
+            echo json_encode(array(
+                'success' => false,
+                'error' => 'Selecciona por lo menos un grupo de destinatarios.'
+            ));
+            exit;
+        }
+
+        if (count($seleccionados) > 2) {
+            echo json_encode(array(
+                'success' => false,
+                'error' => 'Solo puedes seleccionar hasta dos grupos.'
+            ));
+            exit;
+        }
+
+        $seleccionActivos = in_array(
+            'socios_membresia_activa',
+            $seleccionados,
+            true
+        );
+
+        $seleccionActivosVencidos = in_array(
+            'socios_membresia_activa_vencida',
+            $seleccionados,
+            true
+        );
+
+        if ($seleccionActivos && $seleccionActivosVencidos) {
+            echo json_encode(array(
+                'success' => false,
+                'error' =>
+                    'No puedes combinar socios con membresía activa ' .
+                    'con socios de membresía activa o vencida.'
+            ));
+            exit;
+        }
+
+        $destinatariosPorCorreo = array();
+
+        foreach ($seleccionados as $grupoSeleccionado) {
+            if ($grupoSeleccionado === 'socios_membresia_activa') {
+                $sqlDestinatarios = "
+                    SELECT DISTINCT
+                        c.id,
+                        c.nombre,
+                        c.apellido,
+                        c.email
+                    FROM clientes c
+                    INNER JOIN inscripciones i
+                        ON i.cliente_id = c.id
+                    WHERE c.estado = 'activo'
+                      AND i.estado = 'activa'
+                      AND i.fecha_fin >= CURDATE()
+                      AND c.email IS NOT NULL
+                      AND TRIM(c.email) <> ''
+                ";
+
+                $resultadoDestinatarios =
+                    $conn->query($sqlDestinatarios);
+
+                if ($resultadoDestinatarios) {
+                    while (
+                        $fila =
+                            $resultadoDestinatarios->fetch_assoc()
+                    ) {
+                        agregarDestinatarioUnico(
+                            $destinatariosPorCorreo,
+                            $fila['email'],
+                            $fila['nombre'] . ' ' . $fila['apellido'],
+                            'cliente'
+                        );
+                    }
+                }
+            }
+
+            if (
+                $grupoSeleccionado ===
+                'socios_membresia_activa_vencida'
+            ) {
+                $sqlDestinatarios = "
+                    SELECT DISTINCT
+                        c.id,
+                        c.nombre,
+                        c.apellido,
+                        c.email
+                    FROM clientes c
+                    INNER JOIN inscripciones i
+                        ON i.cliente_id = c.id
+                    WHERE c.estado = 'activo'
+                      AND i.estado IN ('activa', 'vencida')
+                      AND c.email IS NOT NULL
+                      AND TRIM(c.email) <> ''
+                ";
+
+                $resultadoDestinatarios =
+                    $conn->query($sqlDestinatarios);
+
+                if ($resultadoDestinatarios) {
+                    while (
+                        $fila =
+                            $resultadoDestinatarios->fetch_assoc()
+                    ) {
+                        agregarDestinatarioUnico(
+                            $destinatariosPorCorreo,
+                            $fila['email'],
+                            $fila['nombre'] . ' ' . $fila['apellido'],
+                            'cliente'
+                        );
+                    }
+                }
+            }
+
+            if ($grupoSeleccionado === 'usuarios_sistema') {
+                $sqlDestinatarios = "
+                    SELECT
+                        id,
+                        nombre,
+                        email
+                    FROM usuarios
+                    WHERE estado = 'activo'
+                      AND email IS NOT NULL
+                      AND TRIM(email) <> ''
+                ";
+
+                $resultadoDestinatarios =
+                    $conn->query($sqlDestinatarios);
+
+                if ($resultadoDestinatarios) {
+                    while (
+                        $fila =
+                            $resultadoDestinatarios->fetch_assoc()
+                    ) {
+                        agregarDestinatarioUnico(
+                            $destinatariosPorCorreo,
+                            $fila['email'],
+                            $fila['nombre'],
+                            'usuario'
+                        );
+                    }
+                }
+            }
+        }
+
+        $destinatariosLista = array_values(
+            $destinatariosPorCorreo
+        );
+
+        if (count($destinatariosLista) === 0) {
+            echo json_encode(array(
+                'success' => false,
+                'error' =>
+                    'Los grupos seleccionados no tienen correos válidos.'
+            ));
+            exit;
+        }
+
+        $fecha_envio = date('Y-m-d H:i:s');
+        $destinatariosGuardados = implode(',', $seleccionados);
+
+        $stmtNotificacion = $conn->prepare(
+            "INSERT INTO notificaciones
+                (
+                    titulo,
+                    mensaje,
+                    tipo,
+                    destinatarios,
+                    fecha_envio,
+                    enviado_por,
+                    estado
+                )
+             VALUES (?, ?, ?, ?, ?, ?, 'enviado')"
+        );
+
+        if (!$stmtNotificacion) {
+            echo json_encode(array(
+                'success' => false,
+                'error' =>
+                    'No se pudo preparar la notificación: ' .
+                    $conn->error
+            ));
+            exit;
+        }
+
+        $stmtNotificacion->bind_param(
+            'sssssi',
+            $titulo,
+            $mensaje_limpio,
+            $tipo,
+            $destinatariosGuardados,
+            $fecha_envio,
+            $usuario_id
+        );
+
+        if (!$stmtNotificacion->execute()) {
+            $detalleError = $stmtNotificacion->error;
+            $stmtNotificacion->close();
+
+            echo json_encode(array(
+                'success' => false,
+                'error' =>
+                    'No se pudo guardar la notificación: ' .
+                    $detalleError
+            ));
+            exit;
+        }
+
+        $notificacion_id = (int) $conn->insert_id;
+        $stmtNotificacion->close();
+
+        $stmtDetalle = $conn->prepare(
+            "INSERT INTO notificaciones_enviadas
+                (
+                    notificacion_id,
+                    destinatario_email,
+                    destinatario_nombre,
+                    tipo_destinatario,
+                    fecha_envio
+                )
+             VALUES (?, ?, ?, ?, ?)"
+        );
+
+        $enviados = 0;
+        $fallidos = 0;
+        $errores = array();
+
+        foreach ($destinatariosLista as $destinatario) {
+            $envioExitoso = enviarCorreo(
+                $destinatario['email'],
+                $destinatario['nombre'],
+                $titulo,
+                $mensaje_limpio,
+                $tipo
+            );
+
+            if ($envioExitoso) {
+                $enviados++;
+
+                if ($stmtDetalle) {
+                    $emailDetalle = $destinatario['email'];
+                    $nombreDetalle = $destinatario['nombre'];
+                    $tipoDetalle = $destinatario['tipo'];
+
+                    $stmtDetalle->bind_param(
+                        'issss',
+                        $notificacion_id,
+                        $emailDetalle,
+                        $nombreDetalle,
+                        $tipoDetalle,
+                        $fecha_envio
+                    );
+
+                    $stmtDetalle->execute();
+                }
+            } else {
+                $fallidos++;
+                $errores[] = $destinatario['email'];
+            }
+        }
+
+        if ($stmtDetalle) {
+            $stmtDetalle->close();
+        }
+
+        echo json_encode(array(
+            'success' => true,
+            'enviados' => $enviados,
+            'fallidos' => $fallidos,
+            'total' => count($destinatariosLista),
+            'errores' => $errores,
+            'grupos' => obtenerEtiquetasDestinatarios(
+                $seleccionados
+            )
+        ));
+        exit;
     }
-    
+
     // ========== BUSQUEDA EN TIEMPO REAL - NOTIFICACIONES MANUALES ==========
     if ($_POST['action'] === 'buscar_manuales') {
         $search = $conn->real_escape_string($_POST['search']);
@@ -309,14 +624,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                     case 'alerta': $tipo_clase = 'alerta'; $tipo_texto = 'Alerta'; break;
                     case 'promocion': $tipo_clase = 'promocion'; $tipo_texto = 'Promocion'; break;
                 }
-                
-                $destinatarios_texto = array(
-                    'todos_clientes_activos' => 'Todos los clientes activos',
-                    'clientes_membresia_activa' => 'Clientes con membresia activa',
-                    'todos_usuarios' => 'Todos los usuarios',
-                    'todos_membresia_usuarios' => 'Clientes membresia activa + Usuarios activos'
-                );
-                $destinatario_texto = isset($destinatarios_texto[$notif['destinatarios']]) ? $destinatarios_texto[$notif['destinatarios']] : $notif['destinatarios'];
+                $destinatario_texto = textoDestinatariosNotificacion($notif['destinatarios']);
                 
                 $html .= '
                 <div class="notificacion-item ' . $tipo_clase . '">
@@ -594,20 +902,55 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
 // Obtener estadisticas
 $stats = array();
 
-$result = $conn->query("SELECT COUNT(*) as total FROM clientes WHERE estado = 'activo'");
-$stats['total_clientes_activos'] = ($result && $result->num_rows > 0) ? $result->fetch_assoc()['total'] : 0;
+$result = $conn->query(
+    "SELECT COUNT(DISTINCT c.id) AS total
+     FROM clientes c
+     INNER JOIN inscripciones i
+        ON i.cliente_id = c.id
+     WHERE c.estado = 'activo'
+       AND i.estado = 'activa'
+       AND i.fecha_fin >= CURDATE()"
+);
 
-$result = $conn->query("SELECT COUNT(DISTINCT c.id) as total 
-    FROM clientes c 
-    INNER JOIN inscripciones i ON c.id = i.cliente_id 
-    WHERE c.estado = 'activo' AND i.estado = 'activa' AND i.fecha_fin >= CURDATE()");
-$stats['clientes_con_membresia'] = ($result && $result->num_rows > 0) ? $result->fetch_assoc()['total'] : 0;
+$stats['socios_membresia_activa'] =
+    ($result && $result->num_rows > 0)
+        ? (int) $result->fetch_assoc()['total']
+        : 0;
 
-$result = $conn->query("SELECT COUNT(*) as total FROM usuarios WHERE estado = 'activo'");
-$stats['total_usuarios_activos'] = ($result && $result->num_rows > 0) ? $result->fetch_assoc()['total'] : 0;
+$result = $conn->query(
+    "SELECT COUNT(DISTINCT c.id) AS total
+     FROM clientes c
+     INNER JOIN inscripciones i
+        ON i.cliente_id = c.id
+     WHERE c.estado = 'activo'
+       AND i.estado IN ('activa', 'vencida')"
+);
 
-$result = $conn->query("SELECT COUNT(*) as total FROM notificaciones");
-$stats['total_notificaciones'] = ($result && $result->num_rows > 0) ? $result->fetch_assoc()['total'] : 0;
+$stats['socios_membresia_activa_vencida'] =
+    ($result && $result->num_rows > 0)
+        ? (int) $result->fetch_assoc()['total']
+        : 0;
+
+$result = $conn->query(
+    "SELECT COUNT(*) AS total
+     FROM usuarios
+     WHERE estado = 'activo'"
+);
+
+$stats['total_usuarios_activos'] =
+    ($result && $result->num_rows > 0)
+        ? (int) $result->fetch_assoc()['total']
+        : 0;
+
+$result = $conn->query(
+    "SELECT COUNT(*) AS total
+     FROM notificaciones"
+);
+
+$stats['total_notificaciones'] =
+    ($result && $result->num_rows > 0)
+        ? (int) $result->fetch_assoc()['total']
+        : 0;
 
 // Obtener notificaciones manuales con paginacion
 $query_manual = "SELECT n.*, u.nombre as usuario_envio, 
@@ -714,6 +1057,179 @@ $stats['notificaciones_automaticas'] = ($result_automatica && $result_automatica
         .result-count { font-size: 0.85rem; color: #6c757d; margin-bottom: 15px; }
         .clear-search-btn { margin-left: 10px; padding: 6px 12px; background: #dc3545; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 12px; }
         .clear-search-btn:hover { background: #c82333; }
+
+        .destinatarios-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 16px;
+            margin-bottom: 12px;
+        }
+
+        .destinatarios-header label {
+            margin-bottom: 3px;
+        }
+
+        .destinatarios-ayuda {
+            margin: 0;
+            color: #64748b;
+            font-size: 0.78rem;
+            line-height: 1.45;
+        }
+
+        .seleccion-contador {
+            display: inline-flex;
+            align-items: center;
+            min-height: 30px;
+            padding: 5px 10px;
+            border: 1px solid #d7e0ea;
+            border-radius: 999px;
+            color: #526176;
+            background: #f8fafc;
+            font-size: 0.72rem;
+            font-weight: 700;
+            white-space: nowrap;
+        }
+
+        .destinatarios-grid > div {
+            display: flex;
+            margin-bottom: 12px;
+        }
+
+        .destinatario-card {
+            position: relative;
+            width: 100%;
+            min-height: 185px;
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            margin: 0;
+            padding: 17px;
+            cursor: pointer;
+            border: 1px solid #dce4ed;
+            border-radius: 12px;
+            background: #ffffff;
+            transition:
+                border-color 0.18s ease,
+                box-shadow 0.18s ease,
+                background 0.18s ease,
+                opacity 0.18s ease;
+        }
+
+        .destinatario-card:hover {
+            transform: none;
+            border-color: #aebfd3;
+            background: #fbfdff;
+            box-shadow: 0 5px 15px rgba(30, 55, 82, 0.08);
+        }
+
+        .destinatario-card.selected {
+            border-color: #3478c7;
+            background: #f3f8fe;
+            box-shadow: 0 0 0 3px rgba(52, 120, 199, 0.1);
+        }
+
+        .destinatario-card.disabled {
+            cursor: not-allowed;
+            opacity: 0.46;
+            background: #f5f6f8;
+            box-shadow: none;
+        }
+
+        .destinatario-card.disabled:hover {
+            border-color: #dce4ed;
+            background: #f5f6f8;
+        }
+
+        .destinatario-checkbox {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            overflow: hidden;
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .destinatario-check {
+            position: absolute;
+            top: 13px;
+            right: 13px;
+            width: 24px;
+            height: 24px;
+            display: grid;
+            place-items: center;
+            border: 1px solid #cfd9e4;
+            border-radius: 50%;
+            color: transparent;
+            background: #ffffff;
+            font-size: 0.68rem;
+        }
+
+        .destinatario-card.selected .destinatario-check {
+            color: #ffffff;
+            border-color: #3478c7;
+            background: #3478c7;
+        }
+
+        .destinatario-icono {
+            width: 39px;
+            height: 39px;
+            display: grid;
+            place-items: center;
+            margin-bottom: 12px;
+            border-radius: 10px;
+            color: #3478c7;
+            background: #edf4fc;
+            font-size: 1rem;
+        }
+
+        .destinatario-card .nombre {
+            padding-right: 27px;
+            font-size: 0.91rem;
+            line-height: 1.35;
+        }
+
+        .destinatario-card .email {
+            flex: 1;
+            margin-top: 6px;
+            margin-bottom: 12px;
+            font-size: 0.74rem;
+            line-height: 1.45;
+        }
+
+        .destinatario-card .badge-custom {
+            margin-top: auto;
+        }
+
+        .destinatarios-regla {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            margin-top: 2px;
+            padding: 9px 11px;
+            border: 1px solid #dce5ef;
+            border-radius: 8px;
+            color: #566579;
+            background: #f7f9fb;
+            font-size: 0.74rem;
+            line-height: 1.4;
+        }
+
+        .destinatarios-regla i {
+            margin-top: 2px;
+            color: #3478c7;
+        }
+
+        @media (max-width: 768px) {
+            .destinatarios-header {
+                flex-direction: column;
+            }
+
+            .seleccion-contador {
+                align-self: flex-start;
+            }
+        }
+
     </style>
 </head>
 <body class="hold-transition sidebar-mini">
@@ -734,30 +1250,61 @@ $stats['notificaciones_automaticas'] = ($result_automatica && $result_automatica
         <div class="row">
             <div class="col-lg-3 col-md-6 col-12">
                 <div class="stats-card info-bg">
-                    <div class="stats-icon bg-info"><i class="fas fa-users"></i></div>
-                    <div class="stats-number"><?php echo $stats['total_clientes_activos']; ?></div>
-                    <div class="stats-label">Clientes Activos</div>
+                    <div class="stats-icon bg-info">
+                        <i class="fas fa-id-card"></i>
+                    </div>
+                    <div class="stats-number">
+                        <?php echo $stats['socios_membresia_activa']; ?>
+                    </div>
+                    <div class="stats-label">
+                        Socios con membresía activa
+                    </div>
                 </div>
             </div>
+
             <div class="col-lg-3 col-md-6 col-12">
                 <div class="stats-card success-bg">
-                    <div class="stats-icon bg-success"><i class="fas fa-id-card"></i></div>
-                    <div class="stats-number"><?php echo $stats['clientes_con_membresia']; ?></div>
-                    <div class="stats-label">Con Membresia Activa</div>
+                    <div class="stats-icon bg-success">
+                        <i class="fas fa-users"></i>
+                    </div>
+                    <div class="stats-number">
+                        <?php
+                        echo $stats[
+                            'socios_membresia_activa_vencida'
+                        ];
+                        ?>
+                    </div>
+                    <div class="stats-label">
+                        Socios activos y vencidos
+                    </div>
                 </div>
             </div>
+
             <div class="col-lg-3 col-md-6 col-12">
                 <div class="stats-card warning-bg">
-                    <div class="stats-icon bg-warning"><i class="fas fa-user-shield"></i></div>
-                    <div class="stats-number"><?php echo $stats['total_usuarios_activos']; ?></div>
-                    <div class="stats-label">Usuarios Activos</div>
+                    <div class="stats-icon bg-warning">
+                        <i class="fas fa-user-shield"></i>
+                    </div>
+                    <div class="stats-number">
+                        <?php echo $stats['total_usuarios_activos']; ?>
+                    </div>
+                    <div class="stats-label">
+                        Usuarios del sistema
+                    </div>
                 </div>
             </div>
+
             <div class="col-lg-3 col-md-6 col-12">
                 <div class="stats-card danger-bg">
-                    <div class="stats-icon bg-danger"><i class="fas fa-envelope"></i></div>
-                    <div class="stats-number"><?php echo $stats['total_notificaciones']; ?></div>
-                    <div class="stats-label">Notificaciones Enviadas</div>
+                    <div class="stats-icon bg-danger">
+                        <i class="fas fa-envelope"></i>
+                    </div>
+                    <div class="stats-number">
+                        <?php echo $stats['total_notificaciones']; ?>
+                    </div>
+                    <div class="stats-label">
+                        Notificaciones enviadas
+                    </div>
                 </div>
             </div>
         </div>
@@ -795,42 +1342,198 @@ $stats['notificaciones_automaticas'] = ($result_automatica && $result_automatica
                         </div>
                         <div class="col-md-12">
                             <div class="form-group">
-                                <label>Selecciona los Destinatarios</label>
-                                <div class="row">
-                                    <div class="col-md-6">
-                                        <div class="destinatario-card" data-destinatario="todos_clientes_activos">
-                                            <div class="d-flex justify-content-between align-items-center">
-                                                <div><div class="nombre"><i class="fas fa-users"></i> Todos los clientes activos</div><div class="email">Clientes con estado activo</div></div>
-                                                <span class="badge-custom badge-info"><?php echo $stats['total_clientes_activos']; ?> clientes</span>
-                                            </div>
-                                        </div>
+                                <div class="destinatarios-header">
+                                    <div>
+                                        <label>
+                                            Selecciona los destinatarios
+                                        </label>
+                                        <p class="destinatarios-ayuda">
+                                            Puedes elegir uno o dos grupos.
+                                            Las dos opciones de socios no
+                                            pueden seleccionarse juntas.
+                                        </p>
                                     </div>
-                                    <div class="col-md-6">
-                                        <div class="destinatario-card" data-destinatario="clientes_membresia_activa">
-                                            <div class="d-flex justify-content-between align-items-center">
-                                                <div><div class="nombre"><i class="fas fa-id-card"></i> Clientes con membresia activa</div><div class="email">Inscripcion activa y no vencida</div></div>
-                                                <span class="badge-custom badge-info"><?php echo $stats['clientes_con_membresia']; ?> clientes</span>
+
+                                    <span
+                                        class="seleccion-contador"
+                                        id="seleccionContador"
+                                    >
+                                        0 de 2 seleccionados
+                                    </span>
+                                </div>
+
+                                <div class="row destinatarios-grid">
+                                    <div class="col-lg-4 col-md-6">
+                                        <label
+                                            class="destinatario-card"
+                                            data-destinatario=
+                                                "socios_membresia_activa"
+                                        >
+                                            <input
+                                                type="checkbox"
+                                                class=
+                                                    "destinatario-checkbox"
+                                                name="destinatarios[]"
+                                                value=
+                                                    "socios_membresia_activa"
+                                            >
+
+                                            <span
+                                                class=
+                                                    "destinatario-check"
+                                            >
+                                                <i class="fas fa-check"></i>
+                                            </span>
+
+                                            <div
+                                                class=
+                                                    "destinatario-icono"
+                                            >
+                                                <i
+                                                    class=
+                                                        "fas fa-id-card"
+                                                ></i>
                                             </div>
-                                        </div>
+
+                                            <div class="nombre">
+                                                Socios con membresía activa
+                                            </div>
+
+                                            <div class="email">
+                                                Inscripción activa y fecha de
+                                                vigencia actual.
+                                            </div>
+
+                                            <span
+                                                class=
+                                                    "badge-custom badge-info"
+                                            >
+                                                <?php
+                                                echo $stats[
+                                                    'socios_membresia_activa'
+                                                ];
+                                                ?>
+                                                socios
+                                            </span>
+                                        </label>
                                     </div>
-                                    <div class="col-md-6">
-                                        <div class="destinatario-card" data-destinatario="todos_usuarios">
-                                            <div class="d-flex justify-content-between align-items-center">
-                                                <div><div class="nombre"><i class="fas fa-user-shield"></i> Todos los usuarios del sistema</div><div class="email">Usuarios activos del sistema</div></div>
-                                                <span class="badge-custom badge-aviso"><?php echo $stats['total_usuarios_activos']; ?> usuarios</span>
+
+                                    <div class="col-lg-4 col-md-6">
+                                        <label
+                                            class="destinatario-card"
+                                            data-destinatario=
+                                                "socios_membresia_activa_vencida"
+                                        >
+                                            <input
+                                                type="checkbox"
+                                                class=
+                                                    "destinatario-checkbox"
+                                                name="destinatarios[]"
+                                                value=
+                                                    "socios_membresia_activa_vencida"
+                                            >
+
+                                            <span
+                                                class=
+                                                    "destinatario-check"
+                                            >
+                                                <i class="fas fa-check"></i>
+                                            </span>
+
+                                            <div
+                                                class=
+                                                    "destinatario-icono"
+                                            >
+                                                <i class="fas fa-users"></i>
                                             </div>
-                                        </div>
+
+                                            <div class="nombre">
+                                                Socios activos y vencidos
+                                            </div>
+
+                                            <div class="email">
+                                                Incluye membresías vigentes y
+                                                membresías vencidas.
+                                            </div>
+
+                                            <span
+                                                class=
+                                                    "badge-custom badge-success"
+                                            >
+                                                <?php
+                                                echo $stats[
+                                                    'socios_membresia_activa_vencida'
+                                                ];
+                                                ?>
+                                                socios
+                                            </span>
+                                        </label>
                                     </div>
-                                    <div class="col-md-6">
-                                        <div class="destinatario-card" data-destinatario="todos_membresia_usuarios">
-                                            <div class="d-flex justify-content-between align-items-center">
-                                                <div><div class="nombre"><i class="fas fa-globe"></i> Clientes membresia activa + Usuarios activos</div><div class="email">Clientes con inscripcion activa y usuarios del sistema</div></div>
-                                                <span class="badge-custom badge-promocion"><?php echo $stats['clientes_con_membresia'] + $stats['total_usuarios_activos']; ?> personas</span>
+
+                                    <div class="col-lg-4 col-md-6">
+                                        <label
+                                            class="destinatario-card"
+                                            data-destinatario=
+                                                "usuarios_sistema"
+                                        >
+                                            <input
+                                                type="checkbox"
+                                                class=
+                                                    "destinatario-checkbox"
+                                                name="destinatarios[]"
+                                                value="usuarios_sistema"
+                                            >
+
+                                            <span
+                                                class=
+                                                    "destinatario-check"
+                                            >
+                                                <i class="fas fa-check"></i>
+                                            </span>
+
+                                            <div
+                                                class=
+                                                    "destinatario-icono"
+                                            >
+                                                <i
+                                                    class=
+                                                        "fas fa-user-shield"
+                                                ></i>
                                             </div>
-                                        </div>
+
+                                            <div class="nombre">
+                                                Usuarios del sistema
+                                            </div>
+
+                                            <div class="email">
+                                                Administradores,
+                                                recepcionistas y entrenadores
+                                                activos.
+                                            </div>
+
+                                            <span
+                                                class=
+                                                    "badge-custom badge-aviso"
+                                            >
+                                                <?php
+                                                echo $stats[
+                                                    'total_usuarios_activos'
+                                                ];
+                                                ?>
+                                                usuarios
+                                            </span>
+                                        </label>
                                     </div>
                                 </div>
-                                <input type="hidden" name="destinatarios" id="destinatarios" required>
+
+                                <div
+                                    class="destinatarios-regla"
+                                    id="destinatariosRegla"
+                                >
+                                    <i class="fas fa-circle-info"></i>
+                                    Puedes combinar una opción de socios con
+                                    “Usuarios del sistema”.
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -904,13 +1607,7 @@ $stats['notificaciones_automaticas'] = ($result_automatica && $result_automatica
                                         case 'alerta': $tipo_clase = 'alerta'; $tipo_texto = 'Alerta'; break;
                                         case 'promocion': $tipo_clase = 'promocion'; $tipo_texto = 'Promocion'; break;
                                     }
-                                    $destinatarios_texto = array(
-                                        'todos_clientes_activos' => 'Todos los clientes activos',
-                                        'clientes_membresia_activa' => 'Clientes con membresia activa',
-                                        'todos_usuarios' => 'Todos los usuarios',
-                                        'todos_membresia_usuarios' => 'Clientes membresia activa + Usuarios activos'
-                                    );
-                                    $destinatario_texto = isset($destinatarios_texto[$notif['destinatarios']]) ? $destinatarios_texto[$notif['destinatarios']] : $notif['destinatarios'];
+                $destinatario_texto = textoDestinatariosNotificacion($notif['destinatarios']);
                                 ?>
                                     <div class="notificacion-item <?php echo $tipo_clase; ?>">
                                         <div class="titulo"><?php echo htmlspecialchars($notif['titulo']); ?><span class="badge-custom badge-<?php echo $tipo_clase; ?> float-right"><?php echo $tipo_texto; ?></span></div>
@@ -1129,34 +1826,230 @@ $stats['notificaciones_automaticas'] = ($result_automatica && $result_automatica
             cargarAutomaticas('', 1);
         });
         
-        // Seleccion de destinatarios
-        var destinatarioSeleccionado = null;
-        $('.destinatario-card').on('click', function() {
-            $('.destinatario-card').removeClass('selected');
-            $(this).addClass('selected');
-            destinatarioSeleccionado = $(this).data('destinatario');
-            $('#destinatarios').val(destinatarioSeleccionado);
-        });
-        
+        // Selección de destinatarios
+        const GRUPO_SOCIOS_ACTIVOS =
+            'socios_membresia_activa';
+
+        const GRUPO_SOCIOS_ACTIVOS_VENCIDOS =
+            'socios_membresia_activa_vencida';
+
+        const MAXIMO_GRUPOS = 2;
+
+        function obtenerDestinatariosSeleccionados() {
+            return $('.destinatario-checkbox:checked')
+                .map(function() {
+                    return $(this).val();
+                })
+                .get();
+        }
+
+        function actualizarEstadoDestinatarios() {
+            const seleccionados =
+                obtenerDestinatariosSeleccionados();
+
+            const seleccionoActivos =
+                seleccionados.includes(
+                    GRUPO_SOCIOS_ACTIVOS
+                );
+
+            const seleccionoActivosVencidos =
+                seleccionados.includes(
+                    GRUPO_SOCIOS_ACTIVOS_VENCIDOS
+                );
+
+            $('.destinatario-card').each(function() {
+                const $card = $(this);
+                const $checkbox =
+                    $card.find('.destinatario-checkbox');
+
+                const valor = $checkbox.val();
+                const seleccionado =
+                    $checkbox.is(':checked');
+
+                let bloquear = false;
+
+                if (
+                    seleccionoActivos &&
+                    valor ===
+                        GRUPO_SOCIOS_ACTIVOS_VENCIDOS &&
+                    !seleccionado
+                ) {
+                    bloquear = true;
+                }
+
+                if (
+                    seleccionoActivosVencidos &&
+                    valor === GRUPO_SOCIOS_ACTIVOS &&
+                    !seleccionado
+                ) {
+                    bloquear = true;
+                }
+
+                if (
+                    seleccionados.length >= MAXIMO_GRUPOS &&
+                    !seleccionado
+                ) {
+                    bloquear = true;
+                }
+
+                $checkbox.prop('disabled', bloquear);
+                $card.toggleClass('selected', seleccionado);
+                $card.toggleClass('disabled', bloquear);
+            });
+
+            $('#seleccionContador').text(
+                seleccionados.length +
+                ' de ' +
+                MAXIMO_GRUPOS +
+                ' seleccionados'
+            );
+
+            let mensaje =
+                'Puedes combinar una opción de socios con ' +
+                '“Usuarios del sistema”.';
+
+            if (seleccionoActivos) {
+                mensaje =
+                    '“Socios activos y vencidos” se bloqueó ' +
+                    'porque seleccionaste socios con membresía activa.';
+            }
+
+            if (seleccionoActivosVencidos) {
+                mensaje =
+                    '“Socios con membresía activa” se bloqueó ' +
+                    'porque seleccionaste socios activos y vencidos.';
+            }
+
+            if (seleccionados.length >= MAXIMO_GRUPOS) {
+                mensaje =
+                    'Alcanzaste el máximo de dos grupos. ' +
+                    'Deselecciona uno para cambiarlo.';
+            }
+
+            $('#destinatariosRegla').html(
+                '<i class="fas fa-circle-info"></i>' +
+                mensaje
+            );
+        }
+
+        $('.destinatario-checkbox').on(
+            'change',
+            function() {
+                let seleccionados =
+                    obtenerDestinatariosSeleccionados();
+
+                if (
+                    seleccionados.length >
+                    MAXIMO_GRUPOS
+                ) {
+                    $(this).prop('checked', false);
+
+                    Swal.fire({
+                        icon: 'info',
+                        title: 'Máximo dos grupos',
+                        text:
+                            'Solo puedes seleccionar hasta ' +
+                            'dos grupos de destinatarios.',
+                        confirmButtonColor: '#3478c7'
+                    });
+                }
+
+                seleccionados =
+                    obtenerDestinatariosSeleccionados();
+
+                if (
+                    seleccionados.includes(
+                        GRUPO_SOCIOS_ACTIVOS
+                    ) &&
+                    seleccionados.includes(
+                        GRUPO_SOCIOS_ACTIVOS_VENCIDOS
+                    )
+                ) {
+                    $(this).prop('checked', false);
+
+                    Swal.fire({
+                        icon: 'info',
+                        title: 'Opciones incompatibles',
+                        text:
+                            'Las dos opciones de socios no ' +
+                            'pueden seleccionarse al mismo tiempo.',
+                        confirmButtonColor: '#3478c7'
+                    });
+                }
+
+                actualizarEstadoDestinatarios();
+            }
+        );
+
+        actualizarEstadoDestinatarios();
+
         // Envio de formulario
         $('#formNotificacion').on('submit', function(e) {
             e.preventDefault();
             var titulo = $('#titulo').val();
             var mensaje = $('#mensaje').val();
-            var destinatarios = $('#destinatarios').val();
+
+            var destinatarios =
+                obtenerDestinatariosSeleccionados();
             
             if (!titulo || !mensaje) {
                 Swal.fire({ icon: 'error', title: 'Campos incompletos', text: 'Por favor completa el titulo y el mensaje' });
                 return;
             }
-            if (!destinatarios) {
-                Swal.fire({ icon: 'error', title: 'Selecciona destinatarios', text: 'Por favor selecciona un grupo de destinatarios' });
+            if (destinatarios.length === 0) {
+                Swal.fire({
+                    icon: 'error',
+                    title: 'Selecciona destinatarios',
+                    text:
+                        'Selecciona por lo menos un grupo ' +
+                        'de destinatarios.'
+                });
                 return;
             }
-            
+
+            if (destinatarios.length > 2) {
+                Swal.fire({
+                    icon: 'error',
+                    title: 'Demasiados grupos',
+                    text:
+                        'Solo puedes seleccionar hasta dos grupos.'
+                });
+                return;
+            }
+
+            const nombresDestinatarios =
+                $('.destinatario-checkbox:checked')
+                    .map(function() {
+                        return $(this)
+                            .closest('.destinatario-card')
+                            .find('.nombre')
+                            .text()
+                            .trim();
+                    })
+                    .get();
+
+            const listaDestinatarios =
+                nombresDestinatarios
+                    .map(function(nombre) {
+                        return '<li>' +
+                            $('<div>')
+                                .text(nombre)
+                                .html() +
+                            '</li>';
+                    })
+                    .join('');
+
             Swal.fire({
-                title: 'Enviar notificacion por correo?',
-                html: '<p><strong>Destinatarios:</strong> ' + $('.destinatario-card.selected .nombre').text() + '</p>',
+                title: '¿Enviar notificación por correo?',
+                html:
+                    '<div style="text-align:left;">' +
+                        '<p style="margin-bottom:7px;">' +
+                            '<strong>Destinatarios:</strong>' +
+                        '</p>' +
+                        '<ul style="margin:0;padding-left:20px;">' +
+                            listaDestinatarios +
+                        '</ul>' +
+                    '</div>',
                 icon: 'question', showCancelButton: true, confirmButtonText: 'Si, enviar', cancelButtonText: 'Cancelar'
             }).then((result) => {
                 if (result.isConfirmed) {

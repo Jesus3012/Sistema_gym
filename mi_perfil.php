@@ -1,7 +1,4 @@
 <?php
-// Archivo: mi_perfil.php
-// Perfil de usuario - Versión completa
-
 session_start();
 
 if (!isset($_SESSION['user_id'])) {
@@ -9,7 +6,6 @@ if (!isset($_SESSION['user_id'])) {
     exit();
 }
 
-require_once 'includes/sidebar.php';
 require_once 'config/database.php';
 
 $database = new Database();
@@ -41,9 +37,8 @@ $icono_orden = $orden === 'asc' ? 'fa-sort-amount-up' : 'fa-sort-amount-down';
 $texto_orden = $orden === 'asc' ? 'Más antiguos primero' : 'Más recientes primero';
 
 // Paginación para actividad reciente
-$pagina = isset($_GET['page']) ? (int)$_GET['page'] : 1;
+$pagina = max(1, isset($_GET['page']) ? (int) $_GET['page'] : 1);
 $por_pagina = 5;
-$offset = ($pagina - 1) * $por_pagina;
 
 // Obtener total de actividades
 $total_query = "SELECT COUNT(*) as total FROM (
@@ -55,7 +50,9 @@ $stmt_total = $conn->prepare($total_query);
 $stmt_total->bind_param("ii", $user_id, $user_id);
 $stmt_total->execute();
 $total_actividades = $stmt_total->get_result()->fetch_assoc()['total'];
-$total_paginas = ceil($total_actividades / $por_pagina);
+$total_paginas = max(1, (int) ceil($total_actividades / $por_pagina));
+$pagina = min($pagina, $total_paginas);
+$offset = ($pagina - 1) * $por_pagina;
 
 // Obtener actividades con paginación y orden
 $actividades_query = "SELECT * FROM (
@@ -184,458 +181,18 @@ $avatar_url = !empty($user['foto_perfil']) && file_exists($user['foto_perfil'])
     <title>Mi Perfil - Ego Gym</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            background: #f0f2f5;
-            font-family: 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-        }
-
-        .main-content {
-            margin-left: 280px;
-            padding: 25px;
-            min-height: 100vh;
-            transition: all 0.3s;
-        }
-
-        @media (max-width: 768px) {
-            .main-content {
-                margin-left: 0;
-                padding: 80px 15px 15px 15px;
-            }
-        }
-
-        .profile-cover {
-            background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
-            border-radius: 20px;
-            margin-bottom: 30px;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .profile-cover-img {
-            height: 120px;
-            background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
-            opacity: 0.3;
-        }
-
-        .profile-avatar {
-            position: absolute;
-            bottom: -50px;
-            left: 30px;
-            cursor: pointer;
-            transition: transform 0.2s;
-        }
-
-        .profile-avatar:hover {
-            transform: scale(1.05);
-        }
-
-        .profile-avatar img {
-            width: 120px;
-            height: 120px;
-            border-radius: 50%;
-            object-fit: cover;
-            border: 4px solid #ffffff;
-            background: #ffffff;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
-        }
-
-        .profile-name {
-            position: absolute;
-            bottom: 15px;
-            left: 180px;
-            color: #ffffff;
-        }
-
-        .profile-name h2 {
-            font-size: 1.5rem;
-            margin-bottom: 5px;
-        }
-
-        .profile-name p {
-            font-size: 0.8rem;
-            opacity: 0.9;
-        }
-
-        .edit-avatar-hint {
-            position: absolute;
-            bottom: -50px;
-            left: 100px;
-            background: rgba(0,0,0,0.6);
-            color: white;
-            border-radius: 20px;
-            padding: 4px 10px;
-            font-size: 0.7rem;
-            white-space: nowrap;
-            pointer-events: none;
-        }
-
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-            gap: 20px;
-            margin-bottom: 30px;
-        }
-
-        .stat-card {
-            background: #ffffff;
-            border-radius: 16px;
-            padding: 20px;
-            display: flex;
-            align-items: center;
-            gap: 15px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-            transition: all 0.3s;
-            cursor: pointer;
-        }
-
-        .stat-card:hover {
-            transform: translateY(-3px);
-            box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1);
-        }
-
-        .stat-icon {
-            width: 50px;
-            height: 50px;
-            background: #e0f2fe;
-            border-radius: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .stat-icon i {
-            font-size: 1.5rem;
-            color: #3b82f6;
-        }
-
-        .stat-info h3 {
-            font-size: 1.5rem;
-            font-weight: 700;
-            color: #1e293b;
-        }
-
-        .stat-info p {
-            font-size: 0.75rem;
-            color: #64748b;
-        }
-
-        .profile-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 25px;
-        }
-
-        @media (max-width: 768px) {
-            .profile-grid {
-                grid-template-columns: 1fr;
-            }
-        }
-
-        .info-card {
-            background: #ffffff;
-            border-radius: 16px;
-            overflow: hidden;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-        }
-
-        .card-header {
-            padding: 18px 20px;
-            background: #f8fafc;
-            border-bottom: 1px solid #e2e8f0;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        .card-header i {
-            font-size: 1.2rem;
-            color: #3b82f6;
-        }
-
-        .card-header h3 {
-            font-size: 1rem;
-            font-weight: 600;
-            color: #1e293b;
-            margin: 0;
-        }
-
-        .card-body {
-            padding: 20px;
-        }
-
-        .form-group {
-            margin-bottom: 15px;
-        }
-
-        .form-group label {
-            display: block;
-            font-size: 0.8rem;
-            color: #64748b;
-            margin-bottom: 5px;
-        }
-
-        .password-input-wrapper {
-            position: relative;
-            display: flex;
-            align-items: center;
-        }
-
-        .password-input-wrapper input {
-            width: 100%;
-            padding: 10px;
-            padding-right: 40px;
-            border: 1px solid #e2e8f0;
-            border-radius: 8px;
-            font-size: 0.9rem;
-            transition: all 0.3s;
-        }
-
-        .password-input-wrapper input:focus {
-            outline: none;
-            border-color: #3b82f6;
-            box-shadow: 0 0 0 3px rgba(59,130,246,0.1);
-        }
-
-        .toggle-password {
-            position: absolute;
-            right: 12px;
-            cursor: pointer;
-            color: #64748b;
-            background: none;
-            border: none;
-            font-size: 1rem;
-        }
-
-        .toggle-password:hover {
-            color: #3b82f6;
-        }
-
-        .form-group input {
-            width: 100%;
-            padding: 10px;
-            border: 1px solid #e2e8f0;
-            border-radius: 8px;
-            font-size: 0.9rem;
-            transition: all 0.3s;
-        }
-
-        .form-group input:focus {
-            outline: none;
-            border-color: #3b82f6;
-            box-shadow: 0 0 0 3px rgba(59,130,246,0.1);
-        }
-
-        .password-match {
-            font-size: 0.7rem;
-            margin-top: 5px;
-            display: flex;
-            align-items: center;
-            gap: 5px;
-        }
-
-        .password-match.valid {
-            color: #10b981;
-        }
-
-        .password-match.invalid {
-            color: #ef4444;
-        }
-
-        .btn-action {
-            width: 100%;
-            padding: 12px;
-            background: #3b82f6;
-            color: #ffffff;
-            border: none;
-            border-radius: 10px;
-            font-size: 0.9rem;
-            font-weight: 600;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-            transition: all 0.3s;
-        }
-
-        .btn-action:hover {
-            background: #2563eb;
-            transform: translateY(-2px);
-        }
-
-        .btn-export {
-            background: #10b981;
-        }
-
-        .btn-export:hover {
-            background: #059669;
-        }
-
-        .btn-session {
-            background: #8b5cf6;
-        }
-
-        .btn-session:hover {
-            background: #7c3aed;
-        }
-
-        .acciones-buttons {
-            display: flex;
-            gap: 10px;
-            margin-top: 10px;
-        }
-
-        .acciones-buttons .btn-action {
-            flex: 1;
-            margin-top: 0;
-        }
-
-        .orden-btn {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            padding: 8px 16px;
-            background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
-            color: white;
-            border: none;
-            border-radius: 10px;
-            cursor: pointer;
-            font-size: 0.8rem;
-            font-weight: 600;
-            transition: all 0.2s;
-            margin-bottom: 15px;
-            box-shadow: 0 2px 5px rgba(59,130,246,0.3);
-        }
-
-        .orden-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 10px rgba(59,130,246,0.4);
-        }
-
-        .actividad-item {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            padding: 12px 0;
-            border-bottom: 1px solid #e2e8f0;
-        }
-
-        .actividad-item:last-child {
-            border-bottom: none;
-        }
-
-        .actividad-icon {
-            width: 35px;
-            height: 35px;
-            background: #f1f5f9;
-            border-radius: 10px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .actividad-icon i {
-            font-size: 1rem;
-        }
-
-        .actividad-info {
-            flex: 1;
-        }
-
-        .actividad-titulo {
-            font-size: 0.85rem;
-            font-weight: 600;
-            color: #1e293b;
-        }
-
-        .actividad-fecha {
-            font-size: 0.7rem;
-            color: #94a3b8;
-        }
-
-        .actividad-monto {
-            font-size: 0.85rem;
-            font-weight: 600;
-            color: #16a34a;
-        }
-
-        .empty-actividades {
-            text-align: center;
-            padding: 30px;
-            color: #94a3b8;
-        }
-
-        .pagination {
-            display: flex;
-            justify-content: center;
-            gap: 8px;
-            margin-top: 20px;
-            padding-top: 15px;
-            border-top: 1px solid #e2e8f0;
-            flex-wrap: wrap;
-        }
-
-        .pagination button {
-            padding: 6px 12px;
-            border: 1px solid #e2e8f0;
-            background: white;
-            border-radius: 6px;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-
-        .pagination button:hover:not(:disabled),
-        .pagination button.active {
-            background: #3b82f6;
-            color: white;
-            border-color: #3b82f6;
-        }
-
-        .pagination button:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-
-        .password-strength {
-            margin-top: 8px;
-            height: 4px;
-            background: #e2e8f0;
-            border-radius: 4px;
-            overflow: hidden;
-        }
-
-        .password-strength-bar {
-            height: 100%;
-            width: 0%;
-            transition: all 0.3s;
-        }
-
-        .strength-weak { background: #ef4444; width: 33%; }
-        .strength-medium { background: #f59e0b; width: 66%; }
-        .strength-strong { background: #10b981; width: 100%; }
-
-        .password-hint {
-            font-size: 0.7rem;
-            color: #64748b;
-            margin-top: 5px;
-        }
-    </style>
+    <link rel="stylesheet" href="css/mi_perfil.css?v=1.0.0">
 </head>
-<body>  
-    <div class="main-content">
+<body>
+    <?php include 'includes/sidebar.php'; ?>
+
+    <main class="main-content" id="contenido-principal">
         <!-- Cover y avatar -->
-        <div class="profile-cover">
+        <section class="profile-cover" aria-label="Resumen del perfil">
             <div class="profile-cover-img"></div>
-            <div class="profile-avatar" onclick="cambiarFotoPerfil()">
+            <button type="button" class="profile-avatar" onclick="cambiarFotoPerfil()" aria-label="Cambiar foto de perfil">
                 <img id="avatar-img" src="<?php echo $avatar_url; ?>" alt="Avatar" onerror="this.src='https://ui-avatars.com/api/?background=3b82f6&color=fff&bold=true&size=120&name=<?php echo urlencode($user['nombre']); ?>'">
-            </div>
+            </button>
             <div class="edit-avatar-hint">
                 <i class="fas fa-camera"></i> Click para cambiar foto
             </div>
@@ -643,10 +200,10 @@ $avatar_url = !empty($user['foto_perfil']) && file_exists($user['foto_perfil'])
                 <h2><?php echo htmlspecialchars($user['nombre']); ?></h2>
                 <p><i class="fas fa-envelope"></i> <?php echo htmlspecialchars($user['email']); ?></p>
             </div>
-        </div>
+        </section>
 
         <!-- Estadísticas -->
-        <div class="stats-grid">
+        <section class="stats-grid" aria-label="Estadísticas del usuario">
             <div class="stat-card" onclick="cambiarPagina(1)">
                 <div class="stat-icon"><i class="fas fa-shopping-cart"></i></div>
                 <div class="stat-info">
@@ -675,7 +232,7 @@ $avatar_url = !empty($user['foto_perfil']) && file_exists($user['foto_perfil'])
                     <p>Miembro desde</p>
                 </div>
             </div>
-        </div>
+        </section>
 
         <!-- Grid de información -->
         <div class="profile-grid">
@@ -699,7 +256,7 @@ $avatar_url = !empty($user['foto_perfil']) && file_exists($user['foto_perfil'])
                         <input type="text" value="<?php 
                             $roles = ['admin' => 'Administrador', 'recepcionista' => 'Recepcionista', 'entrenador' => 'Entrenador'];
                             echo $roles[$user['rol']] ?? $user['rol'];
-                        ?>" disabled style="background: #f1f5f9;">
+                        ?>" disabled class="readonly-input">
                     </div>
                     <button type="button" class="btn-action" onclick="actualizarPerfil()">
                         <i class="fas fa-save"></i> Actualizar Datos
@@ -742,10 +299,10 @@ $avatar_url = !empty($user['foto_perfil']) && file_exists($user['foto_perfil'])
                     </button>
                     
                     <div class="acciones-buttons">
-                        <button class="btn-action btn-export" onclick="exportarActividad()">
+                        <button type="button" class="btn-action btn-export" onclick="exportarActividad()">
                             <i class="fas fa-download"></i> Exportar
                         </button>
-                        <button class="btn-action btn-session" onclick="verSesiones()">
+                        <button type="button" class="btn-action btn-session" onclick="verSesiones()">
                             <i class="fas fa-history"></i> Sesiones
                         </button>
                     </div>
@@ -753,14 +310,14 @@ $avatar_url = !empty($user['foto_perfil']) && file_exists($user['foto_perfil'])
             </div>
 
             <!-- Actividad reciente con paginación y orden -->
-            <div class="info-card" style="grid-column: span 2;">
+            <div class="info-card activity-card">
                 <div class="card-header">
                     <i class="fas fa-clock"></i>
                     <h3>Actividad Reciente</h3>
                 </div>
                 <div class="card-body">
-                    <div style="display: flex; justify-content: flex-end; margin-bottom: 10px;">
-                        <button class="orden-btn" onclick="cambiarOrden()">
+                    <div class="activity-toolbar">
+                        <button type="button" class="orden-btn" onclick="cambiarOrden()">
                             <i class="fas <?php echo $icono_orden; ?>"></i>
                             <?php echo $texto_orden; ?>
                         </button>
@@ -770,13 +327,13 @@ $avatar_url = !empty($user['foto_perfil']) && file_exists($user['foto_perfil'])
                         <?php while ($act = $actividades->fetch_assoc()): ?>
                             <div class="actividad-item">
                                 <div class="actividad-icon">
-                                    <i class="fas <?php echo $act['tipo'] == 'venta' ? 'fa-shopping-cart' : 'fa-fingerprint'; ?>" style="color: #3b82f6;"></i>
+                                    <i class="fas <?php echo $act['tipo'] == 'venta' ? 'fa-shopping-cart' : 'fa-fingerprint'; ?>" ></i>
                                 </div>
                                 <div class="actividad-info">
                                     <div class="actividad-titulo">
                                         <?php echo $act['tipo'] == 'venta' ? 'Venta realizada' : 'Asistencia registrada'; ?>
                                         <?php if ($act['tipo'] == 'venta'): ?>
-                                            <span style="font-size: 0.7rem; color: #64748b;">#<?php echo str_pad($act['id'], 8, '0', STR_PAD_LEFT); ?></span>
+                                            <span class="actividad-folio">#<?php echo str_pad($act['id'], 8, '0', STR_PAD_LEFT); ?></span>
                                         <?php endif; ?>
                                     </div>
                                     <div class="actividad-fecha">
@@ -818,14 +375,14 @@ $avatar_url = !empty($user['foto_perfil']) && file_exists($user['foto_perfil'])
                         <?php endif; ?>
                     <?php else: ?>
                         <div class="empty-actividades">
-                            <i class="fas fa-inbox" style="font-size: 2rem; margin-bottom: 10px;"></i>
+                            <i class="fas fa-inbox" class="empty-icon"></i>
                             <p>No hay actividad reciente</p>
                         </div>
                     <?php endif; ?>
                 </div>
             </div>
         </div>
-    </div>
+    </main>
 
     <form id="uploadFotoForm" method="POST" enctype="multipart/form-data" style="display: none;">
         <input type="file" id="foto_input" name="foto_perfil" accept="image/*">

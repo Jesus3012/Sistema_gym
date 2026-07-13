@@ -1,139 +1,21 @@
 <?php
 // Archivo: includes/sidebar.php
-// Sidebar reutilizable para todos los módulos
+// Componente visual del sidebar. La protección de rutas se realiza en auth_guard.php.
 
-// Asegurar que la sesión está iniciada
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
-// Verificar si el usuario está logueado
-if (!isset($_SESSION['user_id'])) {
-    header("Location: login.php");
-    exit();
+// auth_guard.php debe ejecutarse antes. Este retorno evita imprimir el sidebar
+// si por error se incluye sin una sesión válida.
+if (empty($_SESSION['user_id'])) {
+    return;
 }
 
-/* ============================================================
-   PROTECCIÓN DE RUTAS POR ROL
-   ------------------------------------------------------------
-   Esta validación se ejecuta en el servidor. No solo oculta los
-   enlaces del sidebar: también impide entrar escribiendo la URL.
+$user_rol = strtolower(trim((string) ($_SESSION['user_rol'] ?? 'recepcionista')));
+$current_page = basename((string) ($_SERVER['PHP_SELF'] ?? ''));
 
-   IMPORTANTE: este archivo debe cargarse antes de imprimir HTML
-   y antes de ejecutar acciones sensibles en cada módulo.
-   ============================================================ */
-$user_rol = strtolower(trim((string) ($_SESSION['user_rol'] ?? '')));
-$current_page = basename(parse_url($_SERVER['PHP_SELF'] ?? '', PHP_URL_PATH));
-
-$rutas_permitidas_por_rol = [
-    'admin' => [
-        'dashboard.php',
-        'productos.php',
-        'historial_stock.php',
-        'ventas.php',
-        'historial_ventas.php',
-        'inscripciones.php',
-        'asistencias.php',
-        'clases.php',
-        'inscripciones_clases.php',
-        'reportes.php',
-        'notificaciones.php',
-        'configuracion.php',
-        'mi_perfil.php',
-    ],
-    'recepcionista' => [
-        'dashboard.php',
-        'inscripciones.php',
-        'asistencias.php',
-        'reportes.php',
-        'ventas.php',
-        'historial_ventas.php',
-        'mi_perfil.php',
-    ],
-    'entrenador' => [
-        'dashboard.php',
-        'clases.php',
-        'inscripciones_clases.php',
-        'asistencias.php',
-        'mi_perfil.php',
-    ],
-];
-
-// Si el rol guardado en la sesión no existe, cerrar la sesión.
-if (!array_key_exists($user_rol, $rutas_permitidas_por_rol)) {
-    $_SESSION = [];
-
-    if (ini_get('session.use_cookies')) {
-        $params = session_get_cookie_params();
-        setcookie(
-            session_name(),
-            '',
-            time() - 42000,
-            $params['path'],
-            $params['domain'],
-            $params['secure'],
-            $params['httponly']
-        );
-    }
-
-    session_destroy();
-    header('Location: login.php?error=rol_invalido');
-    exit();
-}
-
-/* ============================================================
-   MENSAJE AMIGABLE PARA ACCESO DENEGADO
-   ============================================================ */
-$nombres_roles = [
-    'admin' => 'Administrador',
-    'recepcionista' => 'Recepcionista',
-    'entrenador' => 'Entrenador',
-];
-
-$nombres_modulos = [
-    'dashboard.php' => 'Dashboard',
-    'productos.php' => 'Productos',
-    'historial_stock.php' => 'Historial de stock',
-    'ventas.php' => 'Venta de productos',
-    'historial_ventas.php' => 'Historial de ventas',
-    'inscripciones.php' => 'Inscripciones',
-    'asistencias.php' => 'Asistencias',
-    'clases.php' => 'Clases',
-    'inscripciones_clases.php' => 'Inscripciones a clases',
-    'reportes.php' => 'Reportes',
-    'notificaciones.php' => 'Notificaciones',
-    'configuracion.php' => 'Configuración',
-    'mi_perfil.php' => 'Mi perfil',
-];
-
-// Seguridad por defecto: toda página no registrada queda bloqueada.
-if (!in_array($current_page, $rutas_permitidas_por_rol[$user_rol], true)) {
-    $nombre_rol = $nombres_roles[$user_rol] ?? ucfirst($user_rol);
-    $nombre_modulo = $nombres_modulos[$current_page] ?? 'este módulo';
-
-    // Mensaje flash: se mostrará una sola vez al regresar al dashboard.
-    $_SESSION['alerta_acceso_denegado'] = [
-        'titulo' => 'Acceso restringido',
-        'mensaje' => "Tu perfil de {$nombre_rol} no tiene permiso para ingresar al módulo {$nombre_modulo}.",
-        'rol' => $nombre_rol,
-        'modulo' => $nombre_modulo,
-    ];
-
-    $destino = 'dashboard.php';
-
-    // Redirección normal cuando todavía no se ha enviado HTML.
-    if (!headers_sent()) {
-        header('Location: ' . $destino);
-    } else {
-        // Respaldo para evitar el warning de headers si el sidebar fue incluido tarde.
-        echo '<script>window.location.replace(' . json_encode($destino) . ');</script>';
-        echo '<noscript><meta http-equiv="refresh" content="0;url=' . htmlspecialchars($destino, ENT_QUOTES, 'UTF-8') . '"></noscript>';
-    }
-
-    exit();
-}
-
-// Recuperar la alerta únicamente en el dashboard y eliminarla de la sesión.
+// Recuperar una alerta de acceso denegado únicamente en el dashboard.
 $alerta_acceso_denegado = null;
 if ($current_page === 'dashboard.php' && isset($_SESSION['alerta_acceso_denegado'])) {
     $alerta_acceso_denegado = $_SESSION['alerta_acceso_denegado'];
@@ -193,6 +75,7 @@ if ($current_page == 'reportes.php') $active_module = 'reports';
 if ($current_page == 'notificaciones.php') $active_module = 'notificaciones';
 if ($current_page == 'configuracion.php') $active_module = 'settings';
 if ($current_page == 'mi_perfil.php') $active_module = 'perfil';
+if ($current_page == 'corte_caja.php' || $current_page == 'corte_caja_detalle.php') $active_module = 'corte_caja';
 
 // Obtener datos del usuario desde la sesión
 $user_name = isset($_SESSION['user_name']) ? $_SESSION['user_name'] : 'Usuario';
@@ -995,6 +878,12 @@ body.sidebar-collapsed .main-content {
                     </li>
                 <?php endif; ?>
                 <li class="nav-item">
+                    <a href="corte_caja.php" class="nav-link <?php echo $active_module == 'corte_caja' ? 'active' : ''; ?>">
+                        <i class="fas fa-cash-register"></i>
+                        <span class="nav-text">Corte de Caja</span>
+                    </a>
+                </li>
+                <li class="nav-item">
                     <a href="inscripciones.php" class="nav-link <?php echo $active_module == 'inscriptions' ? 'active' : ''; ?>">
                         <i class="fas fa-users"></i>
                         <span class="nav-text">Inscripciones</span>
@@ -1078,6 +967,12 @@ body.sidebar-collapsed .main-content {
                     </a>
                 </li>
                 <?php endif; ?>
+                <li class="nav-item">
+                    <a href="corte_caja.php" class="nav-link <?php echo $active_module == 'corte_caja' ? 'active' : ''; ?>">
+                        <i class="fas fa-cash-register"></i>
+                        <span class="nav-text">Corte de Caja</span>
+                    </a>
+                </li>
                 
             <?php elseif ($user_rol == 'entrenador'): ?>
                 <!-- ENTRENADOR: Solo clases, inscripciones a clases y asistencias -->

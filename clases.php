@@ -120,7 +120,7 @@ if (isset($_GET['eliminar']) && is_numeric($_GET['eliminar'])) {
 // Obtener listado de clases
 $search = isset($_GET['search']) ? $_GET['search'] : '';
 $estado = isset($_GET['estado']) ? $_GET['estado'] : '';
-$page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
+$page = max(1, isset($_GET['page']) ? (int)$_GET['page'] : 1);
 $sort = isset($_GET['sort']) ? $_GET['sort'] : 'id';
 $order = isset($_GET['order']) ? $_GET['order'] : 'DESC';
 $limit = 10;
@@ -186,7 +186,7 @@ if (!empty($count_params)) {
 $stmt_count->execute();
 $total_result = $stmt_count->get_result();
 $total_rows = $total_result->fetch_assoc()['total'];
-$total_pages = ceil($total_rows / $limit);
+$total_pages = max(1, (int) ceil($total_rows / $limit));
 ?>
 
 <!DOCTYPE html>
@@ -198,189 +198,32 @@ $total_pages = ceil($total_rows / $limit);
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css">
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
-        body {
-            background: #f4f6f9;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        }
-        
-        .sidebar {
-            position: fixed;
-            left: 0;
-            top: 0;
-            width: 260px;
-            height: 100vh;
-            background: #1e3a8a;
-            color: white;
-            z-index: 1000;
-            overflow-y: auto;
-        }
-        
-        .main-content {
-            margin-left: 260px;
-            padding: 20px;
-            min-height: 100vh;
-        }
-        
-        .card-custom {
-            background: white;
-            border-radius: 8px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-            margin-bottom: 20px;
-        }
-        
-        .card-header-custom {
-            background: #1e3a8a;
-            color: white;
-            padding: 12px 20px;
-            border-radius: 8px 8px 0 0;
-            font-weight: 600;
-        }
-        
-        .card-body-custom {
-            padding: 20px;
-        }
-        
-        .btn-custom-primary {
-            background: #1e3a8a;
-            color: white;
-            border: none;
-            padding: 8px 20px;
-            border-radius: 5px;
-            cursor: pointer;
-            transition: all 0.2s ease;
-        }
-        
-        .btn-custom-primary:hover {
-            background: #152c6b;
-            transform: translateY(-1px);
-        }
-        
-        .btn-accion {
-            display: inline-flex;
-            align-items: center;
-            gap: 5px;
-            padding: 6px 12px;
-            border: none;
-            border-radius: 4px;
-            font-size: 12px;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all 0.2s ease;
-        }
-        
-        .btn-editar {
-            background: #3b82f6;
-            color: white;
-        }
-        
-        .btn-editar:hover {
-            background: #2563eb;
-        }
-        
-        .btn-eliminar {
-            background: #dc2626;
-            color: white;
-        }
-        
-        .btn-eliminar:hover {
-            background: #b91c1c;
-        }
-        
-        .badge-activa {
-            background: #10b981;
-            color: white;
-            padding: 4px 10px;
-            border-radius: 4px;
-            font-size: 12px;
-        }
-        
-        .badge-inactiva {
-            background: #6b7280;
-            color: white;
-            padding: 4px 10px;
-            border-radius: 4px;
-            font-size: 12px;
-        }
-        
-        .table-simple {
-            width: 100%;
-            background: white;
-            border-collapse: collapse;
-        }
-        
-        .table-simple th,
-        .table-simple td {
-            padding: 12px;
-            text-align: left;
-            border-bottom: 1px solid #e0e0e0;
-            vertical-align: middle;
-        }
-        
-        .table-simple th {
-            background: #f8f9fa;
-            font-weight: 600;
-            color: #333;
-        }
-        
-        .table-simple tr:hover {
-            background: #f8f9fa;
-        }
-        
-        .pagination {
-            margin-top: 20px;
-            justify-content: center;
-        }
-        
-        .page-link {
-            color: #1e3a8a;
-            cursor: pointer;
-        }
-        
-        .page-item.active .page-link {
-            background-color: #1e3a8a;
-            border-color: #1e3a8a;
-        }
-        
-        @media (max-width: 768px) {
-            .sidebar {
-                transform: translateX(-100%);
-                transition: transform 0.3s ease;
-            }
-            
-            .sidebar.open {
-                transform: translateX(0);
-            }
-            
-            .main-content {
-                margin-left: 0;
-            }
-            
-            .table-simple th,
-            .table-simple td {
-                padding: 8px;
-                font-size: 12px;
-            }
-        }
-    </style>
+    <link rel="stylesheet" href="css/clases.css?v=2.0.0">
 </head>
 <body>
     <?php include 'includes/sidebar.php'; ?>
     
     <div class="main-content">
-        <div class="mb-4">
-            <h2>Gestión de Clases</h2>
+        <div class="page-header">
+            <div>
+                <h2>Gestión de Clases</h2>
+                <p>Administra horarios, instructores, cupos y estado de cada clase.</p>
+            </div>
+
+            <button
+                class="btn-custom-primary"
+                type="button"
+                data-bs-toggle="modal"
+                data-bs-target="#modalNuevaClase"
+            >
+                <i class="fas fa-plus-circle"></i>
+                Nueva Clase
+            </button>
         </div>
         
         <!-- Alertas -->
         <?php if(isset($_SESSION['mensaje_exito'])): ?>
-        <div class="alert alert-success alert-dismissible fade show" role="alert">
+        <div class="alert alert-success alert-dismissible fade show app-alert" role="alert">
             <?php 
             echo $_SESSION['mensaje_exito'];
             unset($_SESSION['mensaje_exito']);
@@ -390,7 +233,7 @@ $total_pages = ceil($total_rows / $limit);
         <?php endif; ?>
         
         <?php if(isset($_SESSION['error'])): ?>
-        <div class="alert alert-danger alert-dismissible fade show" role="alert">
+        <div class="alert alert-danger alert-dismissible fade show app-alert" role="alert">
             <?php 
             echo $_SESSION['error'];
             unset($_SESSION['error']);
@@ -399,25 +242,31 @@ $total_pages = ceil($total_rows / $limit);
         </div>
         <?php endif; ?>
         
-        <!-- Botón Nueva Clase -->
-        <div class="mb-3">
-            <button class="btn-custom-primary" data-bs-toggle="modal" data-bs-target="#modalNuevaClase">
-                <i class="fas fa-plus-circle"></i> Nueva Clase
-            </button>
-        </div>
         
         <!-- Filtros -->
         <div class="card-custom">
-            <div class="card-header-custom">
-                <i class="fas fa-filter"></i> Filtros de Búsqueda
+            <div class="card-header-custom card-header-flex">
+                <span>
+                    <i class="fas fa-filter"></i>
+                    Filtros de Búsqueda
+                </span>
+
+                <button
+                    type="button"
+                    class="btn-limpiar"
+                    id="limpiarFiltros"
+                >
+                    <i class="fas fa-eraser"></i>
+                    Limpiar
+                </button>
             </div>
             <div class="card-body-custom">
                 <div class="row">
-                    <div class="col-md-6 mb-3">
+                    <div class="col-lg-8 mb-3 mb-lg-0">
                         <label class="form-label">Buscar</label>
                         <input type="text" class="form-control" id="searchInput" placeholder="Nombre, instructor o horario..." value="<?php echo htmlspecialchars($search); ?>">
                     </div>
-                    <div class="col-md-4 mb-3">
+                    <div class="col-lg-4">
                         <label class="form-label">Estado</label>
                         <select class="form-select" id="estadoSelect">
                             <option value="">Todos</option>
@@ -425,24 +274,27 @@ $total_pages = ceil($total_rows / $limit);
                             <option value="inactiva" <?php echo $estado == 'inactiva' ? 'selected' : ''; ?>>Inactiva</option>
                         </select>
                     </div>
-                    <div class="col-md-2 mb-3">
-                        <label class="form-label">&nbsp;</label>
-                        <button class="btn btn-secondary w-100" id="limpiarFiltros">
-                            <i class="fas fa-eraser"></i> Limpiar
-                        </button>
-                    </div>
+
                 </div>
             </div>
         </div>
         
         <!-- Tabla de Clases -->
         <div class="card-custom">
-            <div class="card-header-custom">
-                <i class="fas fa-chalkboard-user"></i> Listado de Clases
+            <div class="card-header-custom card-header-flex">
+                <span>
+                    <i class="fas fa-chalkboard-user"></i>
+                    Listado de Clases
+                </span>
+
+                <span class="contador-registros">
+                    <?php echo (int)$total_rows; ?>
+                    <?php echo $total_rows == 1 ? 'clase' : 'clases'; ?>
+                </span>
             </div>
             <div class="card-body-custom" style="padding: 0;">
-                <div style="overflow-x: auto;">
-                    <table class="table-simple">
+                <div class="table-responsive-custom">
+                    <table class="table-simple responsive-table">
                         <thead>
                             <tr>
                                 <th><a href="?sort=nombre&order=<?php echo ($sort == 'nombre' && $order == 'ASC') ? 'DESC' : 'ASC'; ?>&search=<?php echo urlencode($search); ?>&estado=<?php echo urlencode($estado); ?>">Clase</a></th>
@@ -492,20 +344,28 @@ $total_pages = ceil($total_rows / $limit);
                                     <?php endif; ?>
                                 </td>
                                 <td>
-                                    <button class="btn-accion btn-editar" onclick="editarClase(<?php echo $clase['id']; ?>)" title="Editar">
-                                        <i class="fas fa-edit"></i> Editar
-                                    </button>
-                                    <button class="btn-accion btn-eliminar" onclick="eliminarClase(<?php echo $clase['id']; ?>, '<?php echo htmlspecialchars($clase['nombre']); ?>')" title="Eliminar">
-                                        <i class="fas fa-trash"></i> Eliminar
-                                    </button>
+                                    <div class="acciones-clase">
+                                        <button class="btn-accion btn-editar" onclick="editarClase(<?php echo $clase['id']; ?>)" title="Editar">
+                                            <i class="fas fa-edit"></i>
+                                            Editar
+                                        </button>
+
+                                        <button class="btn-accion btn-eliminar" onclick="eliminarClase(<?php echo $clase['id']; ?>, '<?php echo htmlspecialchars($clase['nombre']); ?>')" title="Eliminar">
+                                            <i class="fas fa-trash"></i>
+                                            Eliminar
+                                        </button>
+                                    </div>
                                 </td>
                             </tr>
                             <?php endforeach; ?>
                             <?php if(empty($clases)): ?>
                             <tr>
-                                <td colspan="7" class="text-center" style="padding: 40px;">
-                                    <i class="fas fa-chalkboard" style="font-size: 48px; color: #ccc;"></i>
-                                    <p class="mt-2">No hay clases registradas</p>
+                                <td colspan="7">
+                                    <div class="empty-state">
+                                        <i class="fas fa-chalkboard"></i>
+                                        <h3>No hay clases registradas</h3>
+                                        <p>Crea una nueva clase o modifica los filtros.</p>
+                                    </div>
                                 </td>
                             </tr>
                             <?php endif; ?>
@@ -537,9 +397,9 @@ $total_pages = ceil($total_rows / $limit);
     
     <!-- Modal Nueva Clase -->
     <div class="modal fade" id="modalNuevaClase" tabindex="-1">
-        <div class="modal-dialog">
-            <div class="modal-content">
-                <div class="modal-header" style="background: #1e3a8a; color: white;">
+        <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content modal-custom">
+                <div class="modal-header modal-header-custom">
                     <h5 class="modal-title"><i class="fas fa-plus-circle"></i> Nueva Clase</h5>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
@@ -590,9 +450,9 @@ $total_pages = ceil($total_rows / $limit);
     
     <!-- Modal Editar Clase -->
     <div class="modal fade" id="modalEditarClase" tabindex="-1">
-        <div class="modal-dialog">
-            <div class="modal-content">
-                <div class="modal-header" style="background: #1e3a8a; color: white;">
+        <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content modal-custom">
+                <div class="modal-header modal-header-custom">
                     <h5 class="modal-title"><i class="fas fa-edit"></i> Editar Clase</h5>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
@@ -655,6 +515,33 @@ $total_pages = ceil($total_rows / $limit);
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     
     <script>
+        function prepararTablaResponsive() {
+            const tabla = document.querySelector('.responsive-table');
+
+            if (!tabla) {
+                return;
+            }
+
+            const encabezados = Array.from(
+                tabla.querySelectorAll('thead th')
+            ).map(function(th) {
+                return th.textContent.trim();
+            });
+
+            tabla.querySelectorAll('tbody tr').forEach(function(fila) {
+                fila.querySelectorAll('td').forEach(function(celda, indice) {
+                    if (!celda.hasAttribute('colspan')) {
+                        celda.setAttribute(
+                            'data-label',
+                            encabezados[indice] || ''
+                        );
+                    }
+                });
+            });
+        }
+
+        prepararTablaResponsive();
+
         // Filtros en tiempo real
         let timeoutBusqueda;
         $('#searchInput').on('input', function() {
@@ -746,12 +633,6 @@ $total_pages = ceil($total_rows / $limit);
                     window.location.href = '?eliminar=' + id;
                 }
             });
-        }
-        
-        // Para móvil: toggle sidebar
-        if (window.innerWidth <= 768) {
-            $('.sidebar').addClass('sidebar-hidden');
-            $('.main-content').css('margin-left', '0');
         }
     </script>
 </body>

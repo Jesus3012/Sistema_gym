@@ -1,2015 +1,4703 @@
 <?php
-// reportes.php
-session_start();
-require_once 'config/database.php';
+// Archivo: reportes.php
+
+require_once __DIR__ . '/includes/auth_guard.php';
+require_once __DIR__ . '/config/database.php';
+
+date_default_timezone_set('America/Mexico_City');
 
 $database = new Database();
 $conn = $database->getConnection();
 
-if (!$conn) {
-    die("Error: No se pudo establecer la conexión a la base de datos");
+if (!$conn instanceof mysqli) {
+    die('No fue posible establecer conexión con la base de datos.');
 }
 
-if (!isset($_SESSION['user_id'])) {
-    header('Location: login.php');
-    exit;
+$conn->set_charset('utf8mb4');
+
+function reporteJson($codigo, $respuesta)
+{
+    http_response_code($codigo);
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+
+    echo json_encode(
+        $respuesta,
+        JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+    );
+    exit();
 }
 
-$usuario_id = $_SESSION['user_id'];
-$usuario_nombre = $_SESSION['user_name'];
-$usuario_rol = $_SESSION['user_rol'];
-
-// Obtener estadísticas generales
-$stats_query = "SELECT 
-    COUNT(DISTINCT i.id) as total_inscripciones,
-    COALESCE(SUM(i.precio_pagado), 0) as total_ingresos,
-    COUNT(DISTINCT c.id) as total_clientes_activos
-    FROM inscripciones i
-    INNER JOIN clientes c ON i.cliente_id = c.id
-    WHERE i.estado = 'activa'";
-$stats_result = $conn->query($stats_query);
-$stats = $stats_result->fetch_assoc();
-
-// Inscripciones por plan
-$planes_query = "SELECT p.nombre, COUNT(i.id) as total, COALESCE(SUM(i.precio_pagado), 0) as ingresos
-    FROM planes p
-    LEFT JOIN inscripciones i ON p.id = i.plan_id AND i.estado = 'activa'
-    WHERE p.estado = 'activo'
-    GROUP BY p.id";
-$planes_result = $conn->query($planes_query);
-
-// Obtener planes para el filtro
-$planes_list = $conn->query("SELECT id, nombre FROM planes WHERE estado = 'activo'");
-
-// Obtener estadísticas adicionales
-$vencidas = $conn->query("SELECT COUNT(*) as total FROM inscripciones WHERE estado = 'vencida'")->fetch_assoc();
-$canceladas = $conn->query("SELECT COUNT(*) as total FROM inscripciones WHERE estado = 'cancelada'")->fetch_assoc();
-$promedio = $conn->query("SELECT AVG(precio_pagado) as promedio FROM inscripciones WHERE estado = 'activa'")->fetch_assoc();
-$total_clientes = $conn->query("SELECT COUNT(*) as total FROM clientes WHERE estado = 'activo'")->fetch_assoc();
-
-// Función para obtener datos de la empresa
-function getDatosEmpresa($conn) {
-    $query = "SELECT nombre, telefono, email, direccion, horario, logo FROM configuracion_gimnasio WHERE id = 1";
-    $result = $conn->query($query);
-    if ($result && $row = $result->fetch_assoc()) {
-        // Verificar si el logo existe (cualquier formato)
-        if (!empty($row['logo']) && file_exists($row['logo'])) {
-            return $row;
-        }
+function reporteBindParams($stmt, $tipos, &$parametros)
+{
+    if ($tipos === '' || empty($parametros)) {
+        return true;
     }
-    
-    // Buscar logo con cualquier extensión en la carpeta img
-    $extensiones = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'ico'];
-    foreach ($extensiones as $ext) {
-        $ruta = "img/logo-gym." . $ext;
-        if (file_exists($ruta)) {
-            return [
-                'nombre' => $row['nombre'] ?? 'Gimnasio',
-                'telefono' => $row['telefono'] ?? '',
-                'email' => $row['email'] ?? '',
-                'direccion' => $row['direccion'] ?? '',
-                'horario' => $row['horario'] ?? '',
-                'logo' => $ruta
-            ];
-        }
+
+    $referencias = array();
+    $referencias[] = $tipos;
+
+    foreach ($parametros as $indice => $valor) {
+        $referencias[] = &$parametros[$indice];
     }
-    
-    return [
+
+    return call_user_func_array(
+        array($stmt, 'bind_param'),
+        $referencias
+    );
+}
+
+function reporteFechaValida($fecha)
+{
+    if ($fecha === '') {
+        return true;
+    }
+
+    $objeto = DateTime::createFromFormat('Y-m-d', $fecha);
+
+    return $objeto &&
+        $objeto->format('Y-m-d') === $fecha;
+}
+
+function obtenerEmpresaReportes($conn)
+{
+    $empresa = array(
         'nombre' => 'Gimnasio',
         'telefono' => '',
         'email' => '',
         'direccion' => '',
-        'horario' => '',
-        'logo' => 'img/logo-gym.png'
-    ];
+        'logo' => ''
+    );
+
+    $resultado = $conn->query(
+        "SELECT nombre, telefono, email, direccion, logo
+         FROM configuracion_gimnasio
+         ORDER BY id ASC
+         LIMIT 1"
+    );
+
+    if ($resultado && $fila = $resultado->fetch_assoc()) {
+        foreach ($empresa as $campo => $valor) {
+            if (isset($fila[$campo]) && $fila[$campo] !== null) {
+                $empresa[$campo] = (string) $fila[$campo];
+            }
+        }
+    }
+
+    if ($empresa['logo'] === '') {
+        $candidatos = array(
+            'img/logo-gym.png',
+            'img/logo-gym.jpg',
+            'img/logo-gym.jpeg',
+            'img/logo.png',
+            'img/logo.jpg'
+        );
+
+        foreach ($candidatos as $ruta) {
+            if (file_exists(__DIR__ . '/' . $ruta)) {
+                $empresa['logo'] = $ruta;
+                break;
+            }
+        }
+    }
+
+    return $empresa;
 }
 
-$datos_empresa = getDatosEmpresa($conn);
-$logo_empresa = !empty($datos_empresa['logo']) && file_exists($datos_empresa['logo']) ? $datos_empresa['logo'] : 'img/logo-gym.png';
+/*
+ * Endpoint interno.
+ * El mismo reportes.php entrega los datos en JSON antes de cargar el sidebar.
+ */
+if (
+    isset($_GET['action']) &&
+    $_GET['action'] === 'datos'
+) {
+    try {
+        $tipo = isset($_GET['tipo'])
+            ? strtolower(trim((string) $_GET['tipo']))
+            : 'inscripciones';
 
+        if (!in_array($tipo, array('inscripciones', 'ventas'), true)) {
+            throw new InvalidArgumentException(
+                'El tipo de reporte no es válido.'
+            );
+        }
+
+        $busqueda = isset($_GET['search'])
+            ? trim((string) $_GET['search'])
+            : '';
+
+        $fechaInicio = isset($_GET['fecha_inicio'])
+            ? trim((string) $_GET['fecha_inicio'])
+            : '';
+
+        $fechaFin = isset($_GET['fecha_fin'])
+            ? trim((string) $_GET['fecha_fin'])
+            : '';
+
+        if (mb_strlen($busqueda) > 120) {
+            throw new InvalidArgumentException(
+                'La búsqueda es demasiado larga.'
+            );
+        }
+
+        if (
+            !reporteFechaValida($fechaInicio) ||
+            !reporteFechaValida($fechaFin)
+        ) {
+            throw new InvalidArgumentException(
+                'El rango de fechas no es válido.'
+            );
+        }
+
+        if (
+            $fechaInicio !== '' &&
+            $fechaFin !== '' &&
+            $fechaInicio > $fechaFin
+        ) {
+            throw new InvalidArgumentException(
+                'La fecha inicial no puede ser mayor que la final.'
+            );
+        }
+
+        if ($tipo === 'inscripciones') {
+            $plan = isset($_GET['plan'])
+                ? (int) $_GET['plan']
+                : 0;
+
+            $estado = isset($_GET['estado'])
+                ? strtolower(trim((string) $_GET['estado']))
+                : '';
+
+            if (
+                $estado !== '' &&
+                !in_array(
+                    $estado,
+                    array('activa', 'vencida', 'cancelada'),
+                    true
+                )
+            ) {
+                throw new InvalidArgumentException(
+                    'El estado de inscripción no es válido.'
+                );
+            }
+
+            $condiciones = array('1 = 1');
+            $tipos = '';
+            $parametros = array();
+
+            if ($busqueda !== '') {
+                $texto = '%' . $busqueda . '%';
+
+                $condiciones[] = "(
+                    CONCAT(c.nombre, ' ', c.apellido) LIKE ?
+                    OR c.telefono LIKE ?
+                    OR c.email LIKE ?
+                    OR p.nombre LIKE ?
+                    OR CAST(i.id AS CHAR) LIKE ?
+                )";
+
+                $tipos .= 'sssss';
+                $parametros[] = $texto;
+                $parametros[] = $texto;
+                $parametros[] = $texto;
+                $parametros[] = $texto;
+                $parametros[] = $texto;
+            }
+
+            if ($plan > 0) {
+                $condiciones[] = 'i.plan_id = ?';
+                $tipos .= 'i';
+                $parametros[] = $plan;
+            }
+
+            if ($estado !== '') {
+                $condiciones[] = 'i.estado = ?';
+                $tipos .= 's';
+                $parametros[] = $estado;
+            }
+
+            if ($fechaInicio !== '') {
+                $condiciones[] = 'i.fecha_inicio >= ?';
+                $tipos .= 's';
+                $parametros[] = $fechaInicio;
+            }
+
+            if ($fechaFin !== '') {
+                $condiciones[] = 'i.fecha_inicio <= ?';
+                $tipos .= 's';
+                $parametros[] = $fechaFin;
+            }
+
+            $sql = "SELECT
+                        i.id,
+                        c.id AS cliente_id,
+                        c.nombre AS cliente_nombre,
+                        c.apellido AS cliente_apellido,
+                        c.telefono,
+                        c.email,
+                        p.id AS plan_id,
+                        p.nombre AS plan_nombre,
+                        i.fecha_inicio,
+                        i.fecha_fin,
+                        i.precio_pagado,
+                        i.estado,
+                        i.fecha_registro,
+                        DATEDIFF(i.fecha_fin, CURDATE()) AS dias_restantes
+                    FROM inscripciones i
+                    INNER JOIN clientes c
+                        ON c.id = i.cliente_id
+                    INNER JOIN planes p
+                        ON p.id = i.plan_id
+                    WHERE " . implode(' AND ', $condiciones) . "
+                    ORDER BY
+                        i.fecha_inicio DESC,
+                        i.id DESC
+                    LIMIT 5000";
+        } else {
+            $metodo = isset($_GET['metodo'])
+                ? strtolower(trim((string) $_GET['metodo']))
+                : '';
+
+            $estado = isset($_GET['estado'])
+                ? strtolower(trim((string) $_GET['estado']))
+                : '';
+
+            if (
+                $metodo !== '' &&
+                !in_array(
+                    $metodo,
+                    array('efectivo', 'tarjeta', 'transferencia'),
+                    true
+                )
+            ) {
+                throw new InvalidArgumentException(
+                    'El método de pago no es válido.'
+                );
+            }
+
+            if (
+                $estado !== '' &&
+                !in_array(
+                    $estado,
+                    array('completada', 'cancelada', 'pendiente'),
+                    true
+                )
+            ) {
+                throw new InvalidArgumentException(
+                    'El estado de venta no es válido.'
+                );
+            }
+
+            $condiciones = array('1 = 1');
+            $tipos = '';
+            $parametros = array();
+
+            if ($busqueda !== '') {
+                $texto = '%' . $busqueda . '%';
+
+                $condiciones[] = "(
+                    CAST(v.id AS CHAR) LIKE ?
+                    OR CONCAT(c.nombre, ' ', c.apellido) LIKE ?
+                    OR u.nombre LIKE ?
+                    OR detalle.productos LIKE ?
+                )";
+
+                $tipos .= 'ssss';
+                $parametros[] = $texto;
+                $parametros[] = $texto;
+                $parametros[] = $texto;
+                $parametros[] = $texto;
+            }
+
+            if ($metodo !== '') {
+                $condiciones[] = 'v.metodo_pago = ?';
+                $tipos .= 's';
+                $parametros[] = $metodo;
+            }
+
+            if ($estado !== '') {
+                $condiciones[] = 'v.estado = ?';
+                $tipos .= 's';
+                $parametros[] = $estado;
+            }
+
+            if ($fechaInicio !== '') {
+                $condiciones[] = 'DATE(v.fecha_venta) >= ?';
+                $tipos .= 's';
+                $parametros[] = $fechaInicio;
+            }
+
+            if ($fechaFin !== '') {
+                $condiciones[] = 'DATE(v.fecha_venta) <= ?';
+                $tipos .= 's';
+                $parametros[] = $fechaFin;
+            }
+
+            $sql = "SELECT
+                        v.id,
+                        v.fecha_venta,
+                        v.cliente_id,
+                        CASE
+                            WHEN c.id IS NULL
+                                THEN 'Venta al público'
+                            ELSE CONCAT(c.nombre, ' ', c.apellido)
+                        END AS cliente_nombre,
+                        u.nombre AS vendedor_nombre,
+                        v.metodo_pago,
+                        v.estado,
+                        COALESCE(ticket.total_original, v.total) AS total_bruto,
+                        CASE
+                            WHEN v.estado = 'cancelada'
+                             AND COALESCE(devolucion.total_devuelto, 0) = 0
+                                THEN COALESCE(ticket.total_original, v.total)
+                            ELSE COALESCE(devolucion.total_devuelto, 0)
+                        END AS devoluciones,
+                        CASE
+                            WHEN v.estado = 'cancelada'
+                                THEN 0
+                            ELSE GREATEST(
+                                COALESCE(ticket.total_original, v.total) -
+                                COALESCE(devolucion.total_devuelto, 0),
+                                0
+                            )
+                        END AS total_neto,
+                        COALESCE(detalle.productos_distintos, 0)
+                            AS productos_distintos,
+                        COALESCE(detalle.unidades, 0) AS unidades,
+                        COALESCE(detalle.productos, 'Sin detalle')
+                            AS productos
+                    FROM ventas v
+                    LEFT JOIN clientes c
+                        ON c.id = v.cliente_id
+                    INNER JOIN usuarios u
+                        ON u.id = v.usuario_id
+                    LEFT JOIN (
+                        SELECT
+                            venta_id,
+                            MAX(total) AS total_original
+                        FROM tickets_venta
+                        GROUP BY venta_id
+                    ) ticket
+                        ON ticket.venta_id = v.id
+                    LEFT JOIN (
+                        SELECT
+                            venta_id,
+                            SUM(
+                                CASE
+                                    WHEN monto_devuelto IS NOT NULL
+                                        THEN monto_devuelto
+                                    ELSE 0
+                                END
+                            ) AS total_devuelto
+                        FROM ventas_modificaciones
+                        WHERE tipo_modificacion IN (
+                            'cancelacion',
+                            'devolucion_parcial'
+                        )
+                        GROUP BY venta_id
+                    ) devolucion
+                        ON devolucion.venta_id = v.id
+                    LEFT JOIN (
+                        SELECT
+                            dv.venta_id,
+                            COUNT(DISTINCT dv.producto_id)
+                                AS productos_distintos,
+                            SUM(dv.cantidad) AS unidades,
+                            GROUP_CONCAT(
+                                CONCAT(
+                                    p.nombre,
+                                    ' x',
+                                    dv.cantidad
+                                )
+                                ORDER BY p.nombre
+                                SEPARATOR ', '
+                            ) AS productos
+                        FROM detalle_ventas dv
+                        INNER JOIN productos p
+                            ON p.id = dv.producto_id
+                        GROUP BY dv.venta_id
+                    ) detalle
+                        ON detalle.venta_id = v.id
+                    WHERE " . implode(' AND ', $condiciones) . "
+                    ORDER BY
+                        v.fecha_venta DESC,
+                        v.id DESC
+                    LIMIT 5000";
+        }
+
+        $stmt = $conn->prepare($sql);
+
+        if (!$stmt) {
+            throw new RuntimeException(
+                'No se pudo preparar el reporte: ' . $conn->error
+            );
+        }
+
+        if (!reporteBindParams($stmt, $tipos, $parametros)) {
+            throw new RuntimeException(
+                'No se pudieron vincular los filtros del reporte.'
+            );
+        }
+
+        if (!$stmt->execute()) {
+            $detalle = $stmt->error;
+            $stmt->close();
+
+            throw new RuntimeException(
+                'No se pudo generar el reporte: ' . $detalle
+            );
+        }
+
+        $resultado = $stmt->get_result();
+        $datos = array();
+
+        while ($fila = $resultado->fetch_assoc()) {
+            if ($tipo === 'inscripciones') {
+                $fila['id'] = (int) $fila['id'];
+                $fila['cliente_id'] = (int) $fila['cliente_id'];
+                $fila['plan_id'] = (int) $fila['plan_id'];
+                $fila['precio_pagado'] =
+                    (float) $fila['precio_pagado'];
+
+                if ($fila['dias_restantes'] !== null) {
+                    $fila['dias_restantes'] =
+                        (int) $fila['dias_restantes'];
+                }
+            } else {
+                $fila['id'] = (int) $fila['id'];
+
+                if ($fila['cliente_id'] !== null) {
+                    $fila['cliente_id'] =
+                        (int) $fila['cliente_id'];
+                }
+
+                $fila['total_bruto'] =
+                    (float) $fila['total_bruto'];
+
+                $fila['devoluciones'] =
+                    (float) $fila['devoluciones'];
+
+                $fila['total_neto'] =
+                    (float) $fila['total_neto'];
+
+                $fila['productos_distintos'] =
+                    (int) $fila['productos_distintos'];
+
+                $fila['unidades'] =
+                    (int) $fila['unidades'];
+            }
+
+            $datos[] = $fila;
+        }
+
+        $stmt->close();
+
+        reporteJson(200, array(
+            'success' => true,
+            'tipo' => $tipo,
+            'datos' => $datos,
+            'total' => count($datos),
+            'limitado' => count($datos) >= 5000
+        ));
+    } catch (Throwable $error) {
+        reporteJson(500, array(
+            'success' => false,
+            'message' => $error->getMessage()
+        ));
+    }
+}
+
+$usuarioId = isset($_SESSION['user_id'])
+    ? (int) $_SESSION['user_id']
+    : 0;
+
+$usuarioNombre = isset($_SESSION['user_name'])
+    ? (string) $_SESSION['user_name']
+    : 'Usuario';
+
+$usuarioRol = isset($_SESSION['user_rol'])
+    ? (string) $_SESSION['user_rol']
+    : '';
+
+$empresa = obtenerEmpresaReportes($conn);
+
+$planes = array();
+$resultadoPlanes = $conn->query(
+    "SELECT id, nombre
+     FROM planes
+     ORDER BY nombre ASC"
+);
+
+if ($resultadoPlanes) {
+    while ($plan = $resultadoPlanes->fetch_assoc()) {
+        $planes[] = array(
+            'id' => (int) $plan['id'],
+            'nombre' => (string) $plan['nombre']
+        );
+    }
+}
 ?>
-
 <!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Reportes - Sistema Gimnasio</title>
-    <!-- Font Awesome -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <!-- SweetAlert2 -->
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css">
-    <!-- DateRangePicker -->
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/daterangepicker/daterangepicker.css">
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+    <title>Centro de Reportes</title>
+
+    <link
+        rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"
+    >
+    <link
+        rel="stylesheet"
+        href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css"
+    >
+
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/es.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+
     <style>
-        /* Reset básico */
+        :root {
+            --report-primary: #0a2540;
+            --report-primary-soft: #edf4fb;
+            --report-blue: #2563eb;
+            --report-blue-dark: #1d4ed8;
+            --report-cyan: #0891b2;
+            --report-green: #17875d;
+            --report-orange: #d97706;
+            --report-red: #c2414b;
+            --report-purple: #7c3aed;
+            --report-text: #172033;
+            --report-muted: #667085;
+            --report-border: #dce4ed;
+            --report-bg: #f4f7fb;
+            --report-card: #ffffff;
+            --report-shadow: 0 14px 36px rgba(15, 36, 58, 0.07);
+        }
+
         * {
-            margin: 0;
-            padding: 0;
             box-sizing: border-box;
         }
-        
+
         body {
-            background: #f5f7fa;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            margin: 0;
+            background: var(--report-bg);
+            color: var(--report-text);
+            font-family:
+                Inter,
+                ui-sans-serif,
+                system-ui,
+                -apple-system,
+                BlinkMacSystemFont,
+                "Segoe UI",
+                sans-serif;
         }
-        
-        /* Contenido principal - Se adapta al sidebar */
+
         .main-content {
-            margin-left: 280px;
-            transition: margin-left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
             min-height: 100vh;
-            padding: 20px;
-            background: #f5f7fa;
+            margin-left: 270px;
+            transition: margin-left 0.3s ease;
         }
-        
-        /* Cuando el sidebar está colapsado */
+
         body.sidebar-collapsed .main-content {
             margin-left: 70px;
         }
-        
-        /* Responsive para móvil */
-        @media (max-width: 768px) {
-            .main-content {
-                margin-left: 0 !important;
-                padding: 80px 15px 15px 15px;
-            }
+
+        .report-page {
+            min-height: 100vh;
+            padding: 24px;
+            background:
+                radial-gradient(
+                    circle at top right,
+                    rgba(37, 99, 235, 0.08),
+                    transparent 28%
+                ),
+                radial-gradient(
+                    circle at bottom left,
+                    rgba(8, 145, 178, 0.05),
+                    transparent 26%
+                ),
+                var(--report-bg);
         }
-        
-        /* Estilos para las tarjetas de estadísticas */
-        .small-box {
-            border-radius: 10px;
-            transition: transform 0.2s;
-            margin-bottom: 20px;
-            cursor: default;
-            position: relative;
-            display: block;
-            padding: 20px;
-            color: white;
+
+        .report-shell {
+            width: min(1500px, 100%);
+            margin: 0 auto;
         }
-        
-        .small-box:hover {
-            transform: translateY(-3px);
-        }
-        
-        .small-box .inner {
-            position: relative;
-            z-index: 1;
-        }
-        
-        .small-box h3 {
-            font-size: 2rem;
-            font-weight: bold;
-            margin: 0 0 10px 0;
-            white-space: nowrap;
-            padding: 0;
-        }
-        
-        .small-box p {
-            font-size: 1rem;
-            margin: 0;
-        }
-        
-        .small-box .icon {
-            position: absolute;
-            right: 15px;
-            top: 15px;
-            font-size: 3.5rem;
-            opacity: 0.3;
-            z-index: 0;
-        }
-        
-        .bg-primary { background-color: #007bff !important; }
-        .bg-success { background-color: #28a745 !important; }
-        .bg-warning { background-color: #ffc107 !important; }
-        .bg-info { background-color: #17a2b8 !important; }
-        
-        /* Tarjetas de resumen general - CORREGIDO */
-        .resumen-card {
-            border-radius: 10px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.08);
-            margin-bottom: 15px;
-            background: white;
-            transition: transform 0.2s;
-            border: 1px solid #e9ecef;
-            overflow: hidden;
-        }
-        
-        .resumen-card:hover {
-            transform: translateY(-3px);
-            box-shadow: 0 4px 8px rgba(0,0,0,0.12);
-        }
-        
-        .resumen-card .card-body {
-            padding: 15px;
-        }
-        
-        .resumen-stats {
+
+        .report-topbar {
             display: flex;
             justify-content: space-between;
+            align-items: flex-start;
+            gap: 18px;
+            margin-bottom: 18px;
+        }
+
+        .report-eyebrow {
+            display: inline-flex;
             align-items: center;
-        }
-        
-        .resumen-number {
-            font-size: 24px;
-            font-weight: bold;
-            color: #333;
-            line-height: 1.2;
-        }
-        
-        .resumen-label {
-            color: #666;
-            font-size: 12px;
-            margin-top: 5px;
-        }
-        
-        .resumen-icon {
-            font-size: 40px;
-            opacity: 0.3;
-        }
-        
-        /* Filtros */
-        .filter-card {
-            border-radius: 10px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.08);
-            margin-bottom: 20px;
-            background: white;
-        }
-        
-        .filter-card .card-header {
-            background: white;
-            border-bottom: 1px solid #e9ecef;
-            padding: 15px 20px;
-        }
-        
-        .filter-card .card-body {
-            padding: 20px;
-        }
-        
-        .filter-card .form-group {
-            margin-bottom: 0;
-        }
-        
-        .filter-card label {
-            font-weight: 600;
+            gap: 8px;
             margin-bottom: 8px;
-            color: #495057;
-            font-size: 13px;
+            color: var(--report-blue);
+            font-size: 0.73rem;
+            font-weight: 900;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
         }
-        
-        .form-control {
-            border-radius: 8px;
-            border: 1px solid #e0e0e0;
-            padding: 8px 12px;
-            font-size: 14px;
-            width: 100%;
-        }
-        
-        .form-control:focus {
-            border-color: #1e3a8a;
-            box-shadow: 0 0 0 0.2rem rgba(30,58,138,0.25);
-            outline: none;
-        }
-        
-        /* Tabla */
-        .card {
-            border-radius: 10px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.08);
-            margin-bottom: 20px;
-            background: white;
-        }
-        
-        .card-header {
-            background: white;
-            border-bottom: 1px solid #e9ecef;
-            padding: 15px 20px;
-        }
-        
-        .card-title {
-            font-size: 1.1rem;
-            font-weight: 600;
+
+        .report-heading h1 {
             margin: 0;
-        }
-        
-        .table-responsive {
-            border-radius: 10px;
-            overflow-x: auto;
-        }
-        
-        .table {
-            width: 100%;
-            margin-bottom: 0;
-            background-color: transparent;
-        }
-        
-        .table thead th {
-            background: #1e3a8a;
-            color: white;
-            font-weight: 500;
-            border: none;
-            font-size: 13px;
-            padding: 12px;
-        }
-        
-        .table tbody tr:hover {
-            background: #f8f9fa;
-        }
-        
-        .table td {
-            padding: 10px 12px;
-            vertical-align: middle;
-            font-size: 13px;
-            border-top: 1px solid #dee2e6;
-        }
-        
-        .badge-status {
-            padding: 5px 12px;
-            border-radius: 20px;
-            font-size: 11px;
-            font-weight: 500;
-        }
-        
-        .bg-success { background-color: #28a745 !important; }
-        .bg-danger { background-color: #dc3545 !important; }
-        .bg-secondary { background-color: #6c757d !important; }
-        .bg-info { background-color: #17a2b8 !important; }
-        .bg-warning { background-color: #ffc107 !important; }
-        .text-white { color: white !important; }
-        .text-success { color: #28a745 !important; }
-        .text-muted { color: #6c757d !important; }
-        
-        .btn-export {
-            border-radius: 8px;
-            padding: 8px 18px;
-            transition: all 0.2s;
-            margin-right: 10px;
-            border: none;
-            cursor: pointer;
-            font-size: 14px;
-        }
-        
-        .btn-export:hover {
-            transform: translateY(-2px);
-        }
-        
-        .btn-success {
-            background-color: #28a745;
-            color: white;
-        }
-        
-        .btn-danger {
-            background-color: #dc3545;
-            color: white;
-        }
-        
-        .btn-secondary {
-            background-color: #6c757d;
-            color: white;
-            border: none;
-            padding: 6px 12px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 13px;
-        }
-        
-        .btn-secondary:hover {
-            background-color: #5a6268;
-        }
-        
-        .btn-tool {
-            background: transparent;
-            border: none;
-            cursor: pointer;
-            color: #6c757d;
-        }
-        
-        .loading-spinner {
-            text-align: center;
-            padding: 40px;
-        }
-        
-        .fa-spinner {
-            animation: spin 1s linear infinite;
-        }
-        
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-        
-        .text-center {
-            text-align: center;
-        }
-        
-        .py-5 {
-            padding-top: 3rem;
-            padding-bottom: 3rem;
-        }
-        
-        .mb-0 {
-            margin-bottom: 0;
-        }
-        
-        .mb-2 {
-            margin-bottom: 0.5rem;
-        }
-        
-        .mb-3 {
-            margin-bottom: 1rem;
-        }
-        
-        .mt-2 {
-            margin-top: 0.5rem;
-        }
-        
-        .mt-3 {
-            margin-top: 1rem;
-        }
-        
-        .mr-2 {
-            margin-right: 0.5rem;
-        }
-        
-        .float-right {
-            float: right;
-        }
-        
-        .row {
-            display: flex;
-            flex-wrap: wrap;
-            margin-right: -10px;
-            margin-left: -10px;
-        }
-        
-        .col-lg-3, .col-md-6, .col-sm-6, .col-md-4, .col-md-3, .col-12, .col-6 {
-            position: relative;
-            width: 100%;
-            padding-right: 10px;
-            padding-left: 10px;
-        }
-        
-        .col-6 { flex: 0 0 50%; max-width: 50%; }
-        .col-12 { flex: 0 0 100%; max-width: 100%; }
-        
-        @media (min-width: 768px) {
-            .col-md-3 { flex: 0 0 25%; max-width: 25%; }
-            .col-md-4 { flex: 0 0 33.333333%; max-width: 33.333333%; }
-            .col-md-6 { flex: 0 0 50%; max-width: 50%; }
-        }
-        
-        @media (min-width: 992px) {
-            .col-lg-3 { flex: 0 0 25%; max-width: 25%; }
-        }
-        
-        .h-100 {
-            height: 100%;
-        }
-        
-        .p-0 {
-            padding: 0;
-        }
-        
-        .text-right {
-            text-align: right;
-        }
-        
-        .text-danger {
-            color: #dc3545;
-        }
-        
-        .font-weight-bold {
-            font-weight: bold;
-        }
-        
-        /* Grid para resumen general */
-        .grid-resumen {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 15px;
-        }
-        
-        @media (min-width: 768px) {
-            .grid-resumen {
-                grid-template-columns: repeat(2, 1fr);
-            }
-        }
-        
-        .full-width {
-            grid-column: span 2;
+            color: var(--report-primary);
+            font-size: clamp(1.75rem, 3vw, 2.35rem);
+            line-height: 1.05;
         }
 
-        /* Estilos para los botones del DateRangePicker */
-        .daterangepicker .drp-buttons .btn-default {
-            background: linear-gradient(135deg, #6c757d 0%, #495057 100%);
-            color: white;
-            border: none;
-            border-radius: 6px;
-            padding: 6px 15px;
-            font-size: 13px;
-            font-weight: 500;
-            transition: all 0.2s ease;
+        .report-heading p {
+            max-width: 760px;
+            margin: 8px 0 0;
+            color: var(--report-muted);
+            line-height: 1.55;
         }
 
-        .daterangepicker .drp-buttons .btn-default:hover {
-            background: linear-gradient(135deg, #5a6268 0%, #343a40 100%);
-            transform: translateY(-1px);
-            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-        }
-
-        .daterangepicker .drp-buttons .btn-primary {
-            background: linear-gradient(135deg, #28a745 0%, #1e7e34 100%);
-            color: white;
-            border: none;
-            border-radius: 6px;
-            padding: 6px 20px;
-            font-size: 13px;
-            font-weight: 500;
-            transition: all 0.2s ease;
-        }
-
-        .daterangepicker .drp-buttons .btn-primary:hover {
-            background: linear-gradient(135deg, #218838 0%, #166b2a 100%);
-            transform: translateY(-1px);
-            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-        }
-
-        .daterangepicker .drp-buttons {
-            border-top: 1px solid #e9ecef;
-            padding: 12px;
-            background: #f8f9fa;
-            border-radius: 0 0 8px 8px;
-        }
-
-        .daterangepicker .drp-buttons .btn {
-            margin-left: 10px;
-        }
-        
-        /* Estilo para tabla más ancha */
-        .table th, .table td {
+        .report-user-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 11px;
+            padding: 10px 13px;
+            border: 1px solid var(--report-border);
+            border-radius: 13px;
+            background: rgba(255, 255, 255, 0.9);
+            box-shadow: 0 8px 24px rgba(15, 36, 58, 0.05);
             white-space: nowrap;
         }
 
-        /* Estilos para paginacion */
-        .pagination-container {
+        .report-user-chip i {
+            width: 36px;
+            height: 36px;
+            display: grid;
+            place-items: center;
+            border-radius: 10px;
+            color: var(--report-blue);
+            background: var(--report-primary-soft);
+        }
+
+        .report-user-chip strong,
+        .report-user-chip small {
+            display: block;
+        }
+
+        .report-user-chip strong {
+            color: var(--report-primary);
+            font-size: 0.84rem;
+        }
+
+        .report-user-chip small {
+            margin-top: 2px;
+            color: var(--report-muted);
+            font-size: 0.71rem;
+            text-transform: capitalize;
+        }
+
+        .report-card {
+            background: var(--report-card);
+            border: 1px solid var(--report-border);
+            border-radius: 18px;
+            box-shadow: var(--report-shadow);
+        }
+
+        .report-type-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 14px;
+            margin-bottom: 18px;
+        }
+
+        .report-type {
+            position: relative;
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            min-height: 92px;
+            padding: 17px 18px;
+            border: 1px solid var(--report-border);
+            border-radius: 16px;
+            background: #fff;
+            cursor: pointer;
+            text-align: left;
+            transition:
+                transform 0.18s ease,
+                border-color 0.18s ease,
+                box-shadow 0.18s ease,
+                background 0.18s ease;
+        }
+
+        .report-type:hover {
+            transform: translateY(-2px);
+            border-color: #b8c9df;
+            box-shadow: 0 10px 25px rgba(15, 36, 58, 0.08);
+        }
+
+        .report-type.active {
+            border-color: rgba(37, 99, 235, 0.42);
+            background:
+                linear-gradient(
+                    135deg,
+                    rgba(37, 99, 235, 0.09),
+                    rgba(8, 145, 178, 0.04)
+                ),
+                #fff;
+            box-shadow:
+                inset 4px 0 0 var(--report-blue),
+                0 10px 25px rgba(37, 99, 235, 0.1);
+        }
+
+        .report-type-icon {
+            width: 48px;
+            height: 48px;
+            flex: 0 0 48px;
+            display: grid;
+            place-items: center;
+            border-radius: 14px;
+            color: var(--report-blue);
+            background: var(--report-primary-soft);
+            font-size: 1.2rem;
+        }
+
+        .report-type[data-type="ventas"] .report-type-icon {
+            color: var(--report-purple);
+            background: #f2edff;
+        }
+
+        .report-type-copy strong,
+        .report-type-copy span {
+            display: block;
+        }
+
+        .report-type-copy strong {
+            color: var(--report-primary);
+            font-size: 0.98rem;
+        }
+
+        .report-type-copy span {
+            margin-top: 4px;
+            color: var(--report-muted);
+            font-size: 0.78rem;
+            line-height: 1.4;
+        }
+
+        .report-type-check {
+            position: absolute;
+            top: 13px;
+            right: 13px;
+            width: 23px;
+            height: 23px;
+            display: grid;
+            place-items: center;
+            border: 1px solid var(--report-border);
+            border-radius: 50%;
+            color: transparent;
+            background: #fff;
+            font-size: 0.7rem;
+        }
+
+        .report-type.active .report-type-check {
+            color: #fff;
+            border-color: var(--report-blue);
+            background: var(--report-blue);
+        }
+
+        .report-filter-card {
+            margin-bottom: 18px;
+            overflow: visible;
+        }
+
+        .report-filter-head {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 15px 20px;
-            background: white;
-            border-top: 1px solid #e9ecef;
-            flex-wrap: wrap;
-            gap: 10px;
+            gap: 14px;
+            padding: 18px 20px 14px;
+            border-bottom: 1px solid #e8edf3;
         }
 
-        .pagination {
+        .report-filter-title {
             display: flex;
-            gap: 5px;
-            list-style: none;
+            align-items: center;
+            gap: 11px;
+        }
+
+        .report-filter-title i {
+            width: 38px;
+            height: 38px;
+            display: grid;
+            place-items: center;
+            border-radius: 11px;
+            color: var(--report-blue);
+            background: var(--report-primary-soft);
+        }
+
+        .report-filter-title h2 {
             margin: 0;
-            padding: 0;
+            color: var(--report-primary);
+            font-size: 1rem;
         }
 
-        .pagination li {
-            display: inline-block;
+        .report-filter-title p {
+            margin: 3px 0 0;
+            color: var(--report-muted);
+            font-size: 0.75rem;
         }
 
-        .pagination button {
-            padding: 6px 12px;
-            border: 1px solid #dee2e6;
-            background: white;
-            color: #1e3a8a;
+        .report-filter-count {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            padding: 7px 10px;
+            border-radius: 999px;
+            color: #42526a;
+            background: #eef3f8;
+            border: 1px solid #d9e3ed;
+            font-size: 0.72rem;
+            font-weight: 850;
+        }
+
+        .report-filter-body {
+            padding: 18px 20px 20px;
+        }
+
+        .report-filter-grid {
+            display: grid;
+            grid-template-columns:
+                minmax(220px, 1.25fr)
+                minmax(170px, 0.75fr)
+                minmax(170px, 0.75fr)
+                minmax(280px, 1fr);
+            gap: 13px;
+            align-items: end;
+        }
+
+        .report-field {
+            min-width: 0;
+        }
+
+        .report-field label {
+            display: block;
+            margin-bottom: 7px;
+            color: #46556a;
+            font-size: 0.73rem;
+            font-weight: 850;
+            text-transform: uppercase;
+            letter-spacing: 0.035em;
+        }
+
+        .report-control {
+            position: relative;
+        }
+
+        .report-control > i {
+            position: absolute;
+            top: 50%;
+            left: 12px;
+            transform: translateY(-50%);
+            color: #8190a5;
+            font-size: 0.86rem;
+            pointer-events: none;
+        }
+
+        .report-control input,
+        .report-control select {
+            width: 100%;
+            height: 44px;
+            border: 1px solid #cfd9e5;
+            border-radius: 11px;
+            background: #fff;
+            color: var(--report-text);
+            font: inherit;
+            font-size: 0.86rem;
+            transition:
+                border-color 0.18s ease,
+                box-shadow 0.18s ease;
+        }
+
+        .report-control input {
+            padding: 0 40px 0 38px;
+        }
+
+        .report-control select {
+            padding: 0 34px 0 12px;
+        }
+
+        .report-control input:focus,
+        .report-control select:focus {
+            outline: none;
+            border-color: #6b9bea;
+            box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.1);
+        }
+
+        .report-date-clear {
+            position: absolute;
+            top: 50%;
+            right: 8px;
+            width: 28px;
+            height: 28px;
+            display: grid;
+            place-items: center;
+            transform: translateY(-50%);
+            border: 0;
+            border-radius: 8px;
+            color: #8190a5;
+            background: transparent;
             cursor: pointer;
-            border-radius: 6px;
-            transition: all 0.2s;
-            font-size: 13px;
         }
 
-        .pagination button:hover:not(:disabled) {
-            background: #1e3a8a;
-            color: white;
-            border-color: #1e3a8a;
+        .report-date-clear:hover {
+            color: var(--report-red);
+            background: #fff0f2;
         }
 
-        .pagination button.active {
-            background: #1e3a8a;
-            color: white;
-            border-color: #1e3a8a;
+        .report-date-quick {
+            display: flex;
+            gap: 7px;
+            margin-top: 9px;
+            flex-wrap: wrap;
         }
 
-        .pagination button:disabled {
-            opacity: 0.5;
+        .report-quick-btn {
+            min-height: 30px;
+            padding: 5px 10px;
+            border: 1px solid #dbe4ed;
+            border-radius: 999px;
+            color: #546176;
+            background: #f8fafc;
+            font: inherit;
+            font-size: 0.7rem;
+            font-weight: 750;
+            cursor: pointer;
+        }
+
+        .report-quick-btn:hover,
+        .report-quick-btn.active {
+            color: var(--report-blue);
+            border-color: #bfd1ed;
+            background: var(--report-primary-soft);
+        }
+
+        .report-filter-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 9px;
+            margin-top: 17px;
+            padding-top: 15px;
+            border-top: 1px dashed #dfe6ee;
+        }
+
+        .report-btn {
+            min-height: 41px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 9px 15px;
+            border: 0;
+            border-radius: 10px;
+            font: inherit;
+            font-size: 0.82rem;
+            font-weight: 850;
+            cursor: pointer;
+            text-decoration: none;
+            transition:
+                transform 0.18s ease,
+                box-shadow 0.18s ease,
+                opacity 0.18s ease;
+        }
+
+        .report-btn:hover:not(:disabled) {
+            transform: translateY(-1px);
+        }
+
+        .report-btn:disabled {
+            opacity: 0.48;
             cursor: not-allowed;
         }
 
-        .pagination-info {
-            color: #6c757d;
-            font-size: 13px;
+        .report-btn-primary {
+            color: #fff;
+            background:
+                linear-gradient(
+                    135deg,
+                    var(--report-blue),
+                    var(--report-blue-dark)
+                );
+            box-shadow: 0 8px 18px rgba(37, 99, 235, 0.2);
         }
 
-        .records-per-page {
+        .report-btn-soft {
+            color: var(--report-primary);
+            background: #eef3f8;
+            border: 1px solid #d8e1eb;
+        }
+
+        .report-btn-excel {
+            color: #fff;
+            background: linear-gradient(135deg, #17875d, #116847);
+            box-shadow: 0 8px 18px rgba(23, 135, 93, 0.18);
+        }
+
+        .report-btn-pdf {
+            color: #fff;
+            background: linear-gradient(135deg, #c2414b, #9f2935);
+            box-shadow: 0 8px 18px rgba(194, 65, 75, 0.17);
+        }
+
+        .report-stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 13px;
+            margin-bottom: 18px;
+        }
+
+        .report-stat {
+            position: relative;
+            min-height: 112px;
+            padding: 17px;
+            overflow: hidden;
+        }
+
+        .report-stat::after {
+            content: "";
+            position: absolute;
+            top: -24px;
+            right: -24px;
+            width: 88px;
+            height: 88px;
+            border-radius: 50%;
+            background: rgba(37, 99, 235, 0.06);
+        }
+
+        .report-stat-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 10px;
+        }
+
+        .report-stat-icon {
+            width: 38px;
+            height: 38px;
+            display: grid;
+            place-items: center;
+            border-radius: 11px;
+            color: var(--report-blue);
+            background: var(--report-primary-soft);
+        }
+
+        .report-stat:nth-child(2) .report-stat-icon {
+            color: var(--report-green);
+            background: #eaf7f1;
+        }
+
+        .report-stat:nth-child(3) .report-stat-icon {
+            color: var(--report-orange);
+            background: #fff6e7;
+        }
+
+        .report-stat:nth-child(4) .report-stat-icon {
+            color: var(--report-purple);
+            background: #f2edff;
+        }
+
+        .report-stat-label {
+            color: var(--report-muted);
+            font-size: 0.72rem;
+            font-weight: 850;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
+        .report-stat-value {
+            display: block;
+            margin-top: 10px;
+            color: var(--report-primary);
+            font-size: 1.45rem;
+            font-weight: 900;
+        }
+
+        .report-stat-note {
+            display: block;
+            margin-top: 4px;
+            color: #8290a4;
+            font-size: 0.7rem;
+        }
+
+        .report-table-card {
+            overflow: hidden;
+        }
+
+        .report-table-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 14px;
+            padding: 18px 20px;
+            border-bottom: 1px solid #e8edf3;
+        }
+
+        .report-table-head h2 {
+            margin: 0;
+            color: var(--report-primary);
+            font-size: 1.05rem;
+        }
+
+        .report-table-head p {
+            margin: 4px 0 0;
+            color: var(--report-muted);
+            font-size: 0.76rem;
+        }
+
+        .report-export-actions {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .report-table-wrap {
+            overflow-x: auto;
+        }
+
+        .report-table {
+            width: 100%;
+            min-width: 980px;
+            border-collapse: collapse;
+        }
+
+        .report-table th,
+        .report-table td {
+            padding: 13px 14px;
+            text-align: left;
+            border-bottom: 1px solid #e7edf3;
+            vertical-align: middle;
+        }
+
+        .report-table th {
+            color: #46556a;
+            background: #f6f8fb;
+            font-size: 0.7rem;
+            font-weight: 900;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            white-space: nowrap;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .report-table th:hover {
+            color: var(--report-blue);
+            background: #f0f5fb;
+        }
+
+        .report-table th i {
+            margin-left: 5px;
+            color: #9aa6b7;
+            font-size: 0.68rem;
+        }
+
+        .report-table td {
+            color: #334155;
+            font-size: 0.8rem;
+        }
+
+        .report-table tbody tr:hover {
+            background: #fafcff;
+        }
+
+        .report-primary-cell {
+            color: var(--report-primary);
+            font-weight: 800;
+        }
+
+        .report-secondary-cell {
+            display: block;
+            margin-top: 3px;
+            color: #7b8798;
+            font-size: 0.69rem;
+        }
+
+        .report-money {
+            color: var(--report-primary);
+            font-weight: 900;
+            white-space: nowrap;
+        }
+
+        .report-money.positive {
+            color: var(--report-green);
+        }
+
+        .report-money.negative {
+            color: var(--report-red);
+        }
+
+        .report-products {
+            max-width: 320px;
+            line-height: 1.4;
+        }
+
+        .report-products-text {
+            display: -webkit-box;
+            overflow: hidden;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 2;
+        }
+
+        .report-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 5px 8px;
+            border-radius: 999px;
+            font-size: 0.68rem;
+            font-weight: 850;
+            white-space: nowrap;
+        }
+
+        .report-pill.active,
+        .report-pill.completed {
+            color: #136342;
+            background: #e9f7f0;
+            border: 1px solid #c1e8d5;
+        }
+
+        .report-pill.expired,
+        .report-pill.cancelled {
+            color: #9b2f3b;
+            background: #fff0f2;
+            border: 1px solid #f0c6cc;
+        }
+
+        .report-pill.pending,
+        .report-pill.warning {
+            color: #8c5707;
+            background: #fff7e8;
+            border: 1px solid #f1d49e;
+        }
+
+        .report-pill.neutral {
+            color: #4b5a6f;
+            background: #eef3f7;
+            border: 1px solid #d9e2ea;
+        }
+
+        .report-empty,
+        .report-loading {
+            padding: 56px 20px;
+            text-align: center;
+            color: var(--report-muted);
+        }
+
+        .report-empty i,
+        .report-loading i {
+            display: block;
+            margin-bottom: 12px;
+            color: #a3afbf;
+            font-size: 2.6rem;
+        }
+
+        .report-loading i {
+            color: var(--report-blue);
+            animation: reportSpin 0.9s linear infinite;
+        }
+
+        @keyframes reportSpin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        .report-pagination-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 15px;
+            padding: 14px 20px;
+            background: #fafbfd;
+            border-top: 1px solid #e7edf3;
+            flex-wrap: wrap;
+        }
+
+        .report-pagination-info {
+            color: var(--report-muted);
+            font-size: 0.76rem;
+        }
+
+        .report-pagination {
+            display: flex;
+            gap: 5px;
+            flex-wrap: wrap;
+        }
+
+        .report-page-btn {
+            min-width: 35px;
+            height: 35px;
+            padding: 0 9px;
+            display: grid;
+            place-items: center;
+            border: 1px solid #d8e1eb;
+            border-radius: 9px;
+            color: var(--report-primary);
+            background: #fff;
+            font: inherit;
+            font-size: 0.76rem;
+            font-weight: 850;
+            cursor: pointer;
+        }
+
+        .report-page-btn:hover:not(:disabled),
+        .report-page-btn.active {
+            color: #fff;
+            border-color: var(--report-blue);
+            background: var(--report-blue);
+        }
+
+        .report-page-btn:disabled {
+            opacity: 0.42;
+            cursor: not-allowed;
+        }
+
+        .report-page-size {
             display: flex;
             align-items: center;
             gap: 8px;
+            color: var(--report-muted);
+            font-size: 0.75rem;
         }
 
-        .records-per-page select {
-            padding: 5px 8px;
+        .report-page-size select {
+            height: 35px;
+            border: 1px solid #d8e1eb;
+            border-radius: 9px;
+            padding: 0 28px 0 10px;
+            background: #fff;
+            color: var(--report-primary);
+            font: inherit;
+            font-size: 0.76rem;
+            font-weight: 750;
+        }
+
+        /* Calendario Flatpickr */
+        .flatpickr-calendar {
+            width: 330px !important;
+            border: 1px solid #d9e3ed !important;
+            border-radius: 16px !important;
+            box-shadow: 0 18px 45px rgba(15, 36, 58, 0.16) !important;
+            overflow: hidden;
+            font-family: inherit !important;
+        }
+
+        .flatpickr-months {
+            padding: 9px 7px 4px;
+            background:
+                linear-gradient(
+                    135deg,
+                    var(--report-primary),
+                    #16446f
+                );
+        }
+
+        .flatpickr-months .flatpickr-month {
+            color: #fff !important;
+            fill: #fff !important;
+            height: 40px;
+        }
+
+        .flatpickr-current-month {
+            padding-top: 7px !important;
+            font-size: 0.92rem !important;
+        }
+
+        .flatpickr-current-month .flatpickr-monthDropdown-months,
+        .flatpickr-current-month input.cur-year {
+            color: #fff !important;
+            font-weight: 800 !important;
+        }
+
+        .flatpickr-current-month .flatpickr-monthDropdown-months {
+            background: transparent !important;
+        }
+
+        .flatpickr-prev-month,
+        .flatpickr-next-month {
+            top: 10px !important;
+            color: #fff !important;
+            fill: #fff !important;
+        }
+
+        .flatpickr-weekdays {
+            padding-top: 8px;
+            background: #f4f7fb;
+        }
+
+        span.flatpickr-weekday {
+            color: #66758a !important;
+            font-size: 0.68rem !important;
+            font-weight: 900 !important;
+        }
+
+        .flatpickr-days {
+            padding: 7px 7px 10px;
+        }
+
+        .flatpickr-day {
+            border-radius: 9px !important;
+            color: #354257 !important;
+            font-weight: 650 !important;
+        }
+
+        .flatpickr-day:hover {
+            border-color: var(--report-primary-soft) !important;
+            background: var(--report-primary-soft) !important;
+        }
+
+        .flatpickr-day.today {
+            color: var(--report-blue) !important;
+            border-color: #93b4ec !important;
+        }
+
+        .flatpickr-day.selected,
+        .flatpickr-day.startRange,
+        .flatpickr-day.endRange {
+            color: #fff !important;
+            border-color: var(--report-blue) !important;
+            background:
+                linear-gradient(
+                    135deg,
+                    var(--report-blue),
+                    var(--report-blue-dark)
+                ) !important;
+            box-shadow: none !important;
+        }
+
+        .flatpickr-day.inRange {
+            border-color: #e7effc !important;
+            background: #e7effc !important;
+            box-shadow:
+                -5px 0 0 #e7effc,
+                5px 0 0 #e7effc !important;
+        }
+
+        @media (max-width: 1200px) {
+            .report-filter-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+
+            .report-stats-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+        }
+
+        @media (max-width: 900px) {
+            .report-topbar {
+                flex-direction: column;
+            }
+
+            .report-user-chip {
+                width: 100%;
+            }
+
+            .report-type-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .report-table-head {
+                align-items: flex-start;
+                flex-direction: column;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .report-page {
+                padding: 76px 14px 18px;
+            }
+
+            .report-filter-grid,
+            .report-stats-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .report-filter-head,
+            .report-filter-actions,
+            .report-pagination-bar {
+                align-items: stretch;
+                flex-direction: column;
+            }
+
+            .report-filter-actions .report-btn,
+            .report-export-actions .report-btn {
+                flex: 1;
+            }
+
+            .report-export-actions {
+                width: 100%;
+            }
+        }
+
+        @media (max-width: 390px) {
+            .flatpickr-calendar {
+                width: calc(100vw - 24px) !important;
+            }
+        }
+
+
+        /* ==========================================================
+           DISEÑO ADMINISTRATIVO SOBRIO
+           ========================================================== */
+        :root {
+            --report-primary: #15263a;
+            --report-primary-soft: #eef2f6;
+            --report-blue: #2f66b3;
+            --report-blue-dark: #255390;
+            --report-green: #2f7d5a;
+            --report-orange: #a86712;
+            --report-red: #b54752;
+            --report-purple: #6652a3;
+            --report-text: #243244;
+            --report-muted: #68768a;
+            --report-border: #dbe2ea;
+            --report-bg: #f3f5f8;
+            --report-card: #ffffff;
+            --report-shadow: 0 3px 12px rgba(24, 39, 58, 0.055);
+        }
+
+        .report-page {
+            padding: 24px;
+            background: var(--report-bg);
+        }
+
+        .report-shell {
+            width: min(1460px, 100%);
+        }
+
+        .report-topbar {
+            align-items: center;
+            margin-bottom: 16px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid #dfe5ec;
+        }
+
+        .report-eyebrow {
+            display: none;
+        }
+
+        .report-heading h1 {
+            font-size: clamp(1.55rem, 2.4vw, 2rem);
+            line-height: 1.15;
+            letter-spacing: -0.025em;
+        }
+
+        .report-heading p {
+            margin-top: 5px;
+            font-size: 0.86rem;
+            line-height: 1.45;
+        }
+
+        .report-user-chip {
+            padding: 8px 11px;
+            border-radius: 9px;
+            background: #ffffff;
+            box-shadow: none;
+        }
+
+        .report-user-chip i {
+            width: 31px;
+            height: 31px;
+            border-radius: 8px;
+            color: #526277;
+            background: #edf1f5;
+            font-size: 0.82rem;
+        }
+
+        .report-card {
+            border-radius: 11px;
+            box-shadow: var(--report-shadow);
+        }
+
+        /* Pestañas compactas */
+        .report-type-grid {
+            width: fit-content;
+            max-width: 100%;
+            display: flex;
+            gap: 4px;
+            margin-bottom: 16px;
+            padding: 4px;
+            border: 1px solid #d8e0e8;
+            border-radius: 10px;
+            background: #e9eef3;
+        }
+
+        .report-type {
+            min-height: 42px;
+            gap: 8px;
+            padding: 8px 14px;
+            border: 0;
+            border-radius: 7px;
+            background: transparent;
+            box-shadow: none;
+        }
+
+        .report-type:hover {
+            transform: none;
+            border-color: transparent;
+            background: rgba(255, 255, 255, 0.56);
+            box-shadow: none;
+        }
+
+        .report-type.active {
+            border: 0;
+            background: #ffffff;
+            box-shadow: 0 1px 4px rgba(18, 35, 54, 0.14);
+        }
+
+        .report-type-icon {
+            width: 27px;
+            height: 27px;
+            flex-basis: 27px;
+            border-radius: 7px;
+            color: #526277;
+            background: transparent;
+            font-size: 0.88rem;
+        }
+
+        .report-type[data-type="ventas"] .report-type-icon {
+            color: #526277;
+            background: transparent;
+        }
+
+        .report-type.active .report-type-icon {
+            color: var(--report-blue);
+            background: #edf3fb;
+        }
+
+        .report-type-copy strong {
+            font-size: 0.84rem;
+        }
+
+        .report-type-copy span,
+        .report-type-check {
+            display: none;
+        }
+
+        /* Filtros */
+        .report-filter-card {
+            margin-bottom: 16px;
+        }
+
+        .report-filter-head {
+            padding: 15px 17px 12px;
+        }
+
+        .report-filter-title {
+            gap: 9px;
+        }
+
+        .report-filter-title i {
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            color: #526277;
+            background: #edf1f5;
+            font-size: 0.82rem;
+        }
+
+        .report-filter-title h2 {
+            font-size: 0.94rem;
+        }
+
+        .report-filter-title p {
+            margin-top: 2px;
+            font-size: 0.72rem;
+        }
+
+        .report-filter-meta {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .report-live-status {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            min-height: 29px;
+            padding: 5px 9px;
+            border: 1px solid #dce3ea;
+            border-radius: 7px;
+            color: #667487;
+            background: #f8fafc;
+            font-size: 0.69rem;
+            font-weight: 750;
+            white-space: nowrap;
+        }
+
+        .report-live-dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: #7a8797;
+        }
+
+        .report-live-status.ready .report-live-dot {
+            background: #4d8b6d;
+        }
+
+        .report-live-status.loading .report-live-dot {
+            background: #2f66b3;
+            animation: reportPulse 0.9s ease-in-out infinite;
+        }
+
+        .report-live-status.error .report-live-dot {
+            background: #b54752;
+        }
+
+        @keyframes reportPulse {
+            0%, 100% {
+                opacity: 0.38;
+                transform: scale(0.8);
+            }
+
+            50% {
+                opacity: 1;
+                transform: scale(1.15);
+            }
+        }
+
+        .report-filter-count {
+            min-height: 29px;
+            padding: 5px 9px;
+            border-radius: 7px;
+            font-size: 0.69rem;
+        }
+
+        .report-filter-body {
+            padding: 15px 17px 17px;
+        }
+
+        .report-filter-grid {
+            gap: 11px;
+        }
+
+        .report-field label {
+            margin-bottom: 6px;
+            font-size: 0.68rem;
+            letter-spacing: 0.025em;
+        }
+
+        .report-control input,
+        .report-control select {
+            height: 41px;
+            border-radius: 8px;
+            font-size: 0.81rem;
+        }
+
+        .report-date-quick {
+            margin-top: 7px;
+        }
+
+        .report-quick-btn {
+            min-height: 27px;
+            padding: 4px 9px;
+            border-radius: 7px;
+            font-size: 0.66rem;
+        }
+
+        .report-filter-actions {
+            margin-top: 13px;
+            padding-top: 12px;
+        }
+
+        .report-btn {
+            min-height: 38px;
+            padding: 8px 13px;
+            border-radius: 8px;
+            font-size: 0.77rem;
+        }
+
+        .report-btn-primary,
+        .report-btn-excel,
+        .report-btn-pdf {
+            box-shadow: none;
+        }
+
+        .report-btn-primary {
+            background: var(--report-blue);
+        }
+
+        .report-btn-primary:hover:not(:disabled) {
+            background: var(--report-blue-dark);
+        }
+
+        .report-btn-excel {
+            background: #347456;
+        }
+
+        .report-btn-pdf {
+            background: #a9414b;
+        }
+
+        .report-btn-soft {
+            color: #536176;
+            background: #f5f7f9;
+        }
+
+        /* Indicadores */
+        .report-stats-grid {
+            gap: 11px;
+            margin-bottom: 16px;
+        }
+
+        .report-stat {
+            min-height: 94px;
+            padding: 15px;
+            border-top: 3px solid #6f8daf;
+        }
+
+        .report-stat:nth-child(2) {
+            border-top-color: #5d8b72;
+        }
+
+        .report-stat:nth-child(3) {
+            border-top-color: #a47b44;
+        }
+
+        .report-stat:nth-child(4) {
+            border-top-color: #776b9d;
+        }
+
+        .report-stat::after {
+            display: none;
+        }
+
+        .report-stat-icon {
+            width: 30px;
+            height: 30px;
+            border-radius: 8px;
+            color: #64748b !important;
+            background: #f0f3f6 !important;
+            font-size: 0.78rem;
+        }
+
+        .report-stat-label {
+            font-size: 0.67rem;
+        }
+
+        .report-stat-value {
+            margin-top: 7px;
+            font-size: 1.27rem;
+        }
+
+        /* Tabla */
+        .report-table-head {
+            padding: 15px 17px;
+        }
+
+        .report-table-head h2 {
+            font-size: 0.98rem;
+        }
+
+        .report-table-head p {
+            margin-top: 3px;
+            font-size: 0.72rem;
+        }
+
+        .report-table th,
+        .report-table td {
+            padding: 11px 12px;
+        }
+
+        .report-table th {
+            color: #526176;
+            background: #f3f6f9;
+            font-size: 0.66rem;
+        }
+
+        .report-table td {
+            font-size: 0.77rem;
+        }
+
+        .report-table tbody tr:nth-child(even) {
+            background: #fbfcfd;
+        }
+
+        .report-table tbody tr:hover {
+            background: #f2f6fa;
+        }
+
+        .report-table-wrap {
+            transition: opacity 0.18s ease;
+        }
+
+        .report-table-wrap.is-updating {
+            opacity: 0.52;
+            pointer-events: none;
+        }
+
+        .report-pill {
+            padding: 4px 7px;
             border-radius: 6px;
-            border: 1px solid #dee2e6;
-            font-size: 13px;
+            font-size: 0.64rem;
         }
 
-        .sort-icon {
-            margin-left: 5px;
-            font-size: 11px;
-            opacity: 0.6;
+        .report-pagination-bar {
+            padding: 11px 17px;
         }
 
-        th.sortable {
-            cursor: pointer;
-            user-select: none;
-            transition: background 0.2s;
+        .report-page-btn {
+            min-width: 32px;
+            height: 32px;
+            border-radius: 7px;
+            font-size: 0.7rem;
         }
 
-        th.sortable:hover {
-            background: #2d4a9e !important;
+        .report-page-size select {
+            height: 32px;
+            border-radius: 7px;
         }
 
-        th.sortable i {
-            margin-left: 5px;
-            font-size: 11px;
+        /* Calendario más formal */
+        .flatpickr-calendar {
+            border-radius: 11px !important;
+            box-shadow: 0 12px 34px rgba(15, 36, 58, 0.16) !important;
+        }
+
+        .flatpickr-months {
+            background: #1e3147;
+        }
+
+        .flatpickr-day {
+            border-radius: 6px !important;
+            font-weight: 600 !important;
+        }
+
+        .flatpickr-day.selected,
+        .flatpickr-day.startRange,
+        .flatpickr-day.endRange {
+            background: #2f66b3 !important;
+            border-color: #2f66b3 !important;
+        }
+
+        @media (max-width: 900px) {
+            .report-type-grid {
+                width: 100%;
+            }
+
+            .report-type {
+                flex: 1;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .report-filter-meta {
+                width: 100%;
+                justify-content: flex-start;
+            }
+
+            .report-type-grid {
+                display: grid;
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media print {
+            .sidebar,
+            .mobile-menu-toggle {
+                display: none !important;
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
         }
     </style>
 </head>
 <body>
-    <!-- Sidebar -->
-    <?php include 'includes/sidebar.php'; ?>
-    
-    <!-- Main Content -->
-    <div class="main-content">
-        <!-- Content Header -->
-        <div class="row mb-2">
-            <div class="col-sm-6">
-                <h1 class="m-0">
-                    Reportes del Sistema
-                </h1>
-            </div>
-        </div>
+<?php require_once __DIR__ . '/includes/sidebar.php'; ?>
 
-        <!-- Alertas -->
-        <?php if(isset($_SESSION['mensaje_exito'])): ?>
-        <div class="alert alert-success" style="background-color: #d4edda; color: #155724; padding: 12px; border-radius: 8px; margin-bottom: 20px;">
-            <?php echo $_SESSION['mensaje_exito']; unset($_SESSION['mensaje_exito']); ?>
-            <button type="button" style="float: right; background: transparent; border: none; font-size: 20px; cursor: pointer;" onclick="this.parentElement.style.display='none';">×</button>
-        </div>
-        <?php endif; ?>
+<main class="main-content">
+    <div class="report-page">
+        <div class="report-shell">
+            <header class="report-topbar">
+                <div class="report-heading">
+                    <h1>Reportes del sistema</h1>
 
-        <!-- Stats Cards Principales -->
-        <div class="row">
-            <div class="col-md-4 col-sm-6 col-12">
-                <div class="small-box bg-primary">
-                    <div class="inner">
-                        <h3><?php echo number_format($stats['total_clientes_activos'] ?? 0); ?></h3>
-                        <p>Clientes Activos</p>
-                    </div>
-                    <div class="icon">
-                        <i class="fas fa-users"></i>
+                    <p>
+                        Consulta la información del gimnasio, aplica filtros
+                        y descarga el resultado en Excel o PDF.
+                    </p>
+                </div>
+
+                <div class="report-user-chip">
+                    <i class="fas fa-user"></i>
+
+                    <div>
+                        <strong>
+                            <?php
+                            echo htmlspecialchars(
+                                $usuarioNombre,
+                                ENT_QUOTES,
+                                'UTF-8'
+                            );
+                            ?>
+                        </strong>
+
+                        <small>
+                            <?php
+                            echo htmlspecialchars(
+                                $usuarioRol,
+                                ENT_QUOTES,
+                                'UTF-8'
+                            );
+                            ?>
+                        </small>
                     </div>
                 </div>
-            </div>
-            <div class="col-md-4 col-sm-6 col-12">
-                <div class="small-box bg-success">
-                    <div class="inner">
-                        <h3><?php echo number_format($stats['total_inscripciones'] ?? 0); ?></h3>
-                        <p>Inscripciones Activas</p>
-                    </div>
-                    <div class="icon">
-                        <i class="fas fa-file-signature"></i>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-4 col-sm-6 col-12">
-                <div class="small-box bg-warning">
-                    <div class="inner">
-                        <h3>$<?php echo number_format($stats['total_ingresos'] ?? 0, 2); ?></h3>
-                        <p>Ingresos Totales</p>
-                    </div>
-                    <div class="icon">
-                        <i class="fas fa-dollar-sign"></i>
-                    </div>
-                </div>
-            </div>
-        </div>
+            </header>
 
-        <!-- Inscripciones por Plan y Resumen General -->
-        <div class="row">
-            <div class="col-md-6">
-                <div class="card h-100">
-                    <div class="card-header">
-                        <h3 class="card-title">
-                            <i class="fas fa-chart-pie mr-2"></i> Inscripciones por Plan
-                        </h3>
-                    </div>
-                    <div class="card-body p-0">
-                        <div class="table-responsive">
-                            <table class="table table-hover mb-0">
-                                <thead>
-                                    <tr>
-                                        <th>Plan</th>
-                                        <th class="text-center">Inscripciones</th>
-                                        <th class="text-right">Ingresos</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <?php 
-                                    $planes_result->data_seek(0);
-                                    while($plan = $planes_result->fetch_assoc()): ?>
-                                    <tr>
-                                        <td><strong><?php echo htmlspecialchars($plan['nombre']); ?></strong></td>
-                                        <td class="text-center">
-                                            <span class="badge-status bg-info text-white"><?php echo number_format($plan['total'] ?? 0); ?></span>
-                                        </td>
-                                        <td class="text-right text-success">
-                                            <strong>$<?php echo number_format($plan['ingresos'] ?? 0, 2); ?></strong>
-                                        </td>
-                                    </tr>
-                                    <?php endwhile; ?>
-                                </tbody>
-                            </table>
+            <section class="report-type-grid">
+                <button
+                    type="button"
+                    class="report-type active"
+                    data-type="inscripciones"
+                >
+                    <span class="report-type-icon">
+                        <i class="fas fa-id-card"></i>
+                    </span>
+
+                    <span class="report-type-copy">
+                        <strong>Inscripciones</strong>
+                        <span>
+                            Membresías, planes, vigencias, clientes e ingresos.
+                        </span>
+                    </span>
+
+                    <span class="report-type-check">
+                        <i class="fas fa-check"></i>
+                    </span>
+                </button>
+
+                <button
+                    type="button"
+                    class="report-type"
+                    data-type="ventas"
+                >
+                    <span class="report-type-icon">
+                        <i class="fas fa-basket-shopping"></i>
+                    </span>
+
+                    <span class="report-type-copy">
+                        <strong>Ventas de productos</strong>
+                        <span>
+                            Productos vendidos, devoluciones, métodos y totales.
+                        </span>
+                    </span>
+
+                    <span class="report-type-check">
+                        <i class="fas fa-check"></i>
+                    </span>
+                </button>
+            </section>
+
+            <section class="report-card report-filter-card">
+                <div class="report-filter-head">
+                    <div class="report-filter-title">
+                        <i class="fas fa-filter"></i>
+
+                        <div>
+                            <h2>Filtros</h2>
+                            <p>
+                                La tabla se actualiza automáticamente al
+                                cambiar cualquier criterio.
+                            </p>
                         </div>
                     </div>
-                </div>
-            </div>
 
-            <div class="col-md-6">
-                <div class="card h-100">
-                    <div class="card-header">
-                        <h3 class="card-title">
-                            <i class="fas fa-chart-simple mr-2"></i> Resumen General
-                        </h3>
+                    <div class="report-filter-meta">
+                        <span
+                            class="report-live-status ready"
+                            id="liveStatus"
+                        >
+                            <span class="report-live-dot"></span>
+                            Actualización automática
+                        </span>
+
+                        <span
+                            class="report-filter-count"
+                            id="filterCount"
+                        >
+                            <i class="fas fa-filter"></i>
+                            Sin filtros
+                        </span>
                     </div>
-                    <div class="card-body">
-                        <div class="grid-resumen">
-                            <div class="resumen-card">
-                                <div class="card-body">
-                                    <div class="resumen-stats">
-                                        <div>
-                                            <div class="resumen-number"><?php echo $planes_list->num_rows; ?></div>
-                                            <div class="resumen-label">Planes Activos</div>
-                                        </div>
-                                        <div class="resumen-icon">
-                                            <i class="fas fa-tags text-primary"></i>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="resumen-card">
-                                <div class="card-body">
-                                    <div class="resumen-stats">
-                                        <div>
-                                            <div class="resumen-number"><?php echo number_format($total_clientes['total']); ?></div>
-                                            <div class="resumen-label">Total Clientes</div>
-                                        </div>
-                                        <div class="resumen-icon">
-                                            <i class="fas fa-user-friends text-success"></i>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="resumen-card">
-                                <div class="card-body">
-                                    <div class="resumen-stats">
-                                        <div>
-                                            <div class="resumen-number"><?php echo number_format($vencidas['total']); ?></div>
-                                            <div class="resumen-label">Inscripciones Vencidas</div>
-                                        </div>
-                                        <div class="resumen-icon">
-                                            <i class="fas fa-clock text-warning"></i>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="resumen-card">
-                                <div class="card-body">
-                                    <div class="resumen-stats">
-                                        <div>
-                                            <div class="resumen-number"><?php echo number_format($canceladas['total']); ?></div>
-                                            <div class="resumen-label">Inscripciones Canceladas</div>
-                                        </div>
-                                        <div class="resumen-icon">
-                                            <i class="fas fa-times-circle text-danger"></i>
-                                        </div>
-                                    </div>
-                                </div>
+                </div>
+
+                <div class="report-filter-body">
+                    <div class="report-filter-grid">
+                        <div class="report-field">
+                            <label for="searchInput">
+                                Búsqueda
+                            </label>
+
+                            <div class="report-control">
+                                <i class="fas fa-magnifying-glass"></i>
+
+                                <input
+                                    type="text"
+                                    id="searchInput"
+                                    maxlength="120"
+                                    placeholder="Cliente, plan, ticket, producto..."
+                                >
                             </div>
                         </div>
-                    </div>
-                </div>
-            </div>
-        </div>
 
-        <br>
-        <!-- Filtros en Tiempo Real -->
-        <div class="card filter-card">
-            <div class="card-header">
-                <h3 class="card-title">
-                    <i class="fas fa-filter text-primary mr-2"></i> Filtros de Búsqueda
-                </h3>
-            </div>
-            <div class="card-body">
-                <div class="row">
-                    <div class="col-md-3">
-                        <div class="form-group">
-                            <label><i class="fas fa-search"></i> Buscador Rápido</label>
-                            <input type="text" class="form-control" id="searchInput" 
-                                   placeholder="Nombre, teléfono, email...">
-                            <small style="font-size: 11px; color: #6c757d; margin-top: 5px; display: block;">Búsqueda en tiempo real</small>
+                        <div
+                            class="report-field"
+                            id="inscriptionPlanField"
+                        >
+                            <label for="planSelect">
+                                Plan
+                            </label>
+
+                            <div class="report-control">
+                                <select id="planSelect">
+                                    <option value="">
+                                        Todos los planes
+                                    </option>
+
+                                    <?php foreach ($planes as $plan): ?>
+                                        <option
+                                            value="<?php
+                                            echo (int) $plan['id'];
+                                            ?>"
+                                        >
+                                            <?php
+                                            echo htmlspecialchars(
+                                                $plan['nombre'],
+                                                ENT_QUOTES,
+                                                'UTF-8'
+                                            );
+                                            ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div
+                            class="report-field"
+                            id="salesMethodField"
+                            hidden
+                        >
+                            <label for="methodSelect">
+                                Método
+                            </label>
+
+                            <div class="report-control">
+                                <select id="methodSelect">
+                                    <option value="">
+                                        Todos los métodos
+                                    </option>
+                                    <option value="efectivo">
+                                        Efectivo
+                                    </option>
+                                    <option value="tarjeta">
+                                        Tarjeta
+                                    </option>
+                                    <option value="transferencia">
+                                        Transferencia
+                                    </option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="report-field">
+                            <label for="statusSelect">
+                                Estado
+                            </label>
+
+                            <div class="report-control">
+                                <select id="statusSelect"></select>
+                            </div>
+                        </div>
+
+                        <div class="report-field">
+                            <label for="dateRange">
+                                Periodo del reporte
+                            </label>
+
+                            <div class="report-control">
+                                <i class="fas fa-calendar-days"></i>
+
+                                <input
+                                    type="text"
+                                    id="dateRange"
+                                    placeholder="Selecciona un rango"
+                                    readonly
+                                >
+
+                                <button
+                                    type="button"
+                                    class="report-date-clear"
+                                    id="clearDates"
+                                    title="Limpiar fechas"
+                                >
+                                    <i class="fas fa-xmark"></i>
+                                </button>
+                            </div>
+
+                            <div class="report-date-quick">
+                                <button
+                                    type="button"
+                                    class="report-quick-btn"
+                                    data-range="today"
+                                >
+                                    Hoy
+                                </button>
+
+                                <button
+                                    type="button"
+                                    class="report-quick-btn"
+                                    data-range="7days"
+                                >
+                                    Últimos 7 días
+                                </button>
+
+                                <button
+                                    type="button"
+                                    class="report-quick-btn"
+                                    data-range="month"
+                                >
+                                    Este mes
+                                </button>
+
+                                <button
+                                    type="button"
+                                    class="report-quick-btn"
+                                    data-range="previous"
+                                >
+                                    Mes anterior
+                                </button>
+                            </div>
                         </div>
                     </div>
-                    <div class="col-md-3">
-                        <div class="form-group">
-                            <label><i class="fas fa-tag"></i> Plan</label>
-                            <select class="form-control" id="planSelect">
-                                <option value="">Todos los planes</option>
-                                <?php 
-                                $planes_list->data_seek(0);
-                                while($plan = $planes_list->fetch_assoc()): ?>
-                                <option value="<?php echo $plan['id']; ?>">
-                                    <?php echo htmlspecialchars($plan['nombre']); ?>
-                                </option>
-                                <?php endwhile; ?>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="col-md-3">
-                        <div class="form-group">
-                            <label><i class="fas fa-circle-info"></i> Estado</label>
-                            <select class="form-control" id="estadoSelect">
-                                <option value="">Todos los estados</option>
-                                <option value="activa">Activa</option>
-                                <option value="vencida">Vencida</option>
-                                <option value="cancelada">Cancelada</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="col-md-3">
-                        <div class="form-group">
-                            <label><i class="fas fa-calendar-alt"></i> Rango de Fechas</label>
-                            <input type="text" class="form-control" id="fechaRango" placeholder="Seleccionar rango">
-                            <small style="font-size: 11px; color: #6c757d; margin-top: 5px; display: block;">Filtra por fecha de inicio</small>
-                        </div>
-                    </div>
-                </div>
-                <div class="row mt-3">
-                    <div class="col-12 text-right">
-                        <button class="btn-secondary" id="limpiarFiltros" style="padding: 6px 12px; border-radius: 6px; border: none; cursor: pointer;">
-                            <i class="fas fa-eraser"></i> Limpiar filtros
+
+                    <div class="report-filter-actions">
+                        <button
+                            type="button"
+                            class="report-btn report-btn-soft"
+                            id="clearFilters"
+                        >
+                            <i class="fas fa-eraser"></i>
+                            Limpiar
+                        </button>
+
+                        <button
+                            type="button"
+                            class="report-btn report-btn-primary"
+                            id="applyFilters"
+                        >
+                            <i class="fas fa-rotate"></i>
+                            Actualizar
                         </button>
                     </div>
                 </div>
-            </div>
-        </div>
+            </section>
 
-        <!-- Botones de Exportación -->
-        <div class="row mb-3">
-            <div class="col-12">
-                <button class="btn-success btn-export" onclick="exportarExcel()">
-                    <i class="fas fa-file-excel"></i> Exportar a Excel
-                </button>
-                <button class="btn-danger btn-export" onclick="exportarPDF()">
-                    <i class="fas fa-file-pdf"></i> Exportar a PDF
-                </button>
-            </div>
-        </div>
+            <section
+                class="report-stats-grid"
+                id="statsGrid"
+            >
+                <article class="report-card report-stat">
+                    <div class="report-stat-top">
+                        <span class="report-stat-label" id="statLabel1">
+                            Registros
+                        </span>
 
-        <!-- Tabla de Inscripciones -->
-        <div class="card">
-            <div class="card-header">
-                <h3 class="card-title">
-                    <i class="fas fa-list mr-2"></i> Listado de Inscripciones
-                </h3>
-            </div>
-            <div class="card-body p-0">
-                <div class="table-responsive">
-                    <table class="table table-hover" id="tablaReporte">
-                        <thead>
-                            <tr>
-                                <th class="sortable" data-column="cliente">Cliente <i class="fas fa-sort sort-icon"></i></th>
-                                <th class="sortable" data-column="contacto">Contacto <i class="fas fa-sort sort-icon"></i></th>
-                                <th class="sortable" data-column="plan">Plan <i class="fas fa-sort sort-icon"></i></th>
-                                <th class="sortable" data-column="fecha_inicio">Fecha Inicio <i class="fas fa-sort sort-icon"></i></th>
-                                <th class="sortable" data-column="fecha_fin">Fecha Fin <i class="fas fa-sort sort-icon"></i></th>
-                                <th class="sortable" data-column="dias">Días Restantes <i class="fas fa-sort sort-icon"></i></th>
-                                <th class="sortable" data-column="precio">Precio <i class="fas fa-sort sort-icon"></i></th>
-                                <th class="sortable" data-column="estado">Estado <i class="fas fa-sort sort-icon"></i></th>
-                            </tr>
-                        </thead>
-                        <tbody id="tablaBody">
-                            <tr>
-                                <td colspan="8" class="text-center py-5">
-                                    <div class="loading-spinner">
-                                        <i class="fas fa-spinner fa-3x text-primary"></i>
-                                        <p class="mt-2">Cargando datos...</p>
-                                    </div>
-                                </td>
-                            </tr>
-                        </tbody>
+                        <span class="report-stat-icon">
+                            <i class="fas fa-list-check"></i>
+                        </span>
+                    </div>
+
+                    <strong class="report-stat-value" id="statValue1">
+                        0
+                    </strong>
+
+                    <small class="report-stat-note" id="statNote1">
+                        Resultado del filtro
+                    </small>
+                </article>
+
+                <article class="report-card report-stat">
+                    <div class="report-stat-top">
+                        <span class="report-stat-label" id="statLabel2">
+                            Ingresos
+                        </span>
+
+                        <span class="report-stat-icon">
+                            <i class="fas fa-dollar-sign"></i>
+                        </span>
+                    </div>
+
+                    <strong class="report-stat-value" id="statValue2">
+                        $0.00
+                    </strong>
+
+                    <small class="report-stat-note" id="statNote2">
+                        Acumulado
+                    </small>
+                </article>
+
+                <article class="report-card report-stat">
+                    <div class="report-stat-top">
+                        <span class="report-stat-label" id="statLabel3">
+                            Activas
+                        </span>
+
+                        <span class="report-stat-icon">
+                            <i class="fas fa-circle-check"></i>
+                        </span>
+                    </div>
+
+                    <strong class="report-stat-value" id="statValue3">
+                        0
+                    </strong>
+
+                    <small class="report-stat-note" id="statNote3">
+                        Inscripciones vigentes
+                    </small>
+                </article>
+
+                <article class="report-card report-stat">
+                    <div class="report-stat-top">
+                        <span class="report-stat-label" id="statLabel4">
+                            Por vencer
+                        </span>
+
+                        <span class="report-stat-icon">
+                            <i class="fas fa-clock"></i>
+                        </span>
+                    </div>
+
+                    <strong class="report-stat-value" id="statValue4">
+                        0
+                    </strong>
+
+                    <small class="report-stat-note" id="statNote4">
+                        Próximos 7 días
+                    </small>
+                </article>
+            </section>
+
+            <section class="report-card report-table-card">
+                <div class="report-table-head">
+                    <div>
+                        <h2 id="tableTitle">
+                            Detalle de inscripciones
+                        </h2>
+
+                        <p id="tableSubtitle">
+                            Los datos mostrados respetan todos los filtros.
+                        </p>
+                    </div>
+
+                    <div class="report-export-actions">
+                        <button
+                            type="button"
+                            class="report-btn report-btn-excel"
+                            id="exportExcel"
+                            disabled
+                        >
+                            <i class="fas fa-file-excel"></i>
+                            Excel
+                        </button>
+
+                        <button
+                            type="button"
+                            class="report-btn report-btn-pdf"
+                            id="exportPdf"
+                            disabled
+                        >
+                            <i class="fas fa-file-pdf"></i>
+                            PDF
+                        </button>
+                    </div>
+                </div>
+
+                <div id="tableState">
+                    <div class="report-loading">
+                        <i class="fas fa-spinner"></i>
+                        Preparando el reporte...
+                    </div>
+                </div>
+
+                <div
+                    class="report-table-wrap"
+                    id="tableWrap"
+                    hidden
+                >
+                    <table class="report-table">
+                        <thead id="tableHead"></thead>
+                        <tbody id="tableBody"></tbody>
                     </table>
                 </div>
-                <div class="pagination-container" id="paginationContainer" style="display: none;">
-                    <div class="records-per-page">
-                        <span>Mostrar:</span>
-                        <select id="recordsPerPage">
+
+                <div
+                    class="report-pagination-bar"
+                    id="paginationBar"
+                    hidden
+                >
+                    <div class="report-page-size">
+                        <span>Mostrar</span>
+
+                        <select id="pageSize">
                             <option value="10">10</option>
-                            <option value="25" selected>25</option>
+                            <option value="15" selected>15</option>
+                            <option value="25">25</option>
                             <option value="50">50</option>
                             <option value="100">100</option>
                         </select>
-                        <span>registros</span>
+
+                        <span>por página</span>
                     </div>
-                    <div class="pagination-info" id="paginationInfo"></div>
-                    <ul class="pagination" id="pagination"></ul>
+
+                    <div
+                        class="report-pagination-info"
+                        id="paginationInfo"
+                    ></div>
+
+                    <nav
+                        class="report-pagination"
+                        id="pagination"
+                    ></nav>
                 </div>
-            </div>
+            </section>
         </div>
     </div>
+</main>
 
-    <!-- Scripts -->
-    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-    <script src="https://cdn.jsdelivr.net/npm/moment@2.29.4/moment.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/daterangepicker/daterangepicker.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+<script>
+(function () {
+    'use strict';
 
-    <script>
-        let timeoutBusqueda;
-        let fechaInicio = '';
-        let fechaFin = '';
-        
-        // Variables para paginacion y ordenamiento
-        let datosCompletos = [];
-        let currentPage = 1;
-        let recordsPerPage = 25;
-        let sortColumn = 'cliente';
-        let sortOrder = 'asc';
-        
-        // Inicializar DateRangePicker
-        $(document).ready(function() {
-            $('#fechaRango').daterangepicker({
-                autoUpdateInput: false,
-                locale: {
-                    cancelLabel: 'Limpiar',
-                    applyLabel: 'Aplicar',
-                    format: 'YYYY-MM-DD',
-                    daysOfWeek: ['Do', 'Lu', 'Ma', 'Mi', 'Ju', 'Vi', 'Sa'],
-                    monthNames: ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
-                },
-                opens: 'center'
-            });
-            
-            $('#fechaRango').on('apply.daterangepicker', function(ev, picker) {
-                $(this).val(picker.startDate.format('YYYY-MM-DD') + ' - ' + picker.endDate.format('YYYY-MM-DD'));
-                fechaInicio = picker.startDate.format('YYYY-MM-DD');
-                fechaFin = picker.endDate.format('YYYY-MM-DD');
-                cargarDatos();
-            });
-            
-            $('#fechaRango').on('cancel.daterangepicker', function(ev, picker) {
-                $(this).val('');
-                fechaInicio = '';
-                fechaFin = '';
-                cargarDatos();
-            });
-            
-            // Eventos de ordenamiento
-            $('.sortable').on('click', function() {
-                let column = $(this).data('column');
-                if (sortColumn === column) {
-                    sortOrder = sortOrder === 'asc' ? 'desc' : 'asc';
-                } else {
-                    sortColumn = column;
-                    sortOrder = 'asc';
-                }
-                
-                // Actualizar iconos
-                $('.sortable i').removeClass('fa-sort-up fa-sort-down').addClass('fa-sort');
-                let icon = $(this).find('i');
-                icon.removeClass('fa-sort');
-                icon.addClass(sortOrder === 'asc' ? 'fa-sort-up' : 'fa-sort-down');
-                
-                currentPage = 1;
-                renderTabla();
-            });
-            
-            // Cambiar registros por pagina
-            $('#recordsPerPage').on('change', function() {
-                recordsPerPage = parseInt($(this).val());
-                currentPage = 1;
-                renderTabla();
-            });
-            
-            // Cargar datos iniciales
-            cargarDatos();
-            
-            // Filtros en tiempo real
-            $('#searchInput, #planSelect, #estadoSelect').on('input change', function() {
-                clearTimeout(timeoutBusqueda);
-                timeoutBusqueda = setTimeout(function() {
-                    cargarDatos();
-                }, 500);
-            });
+    const empresa = <?php
+        echo json_encode(
+            $empresa,
+            JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+        );
+    ?>;
+
+    const usuario = {
+        nombre: <?php
+            echo json_encode(
+                $usuarioNombre,
+                JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+            );
+        ?>,
+        rol: <?php
+            echo json_encode(
+                $usuarioRol,
+                JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+            );
+        ?>
+    };
+
+    let reportType = 'inscripciones';
+    let rows = [];
+    let currentPage = 1;
+    let pageSize = 15;
+    let sortKey = 'fecha_inicio';
+    let sortDirection = 'desc';
+    let startDate = '';
+    let endDate = '';
+    let loading = false;
+    let filterTimer = null;
+    let requestController = null;
+    let requestSequence = 0;
+
+    const dom = {
+        reportTypes: document.querySelectorAll('.report-type'),
+        search: document.getElementById('searchInput'),
+        plan: document.getElementById('planSelect'),
+        method: document.getElementById('methodSelect'),
+        status: document.getElementById('statusSelect'),
+        dateRange: document.getElementById('dateRange'),
+        clearDates: document.getElementById('clearDates'),
+        quickRanges: document.querySelectorAll('.report-quick-btn'),
+        clearFilters: document.getElementById('clearFilters'),
+        applyFilters: document.getElementById('applyFilters'),
+        inscriptionPlanField:
+            document.getElementById('inscriptionPlanField'),
+        salesMethodField:
+            document.getElementById('salesMethodField'),
+        filterCount: document.getElementById('filterCount'),
+        liveStatus: document.getElementById('liveStatus'),
+        tableState: document.getElementById('tableState'),
+        tableWrap: document.getElementById('tableWrap'),
+        tableHead: document.getElementById('tableHead'),
+        tableBody: document.getElementById('tableBody'),
+        tableTitle: document.getElementById('tableTitle'),
+        tableSubtitle: document.getElementById('tableSubtitle'),
+        paginationBar: document.getElementById('paginationBar'),
+        paginationInfo: document.getElementById('paginationInfo'),
+        pagination: document.getElementById('pagination'),
+        pageSize: document.getElementById('pageSize'),
+        exportExcel: document.getElementById('exportExcel'),
+        exportPdf: document.getElementById('exportPdf')
+    };
+
+    const stats = [1, 2, 3, 4].map(function (index) {
+        return {
+            label: document.getElementById(
+                'statLabel' + index
+            ),
+            value: document.getElementById(
+                'statValue' + index
+            ),
+            note: document.getElementById(
+                'statNote' + index
+            )
+        };
+    });
+
+    const statuses = {
+        inscripciones: [
+            ['', 'Todos los estados'],
+            ['activa', 'Activa'],
+            ['vencida', 'Vencida'],
+            ['cancelada', 'Cancelada']
+        ],
+        ventas: [
+            ['', 'Todos los estados'],
+            ['completada', 'Completada'],
+            ['cancelada', 'Cancelada'],
+            ['pendiente', 'Pendiente']
+        ]
+    };
+
+    const columnConfig = {
+        inscripciones: [
+            {
+                key: 'cliente',
+                label: 'Cliente'
+            },
+            {
+                key: 'plan_nombre',
+                label: 'Plan'
+            },
+            {
+                key: 'fecha_inicio',
+                label: 'Inicio'
+            },
+            {
+                key: 'fecha_fin',
+                label: 'Fin'
+            },
+            {
+                key: 'dias_restantes',
+                label: 'Vigencia'
+            },
+            {
+                key: 'precio_pagado',
+                label: 'Importe'
+            },
+            {
+                key: 'estado',
+                label: 'Estado'
+            }
+        ],
+        ventas: [
+            {
+                key: 'id',
+                label: 'Ticket'
+            },
+            {
+                key: 'fecha_venta',
+                label: 'Fecha'
+            },
+            {
+                key: 'productos',
+                label: 'Productos'
+            },
+            {
+                key: 'cliente_nombre',
+                label: 'Cliente'
+            },
+            {
+                key: 'vendedor_nombre',
+                label: 'Vendedor'
+            },
+            {
+                key: 'metodo_pago',
+                label: 'Método'
+            },
+            {
+                key: 'total_bruto',
+                label: 'Venta'
+            },
+            {
+                key: 'devoluciones',
+                label: 'Devoluciones'
+            },
+            {
+                key: 'total_neto',
+                label: 'Neto'
+            },
+            {
+                key: 'estado',
+                label: 'Estado'
+            }
+        ]
+    };
+
+    const datePicker = flatpickr(dom.dateRange, {
+        mode: 'range',
+        dateFormat: 'Y-m-d',
+        locale: 'es',
+        allowInput: false,
+        showMonths: window.innerWidth >= 900 ? 2 : 1,
+        maxDate: 'today',
+        onChange: function (selectedDates) {
+            clearQuickRangeActive();
+
+            if (selectedDates.length === 2) {
+                startDate = formatDateIso(selectedDates[0]);
+                endDate = formatDateIso(selectedDates[1]);
+                updateFilterCount();
+                scheduleReportReload(80);
+            } else if (selectedDates.length === 0) {
+                startDate = '';
+                endDate = '';
+                updateFilterCount();
+            }
+        }
+    });
+
+    function escapeHtml(value) {
+        const div = document.createElement('div');
+        div.textContent = value === null ||
+            value === undefined
+            ? ''
+            : String(value);
+
+        return div.innerHTML;
+    }
+
+    function formatMoney(value) {
+        return new Intl.NumberFormat('es-MX', {
+            style: 'currency',
+            currency: 'MXN'
+        }).format(Number(value) || 0);
+    }
+
+    function formatNumber(value) {
+        return new Intl.NumberFormat('es-MX').format(
+            Number(value) || 0
+        );
+    }
+
+    function formatDateIso(date) {
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1)
+            .padStart(2, '0');
+        const day = String(date.getDate())
+            .padStart(2, '0');
+
+        return year + '-' + month + '-' + day;
+    }
+
+    function formatDate(value, includeTime) {
+        if (!value) {
+            return '—';
+        }
+
+        const normalized = String(value).replace(' ', 'T');
+        const date = new Date(normalized);
+
+        if (Number.isNaN(date.getTime())) {
+            const parts = String(value).split('-');
+
+            if (parts.length >= 3) {
+                return parts[2].substring(0, 2) +
+                    '/' +
+                    parts[1] +
+                    '/' +
+                    parts[0];
+            }
+
+            return value;
+        }
+
+        return new Intl.DateTimeFormat('es-MX', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: includeTime ? '2-digit' : undefined,
+            minute: includeTime ? '2-digit' : undefined
+        }).format(date);
+    }
+
+    function capitalize(value) {
+        const text = String(value || '');
+
+        return text.charAt(0).toUpperCase() +
+            text.slice(1);
+    }
+
+    function renderStatus(status, type) {
+        let cssClass = 'neutral';
+        let icon = 'fa-circle';
+
+        if (
+            status === 'activa' ||
+            status === 'completada'
+        ) {
+            cssClass = status === 'activa'
+                ? 'active'
+                : 'completed';
+            icon = 'fa-circle-check';
+        } else if (
+            status === 'vencida' ||
+            status === 'cancelada'
+        ) {
+            cssClass = status === 'vencida'
+                ? 'expired'
+                : 'cancelled';
+            icon = 'fa-circle-xmark';
+        } else if (status === 'pendiente') {
+            cssClass = 'pending';
+            icon = 'fa-clock';
+        }
+
+        return `
+            <span class="report-pill ${cssClass}">
+                <i class="fas ${icon}"></i>
+                ${escapeHtml(capitalize(status))}
+            </span>
+        `;
+    }
+
+    function renderValidity(row) {
+        if (row.estado === 'cancelada') {
+            return `
+                <span class="report-pill neutral">
+                    No aplica
+                </span>
+            `;
+        }
+
+        const days = Number(row.dias_restantes);
+
+        if (Number.isNaN(days)) {
+            return `
+                <span class="report-pill neutral">
+                    Sin dato
+                </span>
+            `;
+        }
+
+        if (days < 0) {
+            return `
+                <span class="report-pill expired">
+                    Vencida
+                </span>
+            `;
+        }
+
+        if (days === 0) {
+            return `
+                <span class="report-pill warning">
+                    Vence hoy
+                </span>
+            `;
+        }
+
+        if (days <= 7) {
+            return `
+                <span class="report-pill warning">
+                    ${days} días
+                </span>
+            `;
+        }
+
+        return `
+            <span class="report-pill active">
+                ${days} días
+            </span>
+        `;
+    }
+
+    function updateStatusOptions() {
+        dom.status.innerHTML = statuses[reportType]
+            .map(function (item) {
+                return `
+                    <option value="${item[0]}">
+                        ${item[1]}
+                    </option>
+                `;
+            })
+            .join('');
+    }
+
+    function clearQuickRangeActive() {
+        dom.quickRanges.forEach(function (button) {
+            button.classList.remove('active');
         });
-        
-        function cargarDatos() {
-            const search = $('#searchInput').val();
-            const plan = $('#planSelect').val();
-            const estado = $('#estadoSelect').val();
-            
-            $.ajax({
-                url: 'ajax_reporte_inscripciones.php',
-                method: 'GET',
-                data: { 
-                    search: search, 
-                    plan: plan, 
-                    estado: estado,
-                    fecha_inicio: fechaInicio,
-                    fecha_fin: fechaFin
-                },
-                dataType: 'json',
-                success: function(response) {
-                    if(response.success) {
-                        datosCompletos = response.datos;
-                        currentPage = 1;
-                        renderTabla();
-                        $('#paginationContainer').show();
-                    } else {
-                        console.error('Error:', response.message);
-                        mostrarError('Error al cargar los datos');
-                    }
-                },
-                error: function(xhr, status, error) {
-                    console.error('Error AJAX:', error);
-                    mostrarError('Error de conexión al servidor');
-                }
-            });
+    }
+
+    function setQuickRange(type, button) {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        let start = new Date(today);
+        let end = new Date(today);
+
+        if (type === '7days') {
+            start.setDate(today.getDate() - 6);
+        } else if (type === 'month') {
+            start = new Date(
+                today.getFullYear(),
+                today.getMonth(),
+                1
+            );
+        } else if (type === 'previous') {
+            start = new Date(
+                today.getFullYear(),
+                today.getMonth() - 1,
+                1
+            );
+
+            end = new Date(
+                today.getFullYear(),
+                today.getMonth(),
+                0
+            );
         }
-        
-        function ordenarDatos(datos) {
-            return datos.sort((a, b) => {
-                let valA, valB;
-                
-                switch(sortColumn) {
-                    case 'cliente':
-                        valA = (a.cliente_nombre + ' ' + a.cliente_apellido).toLowerCase();
-                        valB = (b.cliente_nombre + ' ' + b.cliente_apellido).toLowerCase();
-                        break;
-                    case 'contacto':
-                        valA = (a.email || '').toLowerCase();
-                        valB = (b.email || '').toLowerCase();
-                        break;
-                    case 'plan':
-                        valA = (a.plan_nombre || '').toLowerCase();
-                        valB = (b.plan_nombre || '').toLowerCase();
-                        break;
-                    case 'fecha_inicio':
-                        valA = a.fecha_inicio || '';
-                        valB = b.fecha_inicio || '';
-                        break;
-                    case 'fecha_fin':
-                        valA = a.fecha_fin || '';
-                        valB = b.fecha_fin || '';
-                        break;
-                    case 'dias':
-                        valA = a.dias_restantes !== null ? parseInt(a.dias_restantes) : -1;
-                        valB = b.dias_restantes !== null ? parseInt(b.dias_restantes) : -1;
-                        break;
-                    case 'precio':
-                        valA = parseFloat(a.precio_pagado) || 0;
-                        valB = parseFloat(b.precio_pagado) || 0;
-                        break;
-                    case 'estado':
-                        valA = (a.estado || '').toLowerCase();
-                        valB = (b.estado || '').toLowerCase();
-                        break;
-                    default:
-                        valA = (a.cliente_nombre + ' ' + a.cliente_apellido).toLowerCase();
-                        valB = (b.cliente_nombre + ' ' + b.cliente_apellido).toLowerCase();
-                }
-                
-                if (valA < valB) return sortOrder === 'asc' ? -1 : 1;
-                if (valA > valB) return sortOrder === 'asc' ? 1 : -1;
-                return 0;
-            });
+
+        startDate = formatDateIso(start);
+        endDate = formatDateIso(end);
+
+        datePicker.setDate([start, end], true);
+
+        clearQuickRangeActive();
+
+        if (button) {
+            button.classList.add('active');
         }
-        
-        function renderTabla() {
-            if(datosCompletos.length === 0) {
-                let tbody = '<tr><td colspan="8" class="text-center py-5">' +
-                            '<i class="fas fa-inbox fa-3x text-muted mb-3"></i>' +
-                            '<p class="mb-0">No hay inscripciones que coincidan con los filtros</p>' +
-                            '</td></tr>';
-                $('#tablaBody').html(tbody);
-                $('#paginationContainer').hide();
+
+        updateFilterCount();
+        loadReport();
+    }
+
+    function setReportType(type) {
+        if (type === reportType) {
+            return;
+        }
+
+        reportType = type;
+
+        dom.reportTypes.forEach(function (button) {
+            button.classList.toggle(
+                'active',
+                button.dataset.type === type
+            );
+        });
+
+        dom.inscriptionPlanField.hidden =
+            type !== 'inscripciones';
+
+        dom.salesMethodField.hidden =
+            type !== 'ventas';
+
+        dom.plan.value = '';
+        dom.method.value = '';
+
+        updateStatusOptions();
+
+        sortKey = type === 'inscripciones'
+            ? 'fecha_inicio'
+            : 'fecha_venta';
+
+        sortDirection = 'desc';
+        currentPage = 1;
+
+        updateReportCopy();
+        updateFilterCount();
+        loadReport();
+    }
+
+    function updateReportCopy() {
+        if (reportType === 'inscripciones') {
+            dom.search.placeholder =
+                'Cliente, plan, teléfono, email o folio...';
+
+            dom.tableTitle.textContent =
+                'Detalle de inscripciones';
+
+            dom.tableSubtitle.textContent =
+                'Listado de membresías según los filtros seleccionados.';
+        } else {
+            dom.search.placeholder =
+                'Ticket, cliente, vendedor o producto...';
+
+            dom.tableTitle.textContent =
+                'Detalle de ventas de productos';
+
+            dom.tableSubtitle.textContent =
+                'Listado de ventas con importe original, devoluciones y total neto.';
+        }
+    }
+
+    function getFilterParams() {
+        const params = new URLSearchParams({
+            action: 'datos',
+            tipo: reportType
+        });
+
+        const search = dom.search.value.trim();
+
+        if (search) {
+            params.set('search', search);
+        }
+
+        if (startDate) {
+            params.set('fecha_inicio', startDate);
+        }
+
+        if (endDate) {
+            params.set('fecha_fin', endDate);
+        }
+
+        if (dom.status.value) {
+            params.set('estado', dom.status.value);
+        }
+
+        if (
+            reportType === 'inscripciones' &&
+            dom.plan.value
+        ) {
+            params.set('plan', dom.plan.value);
+        }
+
+        if (
+            reportType === 'ventas' &&
+            dom.method.value
+        ) {
+            params.set('metodo', dom.method.value);
+        }
+
+        return params;
+    }
+
+    function setLiveStatus(text, state) {
+        const status = state || 'ready';
+
+        dom.liveStatus.className =
+            'report-live-status ' + status;
+
+        dom.liveStatus.innerHTML = `
+            <span class="report-live-dot"></span>
+            ${escapeHtml(text)}
+        `;
+    }
+
+    function scheduleReportReload(delay) {
+        clearTimeout(filterTimer);
+
+        filterTimer = setTimeout(function () {
+            loadReport();
+        }, typeof delay === 'number' ? delay : 320);
+    }
+
+    function updateFilterCount() {
+        let count = 0;
+
+        if (dom.search.value.trim()) {
+            count++;
+        }
+
+        if (startDate || endDate) {
+            count++;
+        }
+
+        if (dom.status.value) {
+            count++;
+        }
+
+        if (
+            reportType === 'inscripciones' &&
+            dom.plan.value
+        ) {
+            count++;
+        }
+
+        if (
+            reportType === 'ventas' &&
+            dom.method.value
+        ) {
+            count++;
+        }
+
+        dom.filterCount.innerHTML = count > 0
+            ? `
+                <i class="fas fa-filter"></i>
+                ${count} filtro${count === 1 ? '' : 's'}
+              `
+            : `
+                <i class="fas fa-filter"></i>
+                Sin filtros
+              `;
+    }
+
+    function setLoadingState() {
+        loading = true;
+        dom.applyFilters.disabled = true;
+        dom.exportExcel.disabled = true;
+        dom.exportPdf.disabled = true;
+        dom.tableWrap.classList.add('is-updating');
+        setLiveStatus('Actualizando datos...', 'loading');
+
+        if (rows.length === 0) {
+            dom.tableWrap.hidden = true;
+            dom.paginationBar.hidden = true;
+            dom.tableState.innerHTML = `
+                <div class="report-loading">
+                    <i class="fas fa-spinner"></i>
+                    Consultando la información...
+                </div>
+            `;
+        }
+    }
+
+    function setEmptyState() {
+        dom.tableWrap.hidden = true;
+        dom.paginationBar.hidden = true;
+        dom.tableState.innerHTML = `
+            <div class="report-empty">
+                <i class="fas fa-folder-open"></i>
+                <strong>Sin resultados</strong>
+                <p>
+                    No hay registros que coincidan con los filtros actuales.
+                </p>
+            </div>
+        `;
+    }
+
+    function setErrorState(message) {
+        dom.tableWrap.hidden = true;
+        dom.paginationBar.hidden = true;
+        dom.tableState.innerHTML = `
+            <div class="report-empty">
+                <i class="fas fa-triangle-exclamation"></i>
+                <strong>No fue posible cargar el reporte</strong>
+                <p>${escapeHtml(message)}</p>
+            </div>
+        `;
+    }
+
+    async function loadReport() {
+        clearTimeout(filterTimer);
+        updateFilterCount();
+
+        if (requestController) {
+            requestController.abort();
+        }
+
+        requestController = new AbortController();
+
+        const currentRequest = ++requestSequence;
+        const signal = requestController.signal;
+
+        setLoadingState();
+
+        try {
+            const response = await fetch(
+                'reportes.php?' + getFilterParams().toString(),
+                {
+                    headers: {
+                        'Accept': 'application/json'
+                    },
+                    signal: signal
+                }
+            );
+
+            const data = await response.json();
+
+            if (currentRequest !== requestSequence) {
                 return;
             }
-            
-            // Ordenar datos
-            let datosOrdenados = ordenarDatos([...datosCompletos]);
-            
-            // Calcular paginacion
-            let totalRecords = datosOrdenados.length;
-            let totalPages = Math.ceil(totalRecords / recordsPerPage);
-            let startIndex = (currentPage - 1) * recordsPerPage;
-            let endIndex = startIndex + recordsPerPage;
-            let datosPagina = datosOrdenados.slice(startIndex, endIndex);
-            
-            // Renderizar tabla
-            let tbody = '';
-            datosPagina.forEach(function(row) {
-                let fechaInicioMostrar = row.fecha_inicio ? formatFecha(row.fecha_inicio) : '-';
-                let fechaFinMostrar = row.fecha_fin && row.fecha_fin !== '0000-00-00' ? formatFecha(row.fecha_fin) : '<span class="text-muted">Sin vencimiento</span>';
-                
-                let badgeDias = '';
-                
-                // VERIFICAR SI VIENE texto_dias DESDE EL SERVIDOR (para plan Visita)
-                if(row.texto_dias) {
-                    if(row.texto_dias === 'Vencido') {
-                        badgeDias = '<span class="badge-status bg-danger text-white">Vencido</span>';
-                    } else if(row.texto_dias === 'Vence hoy') {
-                        badgeDias = '<span class="badge-status bg-warning">Vence hoy</span>';
-                    } else if(row.texto_dias === 'Hoy (Válido)') {
-                        badgeDias = '<span class="badge-status bg-success text-white">Válido hoy</span>';
-                    } else if(row.texto_dias === 'Por vencer') {
-                        badgeDias = '<span class="badge-status bg-warning">Por vencer</span>';
-                    } else if(typeof row.texto_dias === 'number' || !isNaN(parseInt(row.texto_dias))) {
-                        badgeDias = '<span class="badge-status bg-info text-white">' + row.texto_dias + ' días</span>';
-                    } else if(row.texto_dias === '-') {
-                        badgeDias = '<span class="badge-status bg-secondary text-white">-</span>';
-                    } else {
-                        badgeDias = '<span class="badge-status bg-info text-white">' + row.texto_dias + '</span>';
-                    }
-                } 
-                // Si no viene texto_dias, usar el cálculo tradicional
-                else if(row.dias_restantes > 0) {
-                    badgeDias = '<span class="badge-status bg-info text-white">' + row.dias_restantes + ' días</span>';
-                } else if(row.estado === 'activa') {
-                    // Verificar si es plan Visita para mostrar mensaje especial
-                    if(row.plan_nombre === 'Visita') {
-                        badgeDias = '<span class="badge-status bg-warning">Válido hoy</span>';
-                    } else {
-                        badgeDias = '<span class="badge-status bg-warning">Por vencer</span>';
-                    }
-                } else {
-                    badgeDias = '<span class="badge-status bg-secondary text-white">-</span>';
+
+            if (!response.ok || !data.success) {
+                throw new Error(
+                    data.message ||
+                    'No se pudo obtener la información.'
+                );
+            }
+
+            rows = Array.isArray(data.datos)
+                ? data.datos
+                : [];
+
+            currentPage = 1;
+
+            updateStats();
+            renderTable();
+
+            const updatedAt = new Intl.DateTimeFormat(
+                'es-MX',
+                {
+                    hour: '2-digit',
+                    minute: '2-digit'
                 }
-                
-                let badgeEstado = '';
-                if(row.estado === 'activa') {
-                    if(row.plan_nombre === 'Visita') {
-                        badgeEstado = '<span class="badge-status bg-info text-white">Visita Activa</span>';
-                    } else {
-                        badgeEstado = '<span class="badge-status bg-success text-white">Activa</span>';
-                    }
-                } else if(row.estado === 'vencida') {
-                    badgeEstado = '<span class="badge-status bg-danger text-white">Vencida</span>';
-                } else {
-                    badgeEstado = '<span class="badge-status bg-secondary text-white">Cancelada</span>';
-                }
-                
-                tbody += '<tr>' +
-                    '<td><strong>' + escapeHtml(row.cliente_nombre) + ' ' + escapeHtml(row.cliente_apellido) + '</strong><br><small class="text-muted">' + escapeHtml(row.telefono) + '</small></td>' +
-                    '<td><i class="fas fa-envelope text-muted"></i> ' + escapeHtml(row.email || 'No registrado') + '</td>' +
-                    '<td><span class="badge-status bg-secondary text-white">' + escapeHtml(row.plan_nombre) + '</span></td>' +
-                    '<td>' + fechaInicioMostrar + '</td>' +
-                    '<td>' + fechaFinMostrar + '</td>' +
-                    '<td>' + badgeDias + '</td>' +
-                    '<td class="text-success font-weight-bold">$' + parseFloat(row.precio_pagado).toFixed(2) + '</td>' +
-                    '<td>' + badgeEstado + '</td>' +
-                    '</tr>';
+            ).format(new Date());
+
+            setLiveStatus(
+                rows.length +
+                ' registros · Actualizado ' +
+                updatedAt,
+                'ready'
+            );
+
+            if (data.limitado) {
+                Swal.fire({
+                    icon: 'info',
+                    title: 'Límite de resultados',
+                    text:
+                        'Se muestran los primeros 5,000 registros. ' +
+                        'Selecciona un periodo más específico.',
+                    confirmButtonColor: '#2f66b3'
+                });
+            }
+        } catch (error) {
+            if (error.name === 'AbortError') {
+                return;
+            }
+
+            if (currentRequest !== requestSequence) {
+                return;
+            }
+
+            rows = [];
+            updateStats();
+            setErrorState(error.message);
+            setLiveStatus('Error al actualizar', 'error');
+
+            Swal.fire({
+                icon: 'error',
+                title: 'No se pudo cargar el reporte',
+                text: error.message,
+                confirmButtonColor: '#2f66b3'
             });
-            $('#tablaBody').html(tbody);
-            
-            // Renderizar paginacion
-            renderPagination(currentPage, totalPages, totalRecords);
-        }
-        
-        function renderPagination(currentPage, totalPages, totalRecords) {
-            let startRecord = (currentPage - 1) * recordsPerPage + 1;
-            let endRecord = Math.min(currentPage * recordsPerPage, totalRecords);
-            
-            $('#paginationInfo').html(`Mostrando ${startRecord} - ${endRecord} de ${totalRecords} registros`);
-            
-            let paginationHtml = '';
-            
-            // Boton Anterior
-            paginationHtml += `<li><button onclick="goToPage(${currentPage - 1})" ${currentPage === 1 ? 'disabled' : ''}>&laquo;</button></li>`;
-            
-            // Numeros de pagina
-            let startPage = Math.max(1, currentPage - 2);
-            let endPage = Math.min(totalPages, currentPage + 2);
-            
-            if (startPage > 1) {
-                paginationHtml += `<li><button onclick="goToPage(1)">1</button></li>`;
-                if (startPage > 2) paginationHtml += `<li><button disabled>...</button></li>`;
+        } finally {
+            if (currentRequest === requestSequence) {
+                loading = false;
+                dom.applyFilters.disabled = false;
+                dom.tableWrap.classList.remove('is-updating');
+
+                const hasRows = rows.length > 0;
+
+                dom.exportExcel.disabled = !hasRows;
+                dom.exportPdf.disabled = !hasRows;
             }
-            
-            for (let i = startPage; i <= endPage; i++) {
-                paginationHtml += `<li><button onclick="goToPage(${i})" class="${i === currentPage ? 'active' : ''}">${i}</button></li>`;
-            }
-            
-            if (endPage < totalPages) {
-                if (endPage < totalPages - 1) paginationHtml += `<li><button disabled>...</button></li>`;
-                paginationHtml += `<li><button onclick="goToPage(${totalPages})">${totalPages}</button></li>`;
-            }
-            
-            // Boton Siguiente
-            paginationHtml += `<li><button onclick="goToPage(${currentPage + 1})" ${currentPage === totalPages ? 'disabled' : ''}>&raquo;</button></li>`;
-            
-            $('#pagination').html(paginationHtml);
         }
-        
-        function goToPage(page) {
-            let totalPages = Math.ceil(datosCompletos.length / recordsPerPage);
-            if (page < 1 || page > totalPages) return;
-            currentPage = page;
-            renderTabla();
+    }
+
+    function updateStats() {
+        if (reportType === 'inscripciones') {
+            const total = rows.length;
+
+            const income = rows.reduce(function (sum, row) {
+                return sum + Number(row.precio_pagado || 0);
+            }, 0);
+
+            const active = rows.filter(function (row) {
+                return row.estado === 'activa';
+            }).length;
+
+            const expiring = rows.filter(function (row) {
+                const days = Number(row.dias_restantes);
+
+                return row.estado === 'activa' &&
+                    !Number.isNaN(days) &&
+                    days >= 0 &&
+                    days <= 7;
+            }).length;
+
+            const values = [
+                {
+                    label: 'Inscripciones',
+                    value: formatNumber(total),
+                    note: 'Registros encontrados'
+                },
+                {
+                    label: 'Ingresos',
+                    value: formatMoney(income),
+                    note: 'Importe acumulado'
+                },
+                {
+                    label: 'Activas',
+                    value: formatNumber(active),
+                    note: 'Membresías vigentes'
+                },
+                {
+                    label: 'Por vencer',
+                    value: formatNumber(expiring),
+                    note: 'Dentro de 7 días'
+                }
+            ];
+
+            applyStats(values);
+        } else {
+            const transactions = rows.length;
+
+            const units = rows.reduce(function (sum, row) {
+                return sum + Number(row.unidades || 0);
+            }, 0);
+
+            const gross = rows.reduce(function (sum, row) {
+                return sum + Number(row.total_bruto || 0);
+            }, 0);
+
+            const returns = rows.reduce(function (sum, row) {
+                return sum + Number(row.devoluciones || 0);
+            }, 0);
+
+            const net = rows.reduce(function (sum, row) {
+                return sum + Number(row.total_neto || 0);
+            }, 0);
+
+            const values = [
+                {
+                    label: 'Ventas',
+                    value: formatNumber(transactions),
+                    note: 'Operaciones encontradas'
+                },
+                {
+                    label: 'Unidades',
+                    value: formatNumber(units),
+                    note: 'Artículos vendidos'
+                },
+                {
+                    label: 'Venta bruta',
+                    value: formatMoney(gross),
+                    note: 'Antes de devoluciones'
+                },
+                {
+                    label: 'Ingreso neto',
+                    value: formatMoney(net),
+                    note: 'Devoluciones: ' + formatMoney(returns)
+                }
+            ];
+
+            applyStats(values);
         }
-        
-        function formatFecha(fecha) {
-            if (!fecha || fecha === '0000-00-00') return '-';
-            const partes = fecha.split('-');
-            if (partes.length === 3) {
-                return partes[2] + '/' + partes[1] + '/' + partes[0];
-            }
-            return fecha;
-        }
-        
-        function limpiarFiltros() {
-            $('#searchInput').val('');
-            $('#planSelect').val('');
-            $('#estadoSelect').val('');
-            $('#fechaRango').val('');
-            fechaInicio = '';
-            fechaFin = '';
-            sortColumn = 'cliente';
-            sortOrder = 'asc';
-            $('.sortable i').removeClass('fa-sort-up fa-sort-down').addClass('fa-sort');
-            cargarDatos();
-        }
-        
-        $('#limpiarFiltros').on('click', limpiarFiltros);
-        
-        function escapeHtml(text) {
-            if(!text) return '';
-            return text.toString()
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;')
-                .replace(/'/g, '&#39;');
-        }
-        
-        function mostrarError(mensaje) {
-            Swal.fire('Error', mensaje, 'error');
-            $('#tablaBody').html('<tr><td colspan="8" class="text-center py-5 text-danger">' +
-                '<i class="fas fa-exclamation-triangle fa-3x mb-3"></i>' +
-                '<p>' + mensaje + '</p>' +
-                '</td></tr>');
+    }
+
+    function applyStats(values) {
+        values.forEach(function (item, index) {
+            stats[index].label.textContent = item.label;
+            stats[index].value.textContent = item.value;
+            stats[index].note.textContent = item.note;
+        });
+    }
+
+    function getSortValue(row, key) {
+        if (key === 'cliente') {
+            return (
+                String(row.cliente_nombre || '') +
+                ' ' +
+                String(row.cliente_apellido || '')
+            ).toLowerCase();
         }
 
-        function exportarExcel() {
-            Swal.fire({
-                title: 'Generando reporte Excel...',
-                text: 'Por favor espere',
-                allowOutsideClick: false,
-                didOpen: () => {
-                    Swal.showLoading();
-                }
-            });
-            
-            setTimeout(() => {
-                try {
-                    // Obtener datos de la tabla actual (SOLO FILAS VISIBLES)
-                    let datosTabla = [];
-                    let totalVencidas = 0;
-                    let totalCanceladas = 0;
-                    let totalActivas = 0;
-                    
-                    $('#tablaReporte tbody tr').each(function() {
-                        // Verificar si la fila está visible
-                        let esVisible = $(this).css('display') !== 'none' && !$(this).hasClass('hidden');
-                        if (!esVisible) return;
-                        
-                        let fila = [];
-                        let $tds = $(this).find('td');
-                        if ($tds.length === 0) return;
-                        
-                        // Columna 0: Cliente y Teléfono
-                        let clienteTelefono = $tds.eq(0).text().trim();
-                        clienteTelefono = clienteTelefono.replace(/<[^>]*>/g, '');
-                        clienteTelefono = clienteTelefono.replace(/\n/g, ' ');
-                        clienteTelefono = clienteTelefono.replace(/\s+/g, ' ');
-                        
-                        let nombreCliente = clienteTelefono;
-                        let telefono = '';
-                        let matchTelefono = clienteTelefono.match(/(.+?)\s*(\d{6,})$/);
-                        if (matchTelefono) {
-                            nombreCliente = matchTelefono[1].trim();
-                            telefono = matchTelefono[2];
-                        }
-                        nombreCliente = nombreCliente.replace(/^\d+\.\s*/, '').replace(/^\d+\s+/, '');
-                        
-                        // Columna 1: Email
-                        let email = $tds.eq(1).text().trim();
-                        email = email.replace(/<[^>]*>/g, '').replace(/\n/g, ' ').trim();
-                        email = email.replace(/<i[^>]*>.*?<\/i>/g, '').trim();
-                        if (email === 'No registrado') email = '';
-                        
-                        // Columna 2: Plan
-                        let plan = $tds.eq(2).text().trim();
-                        plan = plan.replace(/<[^>]*>/g, '').replace(/\n/g, ' ').trim();
-                        plan = plan.replace(/<span[^>]*>.*?<\/span>/g, '').trim();
-                        
-                        // Columna 3: Fecha Inicio
-                        let fechaInicio = $tds.eq(3).text().trim();
-                        fechaInicio = fechaInicio.replace(/<[^>]*>/g, '').trim();
-                        
-                        // Columna 4: Fecha Fin
-                        let fechaFin = $tds.eq(4).text().trim();
-                        fechaFin = fechaFin.replace(/<[^>]*>/g, '').trim();
-                        
-                        // Columna 5: Días Restantes - Obtener el texto completo del badge
-                        let diasHtml = $tds.eq(5).html();
-                        let dias = $tds.eq(5).text().trim();
-                        dias = dias.replace(/<[^>]*>/g, '').trim();
-                        let diasTexto = '';
-                        let yaVencido = false;
-                        
-                        // Verificar si el badge indica "Vencido"
-                        if (diasHtml && diasHtml.includes('Vencido')) {
-                            diasTexto = 'Vencido';
-                            yaVencido = true;
-                        } 
-                        // Verificar si el badge indica "Por vencer"
-                        else if (diasHtml && diasHtml.includes('Por vencer')) {
-                            diasTexto = 'Por vencer';
-                        }
-                        // Si no, intentar parsear la fecha
-                        else {
-                            // Parsear fecha fin para verificar vencimiento
-                            let fechaFinObj = null;
-                            if (fechaFin && fechaFin !== '-') {
-                                let partes = fechaFin.split('/');
-                                if (partes.length === 3) {
-                                    fechaFinObj = new Date(partes[2], partes[1] - 1, partes[0]);
-                                }
-                            }
-                            let fechaActual = new Date();
-                            fechaActual.setHours(0, 0, 0, 0);
-                            
-                            if (fechaFinObj && fechaFinObj < fechaActual) {
-                                diasTexto = 'Vencido';
-                                yaVencido = true;
-                            } else {
-                                let diasNum = parseInt(dias);
-                                if (!isNaN(diasNum)) {
-                                    diasTexto = diasNum;
-                                } else if (dias.includes('Por vencer')) {
-                                    diasTexto = 'Por vencer';
-                                } else {
-                                    diasTexto = '-';
-                                }
-                            }
-                        }
-                        
-                        // Columna 6: Precio
-                        let precio = $tds.eq(6).text().trim();
-                        precio = precio.replace(/<[^>]*>/g, '').replace('$', '').replace(/\s/g, '');
-                        let precioNum = parseFloat(precio);
-                        let precioFormateado = !isNaN(precioNum) ? Math.round(precioNum) : 0;
-                        
-                        // Columna 7: Estado - Obtener el texto del badge
-                        let estadoHtml = $tds.eq(7).html();
-                        let estado = $tds.eq(7).text().trim();
-                        estado = estado.replace(/<[^>]*>/g, '').trim();
-                        
-                        // Verificar si el badge indica "Vencida"
-                        if (estadoHtml && estadoHtml.includes('Vencida')) {
-                            estado = 'Vencida';
-                            yaVencido = true;
-                        }
-                        
-                        // Contar estados correctamente
-                        if (estado === 'Cancelada') {
-                            totalCanceladas++;
-                        } else if (estado === 'Vencida' || yaVencido || diasTexto === 'Vencido') {
-                            estado = 'Vencida';
-                            totalVencidas++;
-                        } else if (estado === 'Activa' || estado === 'Visita Activa') {
-                            totalActivas++;
-                        }
-                        
-                        if (nombreCliente && nombreCliente !== 'Cargando datos...') {
-                            fila.push(nombreCliente, email || 'No registrado', telefono || 'No registrado', plan, fechaInicio, fechaFin, diasTexto, precioFormateado, estado);
-                            datosTabla.push(fila);
-                        }
-                    });
-                    
-                    if (datosTabla.length === 0) {
-                        Swal.fire('Sin datos', 'No hay datos para exportar', 'warning');
-                        return;
-                    }
-                    
-                    // Crear libro de trabajo
-                    let wb = XLSX.utils.book_new();
-                    const fechaHora = new Date();
-                    const fechaStr = fechaHora.toLocaleString('es-ES');
-                    
-                    // Calcular totales y KPIs
-                    let totalIngresos = datosTabla.reduce((sum, fila) => sum + (typeof fila[7] === 'number' ? fila[7] : 0), 0);
-                    let totalRegistros = datosTabla.length;
-                    let ingresoPromedio = totalRegistros > 0 ? Math.round(totalIngresos / totalRegistros) : 0;
-                    
-                    // ==================== HOJA 1: DASHBOARD CON KPIS Y DATOS EMPRESA (SIN HORARIO) ====================
-                    let dashboardData = [
-                        ['<?php echo addslashes($datos_empresa['nombre']); ?>'],
-                        [''],
-                        ['DATOS DE LA EMPRESA'],
-                        ['Teléfono:', '<?php echo addslashes($datos_empresa['telefono']); ?>'],
-                        ['Email:', '<?php echo addslashes($datos_empresa['email']); ?>'],
-                        ['Dirección:', '<?php echo addslashes($datos_empresa['direccion']); ?>'],
-                        [''],
-                        ['REPORTE DE INSCRIPCIONES - DASHBOARD'],
-                        [''],
-                        ['INFORMACION DEL REPORTE'],
-                        ['Fecha de Generación:', fechaStr],
-                        ['Usuario:', '<?php echo htmlspecialchars($usuario_nombre); ?>'],
-                        ['Rol:', '<?php echo htmlspecialchars($usuario_rol); ?>'],
-                        [''],
-                        ['INDICADORES CLAVE (KPIS)'],
-                        [''],
-                        ['KPI', 'VALOR'],
-                        ['Total de Inscripciones', totalRegistros],
-                        ['Ingresos Totales', '$' + totalIngresos.toLocaleString('es-MX')],
-                        ['Ingreso Promedio por Inscripción', '$' + ingresoPromedio.toLocaleString('es-MX')],
-                        ['Inscripciones Activas', totalActivas],
-                        ['Inscripciones Vencidas', totalVencidas],
-                        ['Inscripciones Canceladas', totalCanceladas],
-                        [''],
-                        ['RESUMEN POR ESTADO', 'CANTIDAD'],
-                        ['Activas', totalActivas],
-                        ['Vencidas', totalVencidas],
-                        ['Canceladas', totalCanceladas],
-                        [''],
-                        ['FILTROS APLICADOS'],
-                        ['Buscador:', $('#searchInput').val() || 'Ninguno'],
-                        ['Plan:', $('#planSelect option:selected').text() || 'Todos'],
-                        ['Estado:', $('#estadoSelect option:selected').text() || 'Todos'],
-                        ['Rango de Fechas:', $('#fechaRango').val() || 'Sin filtro']
-                    ];
-                    
-                    let wsDashboard = XLSX.utils.aoa_to_sheet(dashboardData);
-                    wsDashboard['!cols'] = [{wch: 35}, {wch: 40}];
-                    wsDashboard['!merges'] = [
-                        {s: {r: 0, c: 0}, e: {r: 0, c: 1}},
-                        {s: {r: 7, c: 0}, e: {r: 7, c: 1}},
-                        {s: {r: 14, c: 0}, e: {r: 14, c: 1}},
-                        {s: {r: 25, c: 0}, e: {r: 25, c: 1}}
-                    ];
-                    
-                    // Aplicar formato al título
-                    wsDashboard['A1'].s = { font: { bold: true, sz: 16, color: { rgb: "003366" } } };
-                    
-                    XLSX.utils.book_append_sheet(wb, wsDashboard, 'Dashboard KPIs');
-                    
-                    // ==================== HOJA 2: DETALLE DE INSCRIPCIONES ====================
-                    let headers = ['Cliente', 'Email', 'Teléfono', 'Plan', 'Fecha Inicio', 'Fecha Fin', 'Días', 'Precio (MXN)', 'Estado'];
-                    let datosCompletos = [headers, ...datosTabla];
-                    let wsDetalle = XLSX.utils.aoa_to_sheet(datosCompletos);
-                    
-                    // Configurar anchos de columna
-                    wsDetalle['!cols'] = [
-                        {wch: 32},
-                        {wch: 32},
-                        {wch: 15},
-                        {wch: 20},
-                        {wch: 14},
-                        {wch: 14},
-                        {wch: 12},
-                        {wch: 16},
-                        {wch: 14}
-                    ];
-                    
-                    XLSX.utils.book_append_sheet(wb, wsDetalle, 'Detalle Inscripciones');
-                    
-                    // ==================== HOJA 3: ANALISIS POR PLAN ====================
-                    let planesMap = new Map();
-                    datosTabla.forEach(fila => {
-                        let plan = fila[3];
-                        let precio = typeof fila[7] === 'number' ? fila[7] : 0;
-                        let estado = fila[8];
-                        
-                        if (!planesMap.has(plan)) {
-                            planesMap.set(plan, { total: 0, ingresos: 0, activas: 0, vencidas: 0, canceladas: 0 });
-                        }
-                        let planData = planesMap.get(plan);
-                        planData.total++;
-                        planData.ingresos += precio;
-                        if (estado === 'Activa') planData.activas++;
-                        else if (estado === 'Vencida') planData.vencidas++;
-                        else if (estado === 'Cancelada') planData.canceladas++;
-                    });
-                    
-                    let analisisData = [
-                        ['ANÁLISIS POR PLAN DE INSCRIPCIÓN'],
-                        [''],
-                        ['Plan', 'Total', 'Activas', 'Vencidas', 'Canceladas', 'Ingresos Totales']
-                    ];
-                    
-                    planesMap.forEach((data, plan) => {
-                        analisisData.push([
-                            plan,
-                            data.total,
-                            data.activas,
-                            data.vencidas,
-                            data.canceladas,
-                            '$' + data.ingresos.toLocaleString('es-MX')
-                        ]);
-                    });
-                    
-                    // Agregar fila de totales
-                    analisisData.push(
-                        [''],
-                        ['TOTAL GENERAL', totalRegistros, totalActivas, totalVencidas, totalCanceladas, '$' + totalIngresos.toLocaleString('es-MX')]
-                    );
-                    
-                    let wsAnalisis = XLSX.utils.aoa_to_sheet(analisisData);
-                    wsAnalisis['!cols'] = [{wch: 28}, {wch: 12}, {wch: 12}, {wch: 12}, {wch: 12}, {wch: 22}];
-                    wsAnalisis['!merges'] = [
-                        {s: {r: 0, c: 0}, e: {r: 0, c: 5}}
-                    ];
-                    XLSX.utils.book_append_sheet(wb, wsAnalisis, 'Análisis por Plan');
-                    
-                    // Generar archivo
-                    const anio = fechaHora.getFullYear();
-                    const mes = (fechaHora.getMonth()+1).toString().padStart(2,'0');
-                    const dia = fechaHora.getDate().toString().padStart(2,'0');
-                    const hora = fechaHora.getHours().toString().padStart(2,'0');
-                    const minuto = fechaHora.getMinutes().toString().padStart(2,'0');
-                    const nombreArchivo = `Reporte_Inscripciones_${anio}-${mes}-${dia}_${hora}${minuto}.xlsx`;
-                    
-                    XLSX.writeFile(wb, nombreArchivo);
-                    
-                    Swal.fire({
-                        icon: 'success',
-                        title: 'Exportación Exitosa',
-                        html: `Reporte generado correctamente.<br><small>${nombreArchivo}</small><br><small>${datosTabla.length} registros</small>`,
-                        timer: 3000,
-                        showConfirmButton: false
-                    });
-                } catch (error) {
-                    console.error('Error en Excel:', error);
-                    Swal.fire('Error', 'Ocurrió un error: ' + error.message, 'error');
-                }
-            }, 100);
+        const value = row[key];
+
+        if (
+            [
+                'precio_pagado',
+                'dias_restantes',
+                'id',
+                'total_bruto',
+                'devoluciones',
+                'total_neto',
+                'unidades'
+            ].includes(key)
+        ) {
+            return Number(value || 0);
         }
 
-        function exportarPDF() {
-            Swal.fire({
-                title: 'Generando PDF...',
-                text: 'Por favor espere',
-                allowOutsideClick: false,
-                didOpen: () => {
-                    Swal.showLoading();
-                }
-            });
-            
-            setTimeout(async () => {
-                try {
-                    const { jsPDF } = window.jspdf;
-                    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
-                    const pageWidth = doc.internal.pageSize.getWidth();
-                    const pageHeight = doc.internal.pageSize.getHeight();
-                    const primaryColor = [31, 58, 147];
-                    
-                    // Datos de la empresa desde PHP
-                    const datosEmpresa = {
-                        nombre: '<?php echo addslashes($datos_empresa['nombre']); ?>',
-                        telefono: '<?php echo addslashes($datos_empresa['telefono']); ?>',
-                        email: '<?php echo addslashes($datos_empresa['email']); ?>',
-                        direccion: '<?php echo addslashes($datos_empresa['direccion']); ?>',
-                        logo: '<?php echo $logo_empresa; ?>'
-                    };
-                    
-                    // Obtener datos de la tabla actual (SOLO FILAS VISIBLES)
-                    let datosTabla = [];
-                    let totalVencidas = 0;
-                    let totalCanceladas = 0;
-                    let totalActivas = 0;
-                    
-                    $('#tablaReporte tbody tr').each(function() {
-                        let esVisible = $(this).css('display') !== 'none' && !$(this).hasClass('hidden');
-                        if (!esVisible) return;
-                        
-                        let $tds = $(this).find('td');
-                        if ($tds.length === 0) return;
-                        
-                        let clienteTelefono = $tds.eq(0).text().trim();
-                        clienteTelefono = clienteTelefono.replace(/<[^>]*>/g, '');
-                        clienteTelefono = clienteTelefono.replace(/\n/g, ' ');
-                        clienteTelefono = clienteTelefono.replace(/\s+/g, ' ');
-                        
-                        let nombreCliente = clienteTelefono;
-                        let telefono = '';
-                        let matchTelefono = clienteTelefono.match(/(.+?)\s*(\d{6,})$/);
-                        if (matchTelefono) {
-                            nombreCliente = matchTelefono[1].trim();
-                            telefono = matchTelefono[2];
-                        }
-                        nombreCliente = nombreCliente.replace(/^\d+\.\s*/, '').replace(/^\d+\s+/, '');
-                        
-                        let email = $tds.eq(1).text().trim();
-                        email = email.replace(/<[^>]*>/g, '').replace(/\n/g, ' ').trim();
-                        email = email.replace(/<i[^>]*>.*?<\/i>/g, '').trim();
-                        if (email.includes('No registrado')) email = '';
-                        
-                        let plan = $tds.eq(2).text().trim();
-                        plan = plan.replace(/<[^>]*>/g, '').trim();
-                        plan = plan.replace(/<span[^>]*>.*?<\/span>/g, '').trim();
-                        
-                        let fechaInicio = $tds.eq(3).text().trim();
-                        fechaInicio = fechaInicio.replace(/<[^>]*>/g, '').trim();
-                        
-                        let fechaFin = $tds.eq(4).text().trim();
-                        fechaFin = fechaFin.replace(/<[^>]*>/g, '').trim();
-                        
-                        let diasHtml = $tds.eq(5).html();
-                        let diasOriginal = $tds.eq(5).text().trim();
-                        diasOriginal = diasOriginal.replace(/<[^>]*>/g, '').trim();
-                        
-                        let precio = $tds.eq(6).text().trim();
-                        precio = precio.replace(/<[^>]*>/g, '').replace('$', '').replace(/\s/g, '');
-                        let precioNum = parseFloat(precio);
-                        let precioFormateado = '';
-                        if (!isNaN(precioNum)) {
-                            precioFormateado = '$' + Math.round(precioNum).toLocaleString('es-MX');
-                        }
-                        
-                        let estadoHtml = $tds.eq(7).html();
-                        let estado = $tds.eq(7).text().trim();
-                        estado = estado.replace(/<[^>]*>/g, '').trim();
-                        
-                        let diasTexto = '';
-                        let yaVencido = false;
-                        
-                        if (estadoHtml && estadoHtml.includes('Vencida')) {
-                            estado = 'Vencida';
-                            yaVencido = true;
-                        }
-                        
-                        if (diasHtml && diasHtml.includes('Vencido')) {
-                            diasTexto = 'Vencido';
-                            yaVencido = true;
-                        }
-                        else if (diasHtml && diasHtml.includes('Por vencer')) {
-                            diasTexto = 'Por vencer';
-                        }
-                        else if (estado === 'Activa' || estado === 'Visita Activa') {
-                            let fechaFinObj = null;
-                            if (fechaFin && fechaFin !== '-') {
-                                let partes = fechaFin.split('/');
-                                if (partes.length === 3) {
-                                    fechaFinObj = new Date(partes[2], partes[1] - 1, partes[0]);
-                                } else {
-                                    fechaFinObj = new Date(fechaFin);
-                                }
-                            }
-                            
-                            let fechaActual = new Date();
-                            fechaActual.setHours(0, 0, 0, 0);
-                            
-                            if (fechaFinObj && fechaFinObj < fechaActual) {
-                                diasTexto = 'Vencido';
-                                yaVencido = true;
-                            } else if (diasOriginal.includes('Por vencer')) {
-                                diasTexto = 'Por vencer';
-                            } else {
-                                let diasNum = parseInt(diasOriginal);
-                                if (!isNaN(diasNum)) {
-                                    diasTexto = diasNum + ' días';
-                                } else {
-                                    diasTexto = '-';
-                                }
-                            }
-                        } 
-                        else if (estado === 'Cancelada') {
-                            diasTexto = '-';
-                        } 
-                        else {
-                            diasTexto = diasOriginal;
-                        }
-                        
-                        // Contar estados correctamente
-                        if (estado === 'Cancelada') {
-                            totalCanceladas++;
-                        } else if (yaVencido || estado === 'Vencida') {
-                            estado = 'Vencida';
-                            totalVencidas++;
-                        } else if (estado === 'Activa' || estado === 'Visita Activa') {
-                            totalActivas++;
-                        }
-                        
-                        if (nombreCliente && nombreCliente !== 'Cargando datos...') {
-                            datosTabla.push([nombreCliente, email || 'No registrado', telefono || 'No registrado', plan, fechaInicio, fechaFin, diasTexto, precioFormateado, estado]);
-                        }
-                    });
-                    
-                    if (datosTabla.length === 0) {
-                        Swal.fire('Sin datos', 'No hay datos para exportar', 'warning');
-                        return;
+        return String(value || '').toLowerCase();
+    }
+
+    function getSortedRows() {
+        return rows.slice().sort(function (a, b) {
+            const valueA = getSortValue(a, sortKey);
+            const valueB = getSortValue(b, sortKey);
+
+            if (valueA < valueB) {
+                return sortDirection === 'asc' ? -1 : 1;
+            }
+
+            if (valueA > valueB) {
+                return sortDirection === 'asc' ? 1 : -1;
+            }
+
+            return 0;
+        });
+    }
+
+    function renderTableHead() {
+        const columns = columnConfig[reportType];
+
+        dom.tableHead.innerHTML = `
+            <tr>
+                ${columns.map(function (column) {
+                    const active = sortKey === column.key;
+                    const icon = !active
+                        ? 'fa-sort'
+                        : (
+                            sortDirection === 'asc'
+                                ? 'fa-sort-up'
+                                : 'fa-sort-down'
+                        );
+
+                    return `
+                        <th data-sort="${column.key}">
+                            ${column.label}
+                            <i class="fas ${icon}"></i>
+                        </th>
+                    `;
+                }).join('')}
+            </tr>
+        `;
+
+        dom.tableHead
+            .querySelectorAll('[data-sort]')
+            .forEach(function (header) {
+                header.addEventListener('click', function () {
+                    const key = header.dataset.sort;
+
+                    if (sortKey === key) {
+                        sortDirection =
+                            sortDirection === 'asc'
+                                ? 'desc'
+                                : 'asc';
+                    } else {
+                        sortKey = key;
+                        sortDirection = 'asc';
                     }
-                    
-                    let headers = ['Cliente', 'Email', 'Teléfono', 'Plan', 'Fecha Inicio', 'Fecha Fin', 'Días', 'Precio', 'Estado'];
-                    
-                    // Encabezado del reporte con logo y datos empresa
-                    doc.setFillColor(primaryColor[0], primaryColor[1], primaryColor[2]);
-                    doc.rect(0, 0, pageWidth, 40, 'F');
-                    
-                    // Función para cargar y agregar el logo
-                    function cargarLogoEnPDF(doc, logoUrl, x, y, width, height) {
-                        return new Promise((resolve) => {
-                            if (!logoUrl || logoUrl === 'img/logo-gym.png' || logoUrl === 'https://via.placeholder.com/150x150?text=Sin+Logo') {
-                                doc.setFontSize(20);
-                                doc.setTextColor(255, 255, 255);
-                                doc.text('🏋️', x + 10, y + 20);
-                                resolve(false);
-                                return;
-                            }
-                            
-                            const img = new Image();
-                            img.crossOrigin = "Anonymous";
-                            img.src = logoUrl + '?v=' + Date.now();
-                            
-                            img.onload = function() {
-                                try {
-                                    const canvas = document.createElement('canvas');
-                                    canvas.width = img.width;
-                                    canvas.height = img.height;
-                                    const ctx = canvas.getContext('2d');
-                                    ctx.drawImage(img, 0, 0);
-                                    const imgData = canvas.toDataURL('image/png');
-                                    doc.addImage(imgData, 'PNG', x, y, width, height);
-                                    resolve(true);
-                                } catch(e) {
-                                    doc.setFontSize(20);
-                                    doc.setTextColor(255, 255, 255);
-                                    doc.text('🏋️', x + 10, y + 20);
-                                    resolve(false);
-                                }
-                            };
-                            
-                            img.onerror = function() {
-                                doc.setFontSize(20);
-                                doc.setTextColor(255, 255, 255);
-                                doc.text('🏋️', x + 10, y + 20);
-                                resolve(false);
-                            };
+
+                    currentPage = 1;
+                    renderTable();
+                });
+            });
+    }
+
+    function renderInscriptionRow(row) {
+        const client = [
+            row.cliente_nombre,
+            row.cliente_apellido
+        ].filter(Boolean).join(' ');
+
+        const contact = row.telefono ||
+            row.email ||
+            'Sin contacto';
+
+        return `
+            <tr>
+                <td>
+                    <span class="report-primary-cell">
+                        ${escapeHtml(client)}
+                    </span>
+                    <span class="report-secondary-cell">
+                        ${escapeHtml(contact)}
+                    </span>
+                </td>
+                <td>
+                    <span class="report-pill neutral">
+                        ${escapeHtml(row.plan_nombre)}
+                    </span>
+                </td>
+                <td>${formatDate(row.fecha_inicio, false)}</td>
+                <td>${formatDate(row.fecha_fin, false)}</td>
+                <td>${renderValidity(row)}</td>
+                <td class="report-money positive">
+                    ${formatMoney(row.precio_pagado)}
+                </td>
+                <td>${renderStatus(row.estado, 'inscripcion')}</td>
+            </tr>
+        `;
+    }
+
+    function renderSaleRow(row) {
+        return `
+            <tr>
+                <td>
+                    <span class="report-primary-cell">
+                        #${String(row.id).padStart(8, '0')}
+                    </span>
+                    <span class="report-secondary-cell">
+                        ${Number(row.unidades || 0)} unidades
+                    </span>
+                </td>
+                <td>${formatDate(row.fecha_venta, true)}</td>
+                <td class="report-products">
+                    <span
+                        class="report-products-text"
+                        title="${escapeHtml(row.productos)}"
+                    >
+                        ${escapeHtml(row.productos)}
+                    </span>
+                </td>
+                <td>${escapeHtml(row.cliente_nombre)}</td>
+                <td>${escapeHtml(row.vendedor_nombre)}</td>
+                <td>
+                    <span class="report-pill neutral">
+                        ${escapeHtml(capitalize(row.metodo_pago))}
+                    </span>
+                </td>
+                <td class="report-money">
+                    ${formatMoney(row.total_bruto)}
+                </td>
+                <td class="report-money negative">
+                    ${formatMoney(row.devoluciones)}
+                </td>
+                <td class="report-money positive">
+                    ${formatMoney(row.total_neto)}
+                </td>
+                <td>${renderStatus(row.estado, 'venta')}</td>
+            </tr>
+        `;
+    }
+
+    function renderTable() {
+        if (rows.length === 0) {
+            setEmptyState();
+            return;
+        }
+
+        const sortedRows = getSortedRows();
+        const totalPages = Math.max(
+            1,
+            Math.ceil(sortedRows.length / pageSize)
+        );
+
+        currentPage = Math.min(currentPage, totalPages);
+
+        const start = (currentPage - 1) * pageSize;
+        const pageRows = sortedRows.slice(
+            start,
+            start + pageSize
+        );
+
+        renderTableHead();
+
+        dom.tableBody.innerHTML = pageRows
+            .map(function (row) {
+                return reportType === 'inscripciones'
+                    ? renderInscriptionRow(row)
+                    : renderSaleRow(row);
+            })
+            .join('');
+
+        dom.tableState.innerHTML = '';
+        dom.tableWrap.hidden = false;
+        dom.paginationBar.hidden = false;
+
+        renderPagination(totalPages, sortedRows.length);
+    }
+
+    function renderPagination(totalPages, totalRows) {
+        const startRecord =
+            (currentPage - 1) * pageSize + 1;
+
+        const endRecord = Math.min(
+            currentPage * pageSize,
+            totalRows
+        );
+
+        dom.paginationInfo.textContent =
+            'Mostrando ' +
+            startRecord +
+            '–' +
+            endRecord +
+            ' de ' +
+            totalRows +
+            ' registros';
+
+        const pages = [];
+
+        pages.push({
+            label: '<i class="fas fa-chevron-left"></i>',
+            page: currentPage - 1,
+            disabled: currentPage === 1
+        });
+
+        let first = Math.max(1, currentPage - 2);
+        let last = Math.min(totalPages, currentPage + 2);
+
+        if (first > 1) {
+            pages.push({
+                label: '1',
+                page: 1
+            });
+
+            if (first > 2) {
+                pages.push({
+                    label: '…',
+                    disabled: true
+                });
+            }
+        }
+
+        for (let page = first; page <= last; page++) {
+            pages.push({
+                label: String(page),
+                page: page,
+                active: page === currentPage
+            });
+        }
+
+        if (last < totalPages) {
+            if (last < totalPages - 1) {
+                pages.push({
+                    label: '…',
+                    disabled: true
+                });
+            }
+
+            pages.push({
+                label: String(totalPages),
+                page: totalPages
+            });
+        }
+
+        pages.push({
+            label: '<i class="fas fa-chevron-right"></i>',
+            page: currentPage + 1,
+            disabled: currentPage === totalPages
+        });
+
+        dom.pagination.innerHTML = pages
+            .map(function (item) {
+                return `
+                    <button
+                        type="button"
+                        class="report-page-btn ${
+                            item.active ? 'active' : ''
+                        }"
+                        data-page="${item.page || ''}"
+                        ${item.disabled ? 'disabled' : ''}
+                    >
+                        ${item.label}
+                    </button>
+                `;
+            })
+            .join('');
+
+        dom.pagination
+            .querySelectorAll('[data-page]')
+            .forEach(function (button) {
+                button.addEventListener('click', function () {
+                    const page = Number(button.dataset.page);
+
+                    if (
+                        page >= 1 &&
+                        page <= totalPages
+                    ) {
+                        currentPage = page;
+                        renderTable();
+
+                        dom.tableWrap.scrollIntoView({
+                            behavior: 'smooth',
+                            block: 'start'
                         });
                     }
-                    
-                    await cargarLogoEnPDF(doc, datosEmpresa.logo, 10, 5, 30, 30);
-                    
-                    // Texto de la empresa
-                    doc.setTextColor(255, 255, 255);
-                    doc.setFontSize(16);
-                    doc.setFont('helvetica', 'bold');
-                    doc.text(datosEmpresa.nombre, 50, 12);
-                    doc.setFontSize(8);
-                    doc.setFont('helvetica', 'normal');
-                    doc.text(datosEmpresa.direccion || '', 50, 20);
-                    doc.text('Tel: ' + (datosEmpresa.telefono || ''), 50, 26);
-                    doc.text('Email: ' + (datosEmpresa.email || ''), 50, 32);
-                    
-                    doc.setFontSize(8);
-                    doc.text('REPORTE DE INSCRIPCIONES', pageWidth - 45, 12);
-                    doc.text(`Generado: ${new Date().toLocaleString('es-ES')}`, pageWidth - 45, 20);
-                    doc.text(`Usuario: <?php echo htmlspecialchars($usuario_nombre); ?>`, pageWidth - 45, 28);
-                    doc.text(`Rol: <?php echo htmlspecialchars($usuario_rol); ?>`, pageWidth - 45, 36);
-                    
-                    // ==================== 5 CARDS EN UNA SOLA LÍNEA (SIN COLORES) ====================
-                    let yPos = 52;
-                    const statsCards = [
-                        { label: 'Clientes Activos', value: '<?php echo number_format($stats['total_clientes_activos'] ?? 0); ?>' },
-                        { label: 'Inscripciones Activas', value: '<?php echo number_format($stats['total_inscripciones'] ?? 0); ?>' },
-                        { label: 'Inscripciones Vencidas', value: totalVencidas.toString() },
-                        { label: 'Inscripciones Canceladas', value: totalCanceladas.toString() },
-                        { label: 'Ingresos Totales', value: '$<?php echo number_format(round($stats['total_ingresos'] ?? 0), 0); ?>' }
-                    ];
-                    
-                    const cardWidth = (pageWidth - 30) / 5;
-                    statsCards.forEach((stat, index) => {
-                        const x = 10 + (index * (cardWidth + 2.5));
-                        
-                        // Fondo de la card (blanco)
-                        doc.setFillColor(255, 255, 255);
-                        doc.roundedRect(x, yPos, cardWidth, 24, 3, 3, 'F');
-                        doc.setDrawColor(200, 200, 200);
-                        doc.roundedRect(x, yPos, cardWidth, 24, 3, 3, 'S');
-                        
-                        // Texto del label
-                        doc.setFontSize(6);
-                        doc.setTextColor(100, 100, 100);
-                        doc.setFont('helvetica', 'normal');
-                        doc.text(stat.label, x + 4, yPos + 9);
-                        
-                        // Texto del valor
-                        doc.setFontSize(11);
-                        doc.setFont('helvetica', 'bold');
-                        doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
-                        doc.text(stat.value, x + 4, yPos + 19);
-                    });
-                    
-                    // Filtros aplicados (después de las cards)
-                    let yPosFiltros = yPos + 32;
-                    doc.setFontSize(9);
-                    doc.setFont('helvetica', 'bold');
-                    doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
-                    doc.text('Filtros aplicados:', 15, yPosFiltros);
-                    doc.setFontSize(8);
-                    doc.setFont('helvetica', 'normal');
-                    doc.setTextColor(80, 80, 80);
-                    
-                    const searchValue = $('#searchInput').val();
-                    const planValue = $('#planSelect option:selected').text();
-                    const estadoValue = $('#estadoSelect option:selected').text();
-                    const fechaValue = $('#fechaRango').val();
-                    
-                    let filtrosTexto = [];
-                    if (searchValue && searchValue !== '') filtrosTexto.push(`Buscador: ${searchValue}`);
-                    if (planValue && planValue !== 'Todos' && planValue !== 'Todos los planes') filtrosTexto.push(`Plan: ${planValue}`);
-                    if (estadoValue && estadoValue !== 'Todos' && estadoValue !== 'Todos los estados') filtrosTexto.push(`Estado: ${estadoValue}`);
-                    if (fechaValue && fechaValue !== '') filtrosTexto.push(`Fechas: ${fechaValue}`);
-                    if (filtrosTexto.length === 0) filtrosTexto = ['Ningún filtro aplicado'];
-                    
-                    let filtrosY = yPosFiltros + 5;
-                    let filtrosX = 70;
-                    filtrosTexto.forEach((filtro) => {
-                        const filtroWidth = doc.getStringUnitWidth(filtro) * 8 / doc.internal.scaleFactor;
-                        if (filtrosX + filtroWidth > pageWidth - 20) {
-                            filtrosY += 5;
-                            filtrosX = 70;
-                        }
-                        doc.text(filtro, filtrosX, filtrosY);
-                        filtrosX += filtroWidth + 8;
-                    });
-                    
-                    // Tabla principal
-                    let startY = filtrosY + 12;
-                    
-                    const availableWidth = pageWidth - 24;
-                    const columnWidths = {
-                        0: availableWidth * 0.18,
-                        1: availableWidth * 0.18,
-                        2: availableWidth * 0.10,
-                        3: availableWidth * 0.12,
-                        4: availableWidth * 0.10,
-                        5: availableWidth * 0.10,
-                        6: availableWidth * 0.08,
-                        7: availableWidth * 0.07,
-                        8: availableWidth * 0.07
-                    };
-                    
-                    doc.autoTable({
-                        head: [headers],
-                        body: datosTabla,
-                        startY: startY,
-                        theme: 'striped',
-                        headStyles: {
-                            fillColor: primaryColor,
-                            textColor: [255, 255, 255],
-                            fontStyle: 'bold',
-                            fontSize: 8,
-                            halign: 'center',
-                            valign: 'middle',
-                            cellPadding: 5
-                        },
-                        bodyStyles: { 
-                            fontSize: 7.5, 
-                            cellPadding: 4,
-                            valign: 'middle'
-                        },
-                        alternateRowStyles: { fillColor: [245, 248, 250] },
-                        styles: {
-                            lineColor: [180, 180, 180],
-                            lineWidth: 0.1,
-                            font: 'helvetica'
-                        },
-                        columnStyles: {
-                            0: { cellWidth: columnWidths[0], halign: 'left' },
-                            1: { cellWidth: columnWidths[1], halign: 'left' },
-                            2: { cellWidth: columnWidths[2], halign: 'center' },
-                            3: { cellWidth: columnWidths[3], halign: 'center' },
-                            4: { cellWidth: columnWidths[4], halign: 'center' },
-                            5: { cellWidth: columnWidths[5], halign: 'center' },
-                            6: { cellWidth: columnWidths[6], halign: 'center' },
-                            7: { cellWidth: columnWidths[7], halign: 'right' },
-                            8: { cellWidth: columnWidths[8], halign: 'center' }
-                        },
-                        margin: { left: 12, right: 12 },
-                        tableWidth: 'auto',
-                        didDrawCell: function(data) {
-                            if (data.column.index === 6) {
-                                const valorDias = data.cell.raw;
-                                if (valorDias === 'Vencido') {
-                                    doc.setTextColor(239, 68, 68);
-                                    doc.setFont('helvetica', 'bold');
-                                } else if (valorDias === 'Por vencer') {
-                                    doc.setTextColor(245, 158, 11);
-                                    doc.setFont('helvetica', 'bold');
-                                }
-                            }
-                            
-                            if (data.column.index === 8) {
-                                const estado = data.cell.raw;
-                                if (estado === 'Vencida') {
-                                    doc.setTextColor(239, 68, 68);
-                                    doc.setFont('helvetica', 'bold');
-                                } else if (estado === 'Cancelada') {
-                                    doc.setTextColor(239, 68, 68);
-                                    doc.setFont('helvetica', 'bold');
-                                } else if (estado === 'Activa') {
-                                    doc.setTextColor(34, 197, 94);
-                                    doc.setFont('helvetica', 'bold');
-                                }
-                            }
-                        },
-                        didParseCell: function(data) {
-                            if ((data.column.index === 6 || data.column.index === 8) && 
-                                data.cell.raw !== 'Vencido' && data.cell.raw !== 'Por vencer' && 
-                                data.cell.raw !== 'Cancelada' && data.cell.raw !== 'Activa' &&
-                                data.cell.raw !== 'Vencida') {
-                                data.cell.styles.textColor = [80, 80, 80];
-                                data.cell.styles.fontStyle = 'normal';
-                            }
-                        },
-                        didDrawPage: function(data) {
-                            const pageCount = doc.internal.getNumberOfPages();
-                            const currentPage = doc.internal.getCurrentPageInfo().pageNumber;
-                            
-                            doc.setFontSize(7);
-                            doc.setTextColor(150, 150, 150);
-                            doc.setFont('helvetica', 'italic');
-                            doc.text(`Página ${currentPage} de ${pageCount} | Total registros: ${datosTabla.length} | ${datosEmpresa.nombre}`,
-                                    pageWidth / 2, pageHeight - 6, { align: 'center' });
-                            
-                            doc.setDrawColor(200, 200, 200);
-                            doc.setLineWidth(0.2);
-                            doc.line(12, pageHeight - 10, pageWidth - 12, pageHeight - 10);
-                        }
-                    });
-                    
-                    const fecha = new Date();
-                    const anio = fecha.getFullYear();
-                    const mes = (fecha.getMonth()+1).toString().padStart(2,'0');
-                    const dia = fecha.getDate().toString().padStart(2,'0');
-                    const hora = fecha.getHours().toString().padStart(2,'0');
-                    const minuto = fecha.getMinutes().toString().padStart(2,'0');
-                    const nombreArchivo = `Reporte_Inscripciones_${anio}-${mes}-${dia}_${hora}${minuto}.pdf`;
-                    doc.save(nombreArchivo);
-                    
-                    Swal.fire({
-                        icon: 'success',
-                        title: 'PDF Generado',
-                        html: `Reporte generado correctamente.<br><small>${nombreArchivo}</small><br><small>${datosTabla.length} registros</small>`,
-                        timer: 2500,
-                        showConfirmButton: false
-                    });
-                } catch (error) {
-                    console.error('Error en PDF:', error);
-                    Swal.fire('Error', 'Ocurrió un error: ' + error.message, 'error');
+                });
+            });
+    }
+
+    function clearFilters() {
+        dom.search.value = '';
+        dom.plan.value = '';
+        dom.method.value = '';
+        dom.status.value = '';
+        startDate = '';
+        endDate = '';
+        datePicker.clear();
+        clearQuickRangeActive();
+        currentPage = 1;
+        updateFilterCount();
+        loadReport();
+    }
+
+    function getFiltersDescription() {
+        const filters = [];
+
+        if (dom.search.value.trim()) {
+            filters.push('Búsqueda: ' + dom.search.value.trim());
+        }
+
+        if (startDate || endDate) {
+            filters.push(
+                'Periodo: ' +
+                (startDate || 'Inicio') +
+                ' a ' +
+                (endDate || 'Hoy')
+            );
+        }
+
+        if (dom.status.value) {
+            filters.push(
+                'Estado: ' +
+                dom.status.options[
+                    dom.status.selectedIndex
+                ].text
+            );
+        }
+
+        if (
+            reportType === 'inscripciones' &&
+            dom.plan.value
+        ) {
+            filters.push(
+                'Plan: ' +
+                dom.plan.options[
+                    dom.plan.selectedIndex
+                ].text
+            );
+        }
+
+        if (
+            reportType === 'ventas' &&
+            dom.method.value
+        ) {
+            filters.push(
+                'Método: ' +
+                dom.method.options[
+                    dom.method.selectedIndex
+                ].text
+            );
+        }
+
+        return filters.length > 0
+            ? filters.join(' · ')
+            : 'Sin filtros adicionales';
+    }
+
+    function getReportName() {
+        return reportType === 'inscripciones'
+            ? 'Reporte de Inscripciones'
+            : 'Reporte de Ventas de Productos';
+    }
+
+    function getExportRows() {
+        if (reportType === 'inscripciones') {
+            return rows.map(function (row) {
+                return {
+                    Folio: row.id,
+                    Cliente: [
+                        row.cliente_nombre,
+                        row.cliente_apellido
+                    ].filter(Boolean).join(' '),
+                    Teléfono: row.telefono || '',
+                    Email: row.email || '',
+                    Plan: row.plan_nombre || '',
+                    'Fecha inicio': row.fecha_inicio || '',
+                    'Fecha fin': row.fecha_fin || '',
+                    'Días restantes':
+                        row.dias_restantes !== null
+                            ? row.dias_restantes
+                            : '',
+                    Importe: Number(row.precio_pagado || 0),
+                    Estado: capitalize(row.estado)
+                };
+            });
+        }
+
+        return rows.map(function (row) {
+            return {
+                Ticket: '#' + String(row.id).padStart(8, '0'),
+                Fecha: row.fecha_venta || '',
+                Productos: row.productos || '',
+                Unidades: Number(row.unidades || 0),
+                Cliente: row.cliente_nombre || '',
+                Vendedor: row.vendedor_nombre || '',
+                Método: capitalize(row.metodo_pago),
+                'Venta bruta': Number(row.total_bruto || 0),
+                Devoluciones: Number(row.devoluciones || 0),
+                'Ingreso neto': Number(row.total_neto || 0),
+                Estado: capitalize(row.estado)
+            };
+        });
+    }
+
+    function getStatsForExport() {
+        return stats.map(function (item) {
+            return [
+                item.label.textContent,
+                item.value.textContent
+            ];
+        });
+    }
+
+    function exportExcel() {
+        if (rows.length === 0) {
+            return;
+        }
+
+        try {
+            const workbook = XLSX.utils.book_new();
+            const generated = new Date().toLocaleString('es-MX');
+            const reportRows = getExportRows();
+            const statsRows = getStatsForExport();
+
+            workbook.Props = {
+                Title: getReportName(),
+                Subject: getFiltersDescription(),
+                Author: empresa.nombre || 'Gimnasio',
+                Company: empresa.nombre || 'Gimnasio',
+                CreatedDate: new Date()
+            };
+
+            const summary = [
+                [empresa.nombre || 'Gimnasio'],
+                [getReportName()],
+                [],
+                ['INFORMACIÓN DEL REPORTE', ''],
+                ['Fecha de generación', generated],
+                ['Responsable', usuario.nombre],
+                ['Perfil', capitalize(usuario.rol)],
+                ['Filtros aplicados', getFiltersDescription()],
+                ['Total de registros', rows.length],
+                [],
+                ['RESUMEN', 'VALOR']
+            ].concat(statsRows);
+
+            const summarySheet =
+                XLSX.utils.aoa_to_sheet(summary);
+
+            summarySheet['!cols'] = [
+                { wch: 30 },
+                { wch: 62 }
+            ];
+
+            summarySheet['!merges'] = [
+                {
+                    s: { r: 0, c: 0 },
+                    e: { r: 0, c: 1 }
+                },
+                {
+                    s: { r: 1, c: 0 },
+                    e: { r: 1, c: 1 }
                 }
-            }, 100);
+            ];
+
+            XLSX.utils.book_append_sheet(
+                workbook,
+                summarySheet,
+                'Resumen'
+            );
+
+            const detailSheet =
+                XLSX.utils.json_to_sheet(reportRows);
+
+            detailSheet['!cols'] =
+                reportType === 'inscripciones'
+                    ? [
+                        { wch: 10 },
+                        { wch: 30 },
+                        { wch: 16 },
+                        { wch: 32 },
+                        { wch: 22 },
+                        { wch: 14 },
+                        { wch: 14 },
+                        { wch: 16 },
+                        { wch: 14 },
+                        { wch: 14 }
+                    ]
+                    : [
+                        { wch: 15 },
+                        { wch: 20 },
+                        { wch: 52 },
+                        { wch: 11 },
+                        { wch: 27 },
+                        { wch: 24 },
+                        { wch: 15 },
+                        { wch: 16 },
+                        { wch: 16 },
+                        { wch: 16 },
+                        { wch: 14 }
+                    ];
+
+            if (detailSheet['!ref']) {
+                detailSheet['!autofilter'] = {
+                    ref: detailSheet['!ref']
+                };
+            }
+
+            const detailRange = XLSX.utils.decode_range(
+                detailSheet['!ref']
+            );
+
+            const currencyHeaders =
+                reportType === 'inscripciones'
+                    ? ['Importe']
+                    : [
+                        'Venta bruta',
+                        'Devoluciones',
+                        'Ingreso neto'
+                    ];
+
+            const headerMap = {};
+
+            for (
+                let column = detailRange.s.c;
+                column <= detailRange.e.c;
+                column++
+            ) {
+                const address = XLSX.utils.encode_cell({
+                    r: 0,
+                    c: column
+                });
+
+                if (detailSheet[address]) {
+                    headerMap[
+                        String(detailSheet[address].v)
+                    ] = column;
+                }
+            }
+
+            currencyHeaders.forEach(function (header) {
+                const column = headerMap[header];
+
+                if (column === undefined) {
+                    return;
+                }
+
+                for (
+                    let row = 1;
+                    row <= detailRange.e.r;
+                    row++
+                ) {
+                    const address = XLSX.utils.encode_cell({
+                        r: row,
+                        c: column
+                    });
+
+                    if (detailSheet[address]) {
+                        detailSheet[address].z =
+                            '$#,##0.00';
+                    }
+                }
+            });
+
+            XLSX.utils.book_append_sheet(
+                workbook,
+                detailSheet,
+                reportType === 'inscripciones'
+                    ? 'Inscripciones'
+                    : 'Ventas'
+            );
+
+            const analysisMap = new Map();
+
+            rows.forEach(function (row) {
+                const key = reportType === 'inscripciones'
+                    ? row.plan_nombre
+                    : capitalize(row.metodo_pago);
+
+                if (!analysisMap.has(key)) {
+                    analysisMap.set(key, {
+                        registros: 0,
+                        importe: 0
+                    });
+                }
+
+                const current = analysisMap.get(key);
+                current.registros++;
+
+                current.importe += Number(
+                    reportType === 'inscripciones'
+                        ? row.precio_pagado
+                        : row.total_neto
+                ) || 0;
+            });
+
+            const analysis = [
+                [
+                    reportType === 'inscripciones'
+                        ? 'Plan'
+                        : 'Método de pago',
+                    'Registros',
+                    'Importe'
+                ]
+            ];
+
+            let analysisTotal = 0;
+            let analysisCount = 0;
+
+            analysisMap.forEach(function (value, key) {
+                analysis.push([
+                    key,
+                    value.registros,
+                    value.importe
+                ]);
+
+                analysisCount += value.registros;
+                analysisTotal += value.importe;
+            });
+
+            analysis.push([]);
+            analysis.push([
+                'TOTAL',
+                analysisCount,
+                analysisTotal
+            ]);
+
+            const analysisSheet =
+                XLSX.utils.aoa_to_sheet(analysis);
+
+            analysisSheet['!cols'] = [
+                { wch: 30 },
+                { wch: 14 },
+                { wch: 19 }
+            ];
+
+            const analysisRange =
+                XLSX.utils.decode_range(
+                    analysisSheet['!ref']
+                );
+
+            for (
+                let row = 1;
+                row <= analysisRange.e.r;
+                row++
+            ) {
+                const address = XLSX.utils.encode_cell({
+                    r: row,
+                    c: 2
+                });
+
+                if (analysisSheet[address]) {
+                    analysisSheet[address].z =
+                        '$#,##0.00';
+                }
+            }
+
+            XLSX.utils.book_append_sheet(
+                workbook,
+                analysisSheet,
+                'Análisis'
+            );
+
+            const now = new Date();
+            const stamp =
+                formatDateIso(now).replace(/-/g, '') +
+                '_' +
+                String(now.getHours()).padStart(2, '0') +
+                String(now.getMinutes()).padStart(2, '0');
+
+            const fileName =
+                (
+                    reportType === 'inscripciones'
+                        ? 'Reporte_Inscripciones_'
+                        : 'Reporte_Ventas_'
+                ) +
+                stamp +
+                '.xlsx';
+
+            XLSX.writeFile(workbook, fileName);
+
+            Swal.fire({
+                icon: 'success',
+                title: 'Reporte descargado',
+                text:
+                    rows.length +
+                    ' registros incluidos en el archivo Excel.',
+                timer: 2300,
+                showConfirmButton: false
+            });
+        } catch (error) {
+            Swal.fire({
+                icon: 'error',
+                title: 'No se pudo generar Excel',
+                text: error.message,
+                confirmButtonColor: '#2f66b3'
+            });
         }
-        
-        function escapeHtml(text) {
-            if(!text) return '';
-            return text.toString()
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;')
-                .replace(/'/g, '&#39;');
+    }
+
+    async function imageToDataUrl(url) {
+        if (!url) {
+            return null;
         }
-        
-        function mostrarError(mensaje) {
-            Swal.fire('Error', mensaje, 'error');
-            $('#tablaBody').html('<tr><td colspan="8" class="text-center py-5 text-danger">' +
-                '<i class="fas fa-exclamation-triangle fa-3x mb-3"></i>' +
-                '<p>' + mensaje + '</p>' +
-                '</td></tr>');
+
+        return new Promise(function (resolve) {
+            const image = new Image();
+            image.crossOrigin = 'anonymous';
+            image.onload = function () {
+                try {
+                    const canvas =
+                        document.createElement('canvas');
+
+                    canvas.width = image.naturalWidth;
+                    canvas.height = image.naturalHeight;
+
+                    const context =
+                        canvas.getContext('2d');
+
+                    context.drawImage(image, 0, 0);
+
+                    resolve(
+                        canvas.toDataURL('image/png')
+                    );
+                } catch (error) {
+                    resolve(null);
+                }
+            };
+
+            image.onerror = function () {
+                resolve(null);
+            };
+
+            image.src =
+                url +
+                (url.includes('?') ? '&' : '?') +
+                'v=' +
+                Date.now();
+        });
+    }
+
+    async function exportPdf() {
+        if (rows.length === 0) {
+            return;
         }
-    </script>
+
+        Swal.fire({
+            title: 'Generando PDF',
+            text: 'Preparando el documento...',
+            allowOutsideClick: false,
+            didOpen: function () {
+                Swal.showLoading();
+            }
+        });
+
+        try {
+            const jsPDF = window.jspdf.jsPDF;
+            const doc = new jsPDF({
+                orientation: 'landscape',
+                unit: 'mm',
+                format: 'a4'
+            });
+
+            const pageWidth =
+                doc.internal.pageSize.getWidth();
+
+            const pageHeight =
+                doc.internal.pageSize.getHeight();
+
+            const navy = [30, 49, 71];
+            const gray = [93, 107, 124];
+            const light = [245, 247, 249];
+            const line = [214, 222, 231];
+            const logo = await imageToDataUrl(
+                empresa.logo
+            );
+
+            doc.setFillColor(
+                navy[0],
+                navy[1],
+                navy[2]
+            );
+
+            doc.rect(0, 0, pageWidth, 5, 'F');
+
+            if (logo) {
+                doc.addImage(
+                    logo,
+                    'PNG',
+                    12,
+                    11,
+                    18,
+                    18
+                );
+            }
+
+            const titleX = logo ? 36 : 12;
+
+            doc.setTextColor(
+                navy[0],
+                navy[1],
+                navy[2]
+            );
+
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(14);
+            doc.text(
+                empresa.nombre || 'Gimnasio',
+                titleX,
+                15
+            );
+
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(7.3);
+            doc.setTextColor(
+                gray[0],
+                gray[1],
+                gray[2]
+            );
+
+            const contact = [
+                empresa.direccion,
+                empresa.telefono
+                    ? 'Tel. ' + empresa.telefono
+                    : '',
+                empresa.email
+            ].filter(Boolean).join(' · ');
+
+            doc.text(
+                contact || 'Sistema de administración',
+                titleX,
+                21
+            );
+
+            doc.setTextColor(
+                navy[0],
+                navy[1],
+                navy[2]
+            );
+
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(12);
+            doc.text(
+                getReportName(),
+                pageWidth - 12,
+                14,
+                {
+                    align: 'right'
+                }
+            );
+
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(7.3);
+            doc.setTextColor(
+                gray[0],
+                gray[1],
+                gray[2]
+            );
+
+            doc.text(
+                'Generado: ' +
+                new Date().toLocaleString('es-MX'),
+                pageWidth - 12,
+                20,
+                {
+                    align: 'right'
+                }
+            );
+
+            doc.text(
+                'Responsable: ' +
+                usuario.nombre +
+                ' · ' +
+                capitalize(usuario.rol),
+                pageWidth - 12,
+                25,
+                {
+                    align: 'right'
+                }
+            );
+
+            doc.setDrawColor(
+                line[0],
+                line[1],
+                line[2]
+            );
+
+            doc.line(12, 34, pageWidth - 12, 34);
+
+            const statData = getStatsForExport();
+            const infoRows = [
+                [
+                    'Periodo',
+                    startDate || endDate
+                        ? (
+                            (startDate || 'Inicio') +
+                            ' al ' +
+                            (endDate || 'Hoy')
+                        )
+                        : 'Todo el historial'
+                ],
+                [
+                    'Registros',
+                    String(rows.length)
+                ],
+                [
+                    'Filtros',
+                    getFiltersDescription()
+                ]
+            ];
+
+            doc.autoTable({
+                body: infoRows,
+                startY: 39,
+                margin: {
+                    left: 12,
+                    right: 12
+                },
+                theme: 'plain',
+                tableWidth: pageWidth - 24,
+                styles: {
+                    font: 'helvetica',
+                    fontSize: 7.2,
+                    cellPadding: 2.3,
+                    textColor: gray,
+                    valign: 'top'
+                },
+                columnStyles: {
+                    0: {
+                        cellWidth: 23,
+                        fontStyle: 'bold',
+                        textColor: navy
+                    }
+                },
+                didParseCell: function (data) {
+                    if (data.row.index % 2 === 0) {
+                        data.cell.styles.fillColor = light;
+                    }
+                }
+            });
+
+            const summaryY =
+                doc.lastAutoTable.finalY + 5;
+
+            const gap = 4;
+            const summaryWidth =
+                (pageWidth - 24 - gap * 3) / 4;
+
+            statData.forEach(function (item, index) {
+                const x =
+                    12 +
+                    index * (summaryWidth + gap);
+
+                doc.setFillColor(
+                    light[0],
+                    light[1],
+                    light[2]
+                );
+
+                doc.setDrawColor(
+                    line[0],
+                    line[1],
+                    line[2]
+                );
+
+                doc.roundedRect(
+                    x,
+                    summaryY,
+                    summaryWidth,
+                    17,
+                    1.5,
+                    1.5,
+                    'FD'
+                );
+
+                doc.setTextColor(
+                    gray[0],
+                    gray[1],
+                    gray[2]
+                );
+
+                doc.setFont('helvetica', 'normal');
+                doc.setFontSize(6.3);
+                doc.text(
+                    String(item[0]).toUpperCase(),
+                    x + 3,
+                    summaryY + 6
+                );
+
+                doc.setTextColor(
+                    navy[0],
+                    navy[1],
+                    navy[2]
+                );
+
+                doc.setFont('helvetica', 'bold');
+                doc.setFontSize(10);
+                doc.text(
+                    String(item[1]),
+                    x + 3,
+                    summaryY + 13
+                );
+            });
+
+            const exportRows = getExportRows();
+            let headers;
+            let body;
+            let foot;
+            let columnStyles;
+
+            if (reportType === 'inscripciones') {
+                const totalIncome = rows.reduce(
+                    function (sum, row) {
+                        return sum +
+                            Number(row.precio_pagado || 0);
+                    },
+                    0
+                );
+
+                headers = [
+                    'Folio',
+                    'Cliente',
+                    'Teléfono',
+                    'Plan',
+                    'Inicio',
+                    'Fin',
+                    'Días',
+                    'Importe',
+                    'Estado'
+                ];
+
+                body = exportRows.map(function (row) {
+                    return [
+                        row.Folio,
+                        row.Cliente,
+                        row.Teléfono,
+                        row.Plan,
+                        row['Fecha inicio'],
+                        row['Fecha fin'],
+                        row['Días restantes'],
+                        formatMoney(row.Importe),
+                        row.Estado
+                    ];
+                });
+
+                foot = [[
+                    '',
+                    '',
+                    '',
+                    '',
+                    '',
+                    '',
+                    'TOTAL',
+                    formatMoney(totalIncome),
+                    ''
+                ]];
+
+                columnStyles = {
+                    1: {
+                        cellWidth: 37
+                    },
+                    3: {
+                        cellWidth: 28
+                    },
+                    7: {
+                        halign: 'right'
+                    }
+                };
+            } else {
+                const totals = rows.reduce(
+                    function (result, row) {
+                        result.gross +=
+                            Number(row.total_bruto || 0);
+
+                        result.returns +=
+                            Number(row.devoluciones || 0);
+
+                        result.net +=
+                            Number(row.total_neto || 0);
+
+                        return result;
+                    },
+                    {
+                        gross: 0,
+                        returns: 0,
+                        net: 0
+                    }
+                );
+
+                headers = [
+                    'Ticket',
+                    'Fecha',
+                    'Productos',
+                    'Unid.',
+                    'Cliente',
+                    'Método',
+                    'Venta',
+                    'Dev.',
+                    'Neto',
+                    'Estado'
+                ];
+
+                body = exportRows.map(function (row) {
+                    return [
+                        row.Ticket,
+                        row.Fecha,
+                        row.Productos,
+                        row.Unidades,
+                        row.Cliente,
+                        row.Método,
+                        formatMoney(row['Venta bruta']),
+                        formatMoney(row.Devoluciones),
+                        formatMoney(row['Ingreso neto']),
+                        row.Estado
+                    ];
+                });
+
+                foot = [[
+                    '',
+                    '',
+                    '',
+                    '',
+                    '',
+                    'TOTALES',
+                    formatMoney(totals.gross),
+                    formatMoney(totals.returns),
+                    formatMoney(totals.net),
+                    ''
+                ]];
+
+                columnStyles = {
+                    2: {
+                        cellWidth: 53
+                    },
+                    4: {
+                        cellWidth: 29
+                    },
+                    6: {
+                        halign: 'right'
+                    },
+                    7: {
+                        halign: 'right'
+                    },
+                    8: {
+                        halign: 'right'
+                    }
+                };
+            }
+
+            doc.autoTable({
+                head: [headers],
+                body: body,
+                foot: foot,
+                startY: summaryY + 23,
+                margin: {
+                    left: 12,
+                    right: 12,
+                    bottom: 14
+                },
+                theme: 'grid',
+                showFoot: 'lastPage',
+                styles: {
+                    font: 'helvetica',
+                    fontSize:
+                        reportType === 'ventas'
+                            ? 6.15
+                            : 6.65,
+                    cellPadding: 2.25,
+                    lineColor: line,
+                    lineWidth: 0.1,
+                    textColor: [54, 66, 81],
+                    valign: 'middle',
+                    overflow: 'linebreak'
+                },
+                headStyles: {
+                    fillColor: navy,
+                    textColor: [255, 255, 255],
+                    fontStyle: 'bold',
+                    halign: 'center'
+                },
+                footStyles: {
+                    fillColor: [235, 239, 243],
+                    textColor: navy,
+                    fontStyle: 'bold'
+                },
+                alternateRowStyles: {
+                    fillColor: [248, 249, 251]
+                },
+                columnStyles: columnStyles,
+                didDrawPage: function () {
+                    const current =
+                        doc.internal.getCurrentPageInfo()
+                            .pageNumber;
+
+                    doc.setDrawColor(
+                        line[0],
+                        line[1],
+                        line[2]
+                    );
+
+                    doc.line(
+                        12,
+                        pageHeight - 10,
+                        pageWidth - 12,
+                        pageHeight - 10
+                    );
+
+                    doc.setTextColor(
+                        gray[0],
+                        gray[1],
+                        gray[2]
+                    );
+
+                    doc.setFontSize(6.8);
+                    doc.setFont('helvetica', 'normal');
+
+                    doc.text(
+                        empresa.nombre || 'Gimnasio',
+                        12,
+                        pageHeight - 5.3
+                    );
+
+                    doc.text(
+                        'Página ' +
+                        current +
+                        ' · ' +
+                        rows.length +
+                        ' registros',
+                        pageWidth - 12,
+                        pageHeight - 5.3,
+                        {
+                            align: 'right'
+                        }
+                    );
+                }
+            });
+
+            const now = new Date();
+            const stamp =
+                formatDateIso(now).replace(/-/g, '') +
+                '_' +
+                String(now.getHours()).padStart(2, '0') +
+                String(now.getMinutes()).padStart(2, '0');
+
+            const fileName =
+                (
+                    reportType === 'inscripciones'
+                        ? 'Reporte_Inscripciones_'
+                        : 'Reporte_Ventas_'
+                ) +
+                stamp +
+                '.pdf';
+
+            doc.save(fileName);
+
+            Swal.fire({
+                icon: 'success',
+                title: 'Reporte descargado',
+                text:
+                    rows.length +
+                    ' registros incluidos en el archivo PDF.',
+                timer: 2300,
+                showConfirmButton: false
+            });
+        } catch (error) {
+            Swal.fire({
+                icon: 'error',
+                title: 'No se pudo generar PDF',
+                text: error.message,
+                confirmButtonColor: '#2f66b3'
+            });
+        }
+    }
+
+    dom.reportTypes.forEach(function (button) {
+        button.addEventListener('click', function () {
+            setReportType(button.dataset.type);
+        });
+    });
+
+    dom.quickRanges.forEach(function (button) {
+        button.addEventListener('click', function () {
+            setQuickRange(
+                button.dataset.range,
+                button
+            );
+        });
+    });
+
+    dom.clearDates.addEventListener('click', function () {
+        startDate = '';
+        endDate = '';
+        datePicker.clear();
+        clearQuickRangeActive();
+        updateFilterCount();
+        scheduleReportReload(50);
+    });
+
+    dom.clearFilters.addEventListener(
+        'click',
+        clearFilters
+    );
+
+    dom.applyFilters.addEventListener(
+        'click',
+        loadReport
+    );
+
+    dom.search.addEventListener('input', function () {
+        updateFilterCount();
+        scheduleReportReload(350);
+    });
+
+    dom.search.addEventListener('keydown', function (event) {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            loadReport();
+        }
+    });
+
+    [
+        dom.plan,
+        dom.method,
+        dom.status
+    ].forEach(function (control) {
+        control.addEventListener('change', function () {
+            updateFilterCount();
+            scheduleReportReload(80);
+        });
+    });
+
+    dom.pageSize.addEventListener('change', function () {
+        pageSize = Number(dom.pageSize.value) || 15;
+        currentPage = 1;
+        renderTable();
+    });
+
+    dom.exportExcel.addEventListener(
+        'click',
+        exportExcel
+    );
+
+    dom.exportPdf.addEventListener(
+        'click',
+        exportPdf
+    );
+
+    updateStatusOptions();
+    updateReportCopy();
+    updateFilterCount();
+    loadReport();
+})();
+</script>
 </body>
 </html>

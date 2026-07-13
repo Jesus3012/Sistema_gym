@@ -26,602 +26,9 @@ $usuario_id = $_SESSION['user_id'];
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css">
+    <link rel="stylesheet" href="css/asistencias.css?v=2.0.0">
 
     <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
-
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            background: #f0f2f5;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        }
-
-        .sidebar {
-            position: fixed;
-            left: 0;
-            top: 0;
-            width: 260px;
-            height: 100vh;
-            background: #1e3a8a;
-            color: white;
-            z-index: 1000;
-            overflow-y: auto;
-        }
-
-        .main-content {
-            margin-left: 260px;
-            padding: 20px;
-            min-height: 100vh;
-        }
-
-        .page-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 15px;
-            margin-bottom: 22px;
-            flex-wrap: wrap;
-        }
-
-        .page-header h2 {
-            color: #0f172a;
-            font-weight: 800;
-            margin: 0;
-            font-size: 26px;
-        }
-
-        .btn-manual {
-            background: #16a34a;
-            color: white;
-            border: none;
-            padding: 11px 22px;
-            border-radius: 14px;
-            font-weight: 700;
-            transition: all 0.2s ease;
-            cursor: pointer;
-            box-shadow: 0 8px 18px rgba(22, 163, 74, 0.22);
-        }
-
-        .btn-manual:hover {
-            background: #15803d;
-            transform: translateY(-1px);
-            color: white;
-        }
-
-        .qr-module {
-            background: linear-gradient(135deg, #0f2f75 0%, #1e3a8a 48%, #2563eb 100%);
-            border-radius: 26px;
-            padding: 28px;
-            color: white;
-            margin-bottom: 30px;
-            box-shadow: 0 18px 45px rgba(30, 58, 138, 0.28);
-            position: relative;
-            overflow: hidden;
-        }
-
-        .qr-module::before {
-            content: "";
-            position: absolute;
-            width: 230px;
-            height: 230px;
-            border-radius: 50%;
-            background: rgba(255,255,255,0.08);
-            top: -95px;
-            right: -85px;
-        }
-
-        .qr-module::after {
-            content: "";
-            position: absolute;
-            width: 160px;
-            height: 160px;
-            border-radius: 50%;
-            background: rgba(255,255,255,0.06);
-            bottom: -80px;
-            left: -70px;
-        }
-
-        .qr-header {
-            display: flex;
-            align-items: center;
-            gap: 18px;
-            margin-bottom: 22px;
-            position: relative;
-            z-index: 2;
-        }
-
-        .qr-header h3 {
-            margin: 0;
-            font-size: 28px;
-            font-weight: 800;
-        }
-
-        .qr-header p {
-            margin: 5px 0 0;
-            color: rgba(255,255,255,0.82);
-            font-size: 15px;
-        }
-
-        .qr-icon-wrap {
-            width: 74px;
-            height: 74px;
-            min-width: 74px;
-            border-radius: 24px;
-            background: rgba(255,255,255,0.16);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 34px;
-            box-shadow: inset 0 0 0 1px rgba(255,255,255,0.18);
-            transition: all 0.3s ease;
-        }
-
-        .qr-icon-wrap.active {
-            transform: scale(1.07);
-            background: rgba(34,197,94,0.28);
-            box-shadow: 0 0 30px rgba(34,197,94,0.45);
-        }
-
-        .qr-reader-shell {
-            width: 100%;
-            max-width: 470px;
-            min-height: 335px;
-            margin: 0 auto;
-            border-radius: 26px;
-            background: #020617;
-            padding: 12px;
-            position: relative;
-            overflow: hidden;
-            box-shadow: 0 15px 38px rgba(0,0,0,0.35);
-            z-index: 2;
-        }
-
-        #reader-container {
-            width: 100%;
-            min-height: 310px;
-            border-radius: 20px;
-            overflow: hidden;
-            background: #000;
-        }
-
-        #reader-container video {
-            width: 100% !important;
-            height: auto !important;
-            min-height: 310px;
-            object-fit: cover;
-            border-radius: 20px;
-        }
-
-        #reader-container canvas {
-            border-radius: 20px;
-        }
-
-        .qr-reader-placeholder {
-            position: absolute;
-            inset: 12px;
-            border-radius: 20px;
-            background: radial-gradient(circle at top, #1e293b, #020617 70%);
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            color: rgba(255,255,255,0.78);
-            text-align: center;
-            gap: 12px;
-            pointer-events: none;
-            transition: opacity 0.2s ease;
-        }
-
-        .qr-reader-placeholder.hidden {
-            opacity: 0;
-            visibility: hidden;
-        }
-
-        .qr-reader-placeholder i {
-            font-size: 50px;
-            color: rgba(255,255,255,0.92);
-        }
-
-        .qr-reader-placeholder span {
-            font-size: 14px;
-            max-width: 240px;
-            line-height: 1.4;
-        }
-
-        .qr-status-card {
-            width: fit-content;
-            max-width: 100%;
-            margin: 18px auto 0;
-            padding: 10px 18px;
-            border-radius: 999px;
-            background: rgba(255,255,255,0.14);
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            font-size: 14px;
-            color: rgba(255,255,255,0.92);
-            position: relative;
-            z-index: 2;
-        }
-
-        .status-dot {
-            width: 10px;
-            height: 10px;
-            background: #f59e0b;
-            border-radius: 50%;
-            box-shadow: 0 0 0 4px rgba(245,158,11,0.18);
-        }
-
-        .qr-status-card.active .status-dot {
-            background: #22c55e;
-            box-shadow: 0 0 0 4px rgba(34,197,94,0.20);
-        }
-
-        .qr-status-card.error .status-dot {
-            background: #ef4444;
-            box-shadow: 0 0 0 4px rgba(239,68,68,0.20);
-        }
-
-        .qr-controls {
-            display: flex;
-            justify-content: center;
-            gap: 14px;
-            margin-top: 20px;
-            flex-wrap: wrap;
-            position: relative;
-            z-index: 2;
-        }
-
-        .btn-qr {
-            border: none;
-            color: white;
-            padding: 12px 22px;
-            border-radius: 16px;
-            transition: all 0.2s ease;
-            cursor: pointer;
-            font-weight: 700;
-            min-width: 165px;
-        }
-
-        .btn-start {
-            background: #22c55e;
-            box-shadow: 0 10px 22px rgba(34,197,94,0.25);
-        }
-
-        .btn-start:hover {
-            background: #16a34a;
-            transform: translateY(-2px);
-        }
-
-        .btn-stop {
-            background: rgba(239,68,68,0.95);
-            box-shadow: 0 10px 22px rgba(239,68,68,0.25);
-        }
-
-        .btn-stop:hover {
-            background: #dc2626;
-            transform: translateY(-2px);
-        }
-
-        .btn-qr:disabled {
-            opacity: 0.48;
-            cursor: not-allowed;
-            transform: none;
-            box-shadow: none;
-        }
-
-        .qr-last-code {
-            margin: 16px auto 0;
-            width: fit-content;
-            max-width: 100%;
-            padding: 10px 16px;
-            border-radius: 14px;
-            background: rgba(15,23,42,0.35);
-            text-align: center;
-            position: relative;
-            z-index: 2;
-        }
-
-        .qr-last-code small {
-            display: block;
-            color: rgba(255,255,255,0.72);
-            font-size: 12px;
-        }
-
-        .qr-last-code strong {
-            display: block;
-            font-size: 15px;
-            margin-top: 2px;
-            word-break: break-all;
-        }
-
-        .stats-card {
-            background: white;
-            border-radius: 16px;
-            padding: 20px;
-            text-align: center;
-            box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08);
-            margin-bottom: 20px;
-            transition: transform 0.2s;
-            min-height: 135px;
-        }
-
-        .stats-card:hover {
-            transform: translateY(-3px);
-        }
-
-        .stats-number {
-            font-size: 2rem;
-            font-weight: bold;
-            color: #1e3a8a;
-        }
-
-        .stats-label {
-            color: #6c757d;
-            font-size: 0.85rem;
-            margin-top: 5px;
-        }
-
-        .stats-icon {
-            font-size: 32px;
-            color: #1e3a8a;
-            margin-bottom: 8px;
-        }
-
-        .table-custom {
-            background: white;
-            border-radius: 16px;
-            overflow: hidden;
-            box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08);
-        }
-
-        .table-custom thead {
-            background: #1e3a8a;
-            color: white;
-        }
-
-        .table-custom th,
-        .table-custom td {
-            padding: 12px 15px;
-            vertical-align: middle;
-        }
-
-        .table-custom tbody tr:hover {
-            background: #f8f9fa;
-        }
-
-        .toast-notification {
-            position: fixed;
-            bottom: 20px;
-            right: 20px;
-            z-index: 9999;
-            min-width: 300px;
-            max-width: calc(100vw - 30px);
-        }
-
-        .badge-plan {
-            padding: 4px 10px;
-            border-radius: 20px;
-            font-size: 11px;
-            font-weight: 600;
-        }
-
-        .badge-visita { background: #f59e0b; color: white; }
-        .badge-mensual { background: #10b981; color: white; }
-        .badge-anual { background: #3b82f6; color: white; }
-        .badge-semanal { background: #8b5cf6; color: white; }
-
-        .cliente-item {
-            cursor: pointer;
-            transition: background 0.2s;
-        }
-
-        .cliente-item:hover {
-            background: #e8f0fe !important;
-        }
-
-        .cliente-item.disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-        }
-
-        .empty-state-simple {
-            text-align: center;
-            padding: 40px 20px;
-        }
-
-        .empty-state-simple i {
-            opacity: 0.5;
-        }
-
-        @media (max-width: 768px) {
-            body {
-                background: #eef2f7;
-            }
-
-            .sidebar {
-                transform: translateX(-100%);
-            }
-
-            .main-content {
-                margin-left: 0;
-                padding: 14px;
-            }
-
-            .page-header {
-                align-items: stretch;
-                margin-bottom: 16px;
-            }
-
-            .page-header h2 {
-                font-size: 21px;
-                line-height: 1.25;
-            }
-
-            .btn-manual {
-                width: 100%;
-                padding: 12px;
-                border-radius: 14px;
-            }
-
-            .qr-module {
-                border-radius: 22px;
-                padding: 18px;
-                margin-bottom: 22px;
-            }
-
-            .qr-header {
-                gap: 13px;
-                margin-bottom: 18px;
-            }
-
-            .qr-header h3 {
-                font-size: 23px;
-            }
-
-            .qr-header p {
-                font-size: 13px;
-                line-height: 1.35;
-            }
-
-            .qr-icon-wrap {
-                width: 58px;
-                height: 58px;
-                min-width: 58px;
-                border-radius: 18px;
-                font-size: 27px;
-            }
-
-            .qr-reader-shell {
-                max-width: 100%;
-                min-height: 285px;
-                border-radius: 22px;
-                padding: 10px;
-            }
-
-            #reader-container {
-                min-height: 265px;
-                border-radius: 17px;
-            }
-
-            #reader-container video {
-                min-height: 265px;
-                border-radius: 17px;
-            }
-
-            .qr-reader-placeholder {
-                inset: 10px;
-                border-radius: 17px;
-            }
-
-            .qr-reader-placeholder i {
-                font-size: 42px;
-            }
-
-            .qr-status-card {
-                width: 100%;
-                justify-content: center;
-                text-align: center;
-                padding: 10px 12px;
-                font-size: 13px;
-                border-radius: 14px;
-            }
-
-            .qr-controls {
-                gap: 10px;
-                margin-top: 14px;
-            }
-
-            .btn-qr {
-                width: 100%;
-                min-width: 100%;
-                padding: 13px;
-                border-radius: 14px;
-            }
-
-            .qr-last-code {
-                width: 100%;
-                border-radius: 14px;
-            }
-
-            .stats-card {
-                padding: 15px 10px;
-                min-height: 118px;
-                border-radius: 14px;
-            }
-
-            .stats-icon {
-                font-size: 25px;
-            }
-
-            .stats-number {
-                font-size: 1.45rem;
-            }
-
-            .stats-label {
-                font-size: 0.76rem;
-            }
-
-            .table-custom {
-                border-radius: 14px;
-            }
-
-            .table-custom th,
-            .table-custom td {
-                padding: 10px;
-                font-size: 13px;
-                white-space: nowrap;
-            }
-
-            .toast-notification {
-                left: 12px;
-                right: 12px;
-                bottom: 12px;
-                min-width: unset;
-                max-width: unset;
-            }
-
-            .modal-dialog {
-                margin: 10px;
-            }
-        }
-
-        @media (max-width: 420px) {
-            .main-content {
-                padding: 10px;
-            }
-
-            .qr-module {
-                padding: 15px;
-                border-radius: 20px;
-            }
-
-            .qr-header h3 {
-                font-size: 21px;
-            }
-
-            .qr-header p {
-                font-size: 12px;
-            }
-
-            .qr-reader-shell {
-                min-height: 255px;
-            }
-
-            #reader-container {
-                min-height: 235px;
-            }
-
-            #reader-container video {
-                min-height: 235px;
-            }
-        }
-    </style>
 </head>
 
 <body>
@@ -631,9 +38,23 @@ $usuario_id = $_SESSION['user_id'];
         <div class="container-fluid">
 
             <div class="page-header">
-                <h2><i class="fas fa-qrcode"></i> Registro de Asistencias</h2>
-                <button class="btn-manual" data-bs-toggle="modal" data-bs-target="#modalRegistroManual">
-                    <i class="fas fa-hand-pointer"></i> Registro Manual
+                <div class="page-header-copy">
+                    <span class="page-kicker">Control de acceso</span>
+                    <h2>
+                        <i class="fas fa-qrcode"></i>
+                        Registro de Asistencias
+                    </h2>
+                    <p>Escanea el código del socio o registra la asistencia manualmente.</p>
+                </div>
+
+                <button
+                    class="btn-manual"
+                    type="button"
+                    data-bs-toggle="modal"
+                    data-bs-target="#modalRegistroManual"
+                >
+                    <i class="fas fa-hand-pointer"></i>
+                    Registro Manual
                 </button>
             </div>
 
@@ -679,7 +100,14 @@ $usuario_id = $_SESSION['user_id'];
                 </div> -->
             </div>
 
-            <div class="row mb-4">
+            <div class="section-heading">
+                <div>
+                    <span class="section-kicker">Resumen</span>
+                    <h3>Actividad de hoy</h3>
+                </div>
+            </div>
+
+            <div class="row mb-4 stats-grid">
                 <div class="col-md-3 col-6">
                     <div class="stats-card">
                         <div class="stats-icon"><i class="fas fa-calendar-day"></i></div>
@@ -713,9 +141,16 @@ $usuario_id = $_SESSION['user_id'];
                 </div>
             </div>
 
+            <div class="section-heading section-heading-table">
+                <div>
+                    <span class="section-kicker">Movimientos</span>
+                    <h3>Asistencias registradas</h3>
+                </div>
+            </div>
+
             <div class="table-custom">
-                <div style="overflow-x: auto;">
-                    <table class="table table-hover mb-0">
+                <div class="table-responsive-custom">
+                    <table class="table table-hover mb-0 responsive-table">
                         <thead>
                             <tr>
                                 <th>Cliente</th>
@@ -743,9 +178,9 @@ $usuario_id = $_SESSION['user_id'];
     </div>
 
     <div class="modal fade" id="modalRegistroManual" tabindex="-1">
-        <div class="modal-dialog modal-dialog-scrollable">
-            <div class="modal-content">
-                <div class="modal-header" style="background: #1e3a8a; color: white;">
+        <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content modal-custom">
+                <div class="modal-header modal-header-custom">
                     <h5 class="modal-title"><i class="fas fa-hand-pointer"></i> Registro Manual de Asistencia</h5>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
@@ -755,21 +190,21 @@ $usuario_id = $_SESSION['user_id'];
                         <label class="form-label fw-bold mb-3">Seleccione una opción:</label>
 
                         <div class="d-grid gap-2">
-                            <button type="button" class="btn btn-outline-primary btn-lg" onclick="mostrarListadoCompleto()">
+                            <button type="button" class="btn btn-outline-primary btn-lg manual-option" onclick="mostrarListadoCompleto()">
                                 <i class="fas fa-list"></i> Ver todos los clientes activos
                             </button>
 
-                            <button type="button" class="btn btn-outline-success btn-lg" onclick="mostrarRecientes()">
+                            <button type="button" class="btn btn-outline-success btn-lg manual-option" onclick="mostrarRecientes()">
                                 <i class="fas fa-clock"></i> Clientes que asistieron hoy
                             </button>
 
-                            <button type="button" class="btn btn-outline-warning btn-lg" onclick="mostrarProximosAVencer()">
+                            <button type="button" class="btn btn-outline-warning btn-lg manual-option" onclick="mostrarProximosAVencer()">
                                 <i class="fas fa-exclamation-triangle"></i> Planes por vencer (7 días)
                             </button>
 
                             <hr>
 
-                            <button type="button" class="btn btn-outline-secondary btn-lg" onclick="mostrarBuscador()">
+                            <button type="button" class="btn btn-outline-secondary btn-lg manual-option" onclick="mostrarBuscador()">
                                 <i class="fas fa-search"></i> Buscar por nombre/teléfono
                             </button>
                         </div>
@@ -913,6 +348,31 @@ $usuario_id = $_SESSION['user_id'];
             });
         }
 
+        function prepararTablaResponsive() {
+            const tabla = document.querySelector('.responsive-table');
+
+            if (!tabla) {
+                return;
+            }
+
+            const encabezados = Array.from(
+                tabla.querySelectorAll('thead th')
+            ).map(function(th) {
+                return th.textContent.trim();
+            });
+
+            tabla.querySelectorAll('tbody tr').forEach(function(fila) {
+                fila.querySelectorAll('td').forEach(function(celda, indice) {
+                    if (!celda.hasAttribute('colspan')) {
+                        celda.setAttribute(
+                            'data-label',
+                            encabezados[indice] || ''
+                        );
+                    }
+                });
+            });
+        }
+
         function actualizarTabla() {
             $.get('includes/obtener_asistencias.php', function(response) {
                 const tbody = $('#tablaAsistencias');
@@ -947,6 +407,8 @@ $usuario_id = $_SESSION['user_id'];
                             </tr>
                         `);
                     });
+
+                    prepararTablaResponsive();
                 } else {
                     tbody.html(`
                         <tr>
@@ -1232,6 +694,8 @@ $usuario_id = $_SESSION['user_id'];
                             </div>
                         `);
                     });
+
+                    prepararTablaResponsive();
                 } else {
                     container.html('<div class="text-center py-4 text-muted"><i class="fas fa-users fa-2x mb-2"></i><br>No se encontraron clientes</div>');
                 }

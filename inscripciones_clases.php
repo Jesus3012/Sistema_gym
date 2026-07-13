@@ -214,201 +214,20 @@ $clientes_list = $clientes_activos->fetch_all(MYSQLI_ASSOC);
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css">
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
-        body {
-            background: #f4f6f9;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        }
-        
-        .sidebar {
-            position: fixed;
-            left: 0;
-            top: 0;
-            width: 260px;
-            height: 100vh;
-            background: #1e3a8a;
-            color: white;
-            z-index: 1000;
-            overflow-y: auto;
-        }
-        
-        .main-content {
-            margin-left: 260px;
-            padding: 20px;
-            min-height: 100vh;
-        }
-        
-        .card-custom {
-            background: white;
-            border-radius: 8px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-            margin-bottom: 20px;
-        }
-        
-        .card-header-custom {
-            background: #1e3a8a;
-            color: white;
-            padding: 12px 20px;
-            border-radius: 8px 8px 0 0;
-            font-weight: 600;
-        }
-        
-        .card-body-custom {
-            padding: 20px;
-        }
-        
-        .btn-custom-primary {
-            background: #1e3a8a;
-            color: white;
-            border: none;
-            padding: 8px 20px;
-            border-radius: 5px;
-            cursor: pointer;
-            transition: all 0.2s ease;
-        }
-        
-        .btn-custom-primary:hover {
-            background: #152c6b;
-            transform: translateY(-1px);
-        }
-        
-        .btn-accion {
-            display: inline-flex;
-            align-items: center;
-            gap: 5px;
-            padding: 6px 12px;
-            border: none;
-            border-radius: 4px;
-            font-size: 12px;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all 0.2s ease;
-        }
-        
-        .btn-cancelar {
-            background: #dc2626;
-            color: white;
-        }
-        
-        .btn-cancelar:hover {
-            background: #b91c1c;
-        }
-        
-        .btn-asistencia {
-            background: #10b981;
-            color: white;
-        }
-        
-        .btn-asistencia:hover {
-            background: #059669;
-        }
-        
-        .badge-activa {
-            background: #10b981;
-            color: white;
-            padding: 4px 10px;
-            border-radius: 4px;
-            font-size: 12px;
-        }
-        
-        .badge-cancelada {
-            background: #6b7280;
-            color: white;
-            padding: 4px 10px;
-            border-radius: 4px;
-            font-size: 12px;
-        }
-        
-        .badge-completada {
-            background: #3b82f6;
-            color: white;
-            padding: 4px 10px;
-            border-radius: 4px;
-            font-size: 12px;
-        }
-        
-        .table-simple {
-            width: 100%;
-            background: white;
-            border-collapse: collapse;
-        }
-        
-        .table-simple th,
-        .table-simple td {
-            padding: 12px;
-            text-align: left;
-            border-bottom: 1px solid #e0e0e0;
-            vertical-align: middle;
-        }
-        
-        .table-simple th {
-            background: #f8f9fa;
-            font-weight: 600;
-            color: #333;
-        }
-        
-        .table-simple tr:hover {
-            background: #f8f9fa;
-        }
-        
-        .pagination {
-            margin-top: 20px;
-            justify-content: center;
-        }
-        
-        .page-link {
-            color: #1e3a8a;
-            cursor: pointer;
-        }
-        
-        .page-item.active .page-link {
-            background-color: #1e3a8a;
-            border-color: #1e3a8a;
-        }
-        
-        @media (max-width: 768px) {
-            .sidebar {
-                transform: translateX(-100%);
-                transition: transform 0.3s ease;
-            }
-            
-            .sidebar.open {
-                transform: translateX(0);
-            }
-            
-            .main-content {
-                margin-left: 0;
-            }
-            
-            .table-simple th,
-            .table-simple td {
-                padding: 8px;
-                font-size: 12px;
-            }
-            
-            .btn-accion span {
-                display: none;
-            }
-            
-            .btn-accion i {
-                font-size: 14px;
-                margin: 0;
-            }
-        }
-    </style>
+    <link rel="stylesheet" href="css/inscripciones_clases.css?v=3.0.0">
 </head>
 <body>
     <?php include 'includes/sidebar.php'; ?>
     
     <div class="main-content">
-        <div class="mb-4">
-            <h2>Inscripciones a Clases</h2>
+        <div class="page-header">
+            <div>
+                <h2>Inscripciones a Clases</h2>
+                <p>Administra inscripciones, asistencias y cupos disponibles.</p>
+            </div>
+            <button class="btn-custom-primary" data-bs-toggle="modal" data-bs-target="#modalNuevaInscripcion">
+                <i class="fas fa-user-plus"></i> Nueva Inscripción
+            </button>
         </div>
         
         <!-- Alertas -->
@@ -432,17 +251,11 @@ $clientes_list = $clientes_activos->fetch_all(MYSQLI_ASSOC);
         </div>
         <?php endif; ?>
         
-        <!-- Botón Nueva Inscripción -->
-        <div class="mb-3">
-            <button class="btn-custom-primary" data-bs-toggle="modal" data-bs-target="#modalNuevaInscripcion">
-                <i class="fas fa-user-plus"></i> Nueva Inscripción
-            </button>
-        </div>
-        
         <!-- Filtros -->
         <div class="card-custom">
-            <div class="card-header-custom">
-                <i class="fas fa-filter"></i> Filtros de Búsqueda
+            <div class="card-header-custom card-header-flex">
+                <span><i class="fas fa-filter"></i> Filtros de Búsqueda</span>
+                <button type="button" class="btn-limpiar" id="btnLimpiarFiltros"><i class="fas fa-rotate-left"></i> Limpiar</button>
             </div>
             <div class="card-body-custom">
                 <div class="row">
@@ -465,12 +278,13 @@ $clientes_list = $clientes_activos->fetch_all(MYSQLI_ASSOC);
         
         <!-- Tabla de Inscripciones -->
         <div class="card-custom">
-            <div class="card-header-custom">
-                <i class="fas fa-list"></i> Listado de Inscripciones
+            <div class="card-header-custom card-header-flex">
+                <span><i class="fas fa-list"></i> Listado de Inscripciones</span>
+                <span class="contador-registros"><?php echo (int)$total_rows; ?> registros</span>
             </div>
             <div class="card-body-custom" style="padding: 0;">
-                <div style="overflow-x: auto;">
-                    <table class="table-simple">
+                <div class="table-responsive-custom">
+                    <table class="table-simple responsive-table">
                         <thead>
                             <tr>
                                 <th>Cliente</th>
@@ -509,7 +323,7 @@ $clientes_list = $clientes_activos->fetch_all(MYSQLI_ASSOC);
                                 </td>
                                 <td>
                                     <?php if($inscripcion['estado'] == 'activa'): ?>
-                                    <div style="display: flex; gap: 8px; flex-wrap: nowrap;">
+                                    <div class="acciones-inscripcion">
                                         <button class="btn-accion btn-asistencia" onclick="registrarAsistencia(<?php echo $inscripcion['id']; ?>)" title="Registrar asistencia">
                                             <i class="fas fa-calendar-check"></i> <span>Asistencia</span>
                                         </button>
@@ -560,9 +374,9 @@ $clientes_list = $clientes_activos->fetch_all(MYSQLI_ASSOC);
     
     <!-- Modal Nueva Inscripción -->
     <div class="modal fade" id="modalNuevaInscripcion" tabindex="-1">
-        <div class="modal-dialog">
-            <div class="modal-content">
-                <div class="modal-header" style="background: #1e3a8a; color: white;">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content modal-custom">
+                <div class="modal-header modal-header-custom">
                     <h5 class="modal-title"><i class="fas fa-user-plus"></i> Nueva Inscripción a Clase</h5>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
@@ -613,6 +427,20 @@ $clientes_list = $clientes_activos->fetch_all(MYSQLI_ASSOC);
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     
     <script>
+        // Preparar tabla responsiva en móvil
+        function prepararTablaResponsive() {
+            const tabla = document.querySelector('.responsive-table');
+            if (!tabla) return;
+            const encabezados = Array.from(tabla.querySelectorAll('thead th')).map(th => th.textContent.trim());
+            tabla.querySelectorAll('tbody tr').forEach(fila => {
+                fila.querySelectorAll('td').forEach((celda, indice) => {
+                    if (!celda.hasAttribute('colspan')) celda.setAttribute('data-label', encabezados[indice] || '');
+                });
+            });
+        }
+        prepararTablaResponsive();
+        document.getElementById('btnLimpiarFiltros')?.addEventListener('click', function() { window.location.href = 'inscripciones_clases.php'; });
+
         // Filtros en tiempo real
         let timeoutBusqueda;
         $('#searchInput').on('input', function() {
@@ -683,12 +511,6 @@ $clientes_list = $clientes_activos->fetch_all(MYSQLI_ASSOC);
                     window.location.href = '?cancelar=' + id;
                 }
             });
-        }
-        
-        // Para móvil: toggle sidebar
-        if (window.innerWidth <= 768) {
-            $('.sidebar').addClass('sidebar-hidden');
-            $('.main-content').css('margin-left', '0');
         }
     </script>
 </body>
