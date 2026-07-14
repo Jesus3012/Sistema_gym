@@ -3,8 +3,9 @@ date_default_timezone_set('America/Mexico_City');
 
 // inscripciones.php
 session_start();
-require_once 'config/database.php';
-require_once 'includes/qr_helper.php'; // Incluir el helper de QR
+require_once __DIR__ . '/config/database.php';
+require_once __DIR__ . '/includes/qr_helper.php'; // Incluir el helper de QR
+require_once __DIR__ . '/includes/correo_inscripciones.php'; // Correos de bienvenida y renovación
 
 
 // ==================== FIN FUNCIÓN QR ====================
@@ -148,11 +149,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
 // ========== ENVIAR CORREO DE BIENVENIDA CON QR ==========
 $envio_correo = false;
 if (!empty($email)) {
-    require_once 'includes/enviar_correo_phpmailer.php';
     $nombre_completo = $nombre . ' ' . $apellido;
     
     // Llamar a la función con todos los parámetros
-    $envio_correo = enviarTicketInscripcion(
+    $envio_correo = enviarCorreoBienvenidaInscripcion(
+        $conn,
         $email,                    // email del cliente
         $nombre_completo,          // nombre completo
         $plan['plan_nombre'],      // plan
@@ -175,8 +176,7 @@ if (!empty($email)) {
 $mensaje_exito = "Cliente e inscripción creados exitosamente. ";
 $mensaje_exito .= "Código QR: <strong>{$codigo_qr}</strong><br>";
 if ($qr_generado && file_exists($ruta_qr_completa)) {
-    $mensaje_exito .= "QR generado en: <strong>{$ruta_qr_completa}</strong><br>";
-    $mensaje_exito .= '<img src="' . $ruta_qr_completa . '" alt="QR" style="max-width: 150px; margin-top: 10px;">';
+    $mensaje_exito .= "El QR quedó disponible en el botón <strong>QR</strong> del listado.";
 } else {
     $mensaje_exito .= "<span class='text-warning'>No se pudo generar la imagen del código QR. El código es: {$codigo_qr}</span>";
 }
@@ -249,11 +249,35 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
             throw new Exception('Plan no válido');
         }
         
-        // Obtener inscripción actual para verificar estado
-        $stmt_ins = $conn->prepare("SELECT i.*, p.nombre as plan_actual, p.duracion_dias as duracion_actual FROM inscripciones i JOIN planes p ON i.plan_id = p.id WHERE i.id = ?");
+        // Obtener la inscripción y el estado real del cliente.
+        // Esta validación del servidor evita renovar aunque alguien manipule el botón o el formulario.
+        $stmt_ins = $conn->prepare(
+            "SELECT i.*, p.nombre AS plan_actual, p.duracion_dias AS duracion_actual,
+                    c.estado AS cliente_estado
+             FROM inscripciones i
+             INNER JOIN planes p ON i.plan_id = p.id
+             INNER JOIN clientes c ON i.cliente_id = c.id
+             WHERE i.id = ?
+             LIMIT 1"
+        );
         $stmt_ins->bind_param("i", $inscripcion_id);
         $stmt_ins->execute();
         $inscripcion_actual = $stmt_ins->get_result()->fetch_assoc();
+
+        if (!$inscripcion_actual) {
+            throw new Exception('La inscripción seleccionada no existe.');
+        }
+
+        // Usar siempre el cliente asociado a la inscripción y no confiar en el campo oculto del formulario.
+        $cliente_id = (int) $inscripcion_actual['cliente_id'];
+
+        if (($inscripcion_actual['cliente_estado'] ?? '') !== 'activo') {
+            throw new Exception('No se puede renovar la inscripción porque el socio está inactivo. Actívelo primero desde la configuración de socios.');
+        }
+
+        if ($inscripcion_actual['estado'] === 'cancelada') {
+            throw new Exception('No se puede renovar una inscripción cancelada.');
+        }
         
         // VERIFICACIÓN: Solo permitir renovar si la inscripción está VENCIDA o es un plan de 1 día VENCIDO
         if ($inscripcion_actual['estado'] == 'activa') {
@@ -306,21 +330,38 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
         
         $conn->commit();
 
-        // Obtener el email del cliente
-        $stmt_email = $conn->prepare("SELECT email, nombre, apellido FROM clientes WHERE id = ?");
+        // Obtener el email y QR del cliente
+        $stmt_email = $conn->prepare("SELECT email, nombre, apellido, codigo_qr FROM clientes WHERE id = ?");
         $stmt_email->bind_param("i", $cliente_id);
         $stmt_email->execute();
         $result_email = $stmt_email->get_result();
         $cliente_data = $result_email->fetch_assoc();
         $email_cliente = $cliente_data['email'];
         $nombre_completo = $cliente_data['nombre'] . ' ' . $cliente_data['apellido'];
+        $codigo_qr_cliente = trim((string)($cliente_data['codigo_qr'] ?? ''));
+        $ruta_qr_cliente = '';
+
+        if ($codigo_qr_cliente !== '') {
+            $qr_dir = 'qrcodes/';
+            if (!file_exists($qr_dir)) {
+                mkdir($qr_dir, 0777, true);
+            }
+
+            $nombre_archivo_qr = preg_replace('/[^a-zA-Z0-9_-]/', '_', $codigo_qr_cliente) . '.png';
+            $ruta_qr_cliente = $qr_dir . $nombre_archivo_qr;
+
+            if (!file_exists($ruta_qr_cliente)) {
+                generarCodigoQR($codigo_qr_cliente, $ruta_qr_cliente);
+            }
+        }
 
 // Enviar correo solo si el cliente proporcionó un email
+$envio_correo = false;
 if (!empty($email_cliente)) {
-    require_once 'includes/enviar_correo_phpmailer.php';
     $nombre_completo = $cliente_data['nombre'] . ' ' . $cliente_data['apellido'];
     
-    $envio_correo = enviarTicketRenovacion(
+    $envio_correo = enviarCorreoRenovacionInscripcion(
+        $conn,
         $email_cliente,
         $nombre_completo,
         $plan['plan_nombre'],
@@ -328,11 +369,13 @@ if (!empty($email_cliente)) {
         $fecha_fin,
         $precio_pagado,
         $metodo_pago,
-        $referencia
+        $referencia,
+        $codigo_qr_cliente,
+        $ruta_qr_cliente
     );
     
     if (!$envio_correo) {
-        error_log("Error al enviar correo a: " . $email_cliente);
+        error_log("Error al enviar correo a: " . $email_cliente . ' | ' . obtenerUltimoErrorCorreoInscripciones());
         // Agregar advertencia visible
         $_SESSION['warning_correo'] = "No se pudo enviar el correo electrónico, pero la inscripción se guardó correctamente.";
     }
@@ -442,6 +485,7 @@ $order_by = isset($sort_columns[$sort]) ? $sort_columns[$sort] : 'i.id';
 $order_dir = ($order == 'ASC') ? 'ASC' : 'DESC';
 
 $query = "SELECT i.*, c.nombre as cliente_nombre, c.apellido as cliente_apellido, c.telefono as cliente_telefono,
+          c.codigo_qr as cliente_codigo_qr, c.estado as cliente_estado,
           p.nombre as plan_nombre, p.duracion_dias
           FROM inscripciones i 
           INNER JOIN clientes c ON i.cliente_id = c.id 
@@ -512,393 +556,22 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css">
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
-        body {
-            background: #f4f6f9;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        }
-        
-        .sidebar {
-            position: fixed;
-            left: 0;
-            top: 0;
-            width: 260px;
-            height: 100vh;
-            background: #1e3a8a;
-            color: white;
-            z-index: 1000;
-            overflow-y: auto;
-        }
-        
-        .main-content {
-            margin-left: 260px;
-            padding: 20px;
-            min-height: 100vh;
-        }
-        
-        .card-custom {
-            background: white;
-            border-radius: 8px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-            margin-bottom: 20px;
-        }
-        
-        .card-header-custom {
-            background: #1e3a8a;
-            color: white;
-            padding: 12px 20px;
-            border-radius: 8px 8px 0 0;
-            font-weight: 600;
-        }
-        
-        .card-body-custom {
-            padding: 20px;
-        }
-        
-        .tabla-simple {
-            width: 100%;
-            background: white;
-            border-collapse: collapse;
-        }
-        
-        .tabla-simple th,
-        .tabla-simple td {
-            padding: 12px;
-            text-align: left;
-            border-bottom: 1px solid #e0e0e0;
-            vertical-align: middle;
-        }
-        
-        .tabla-simple th {
-            background: #f8f9fa;
-            font-weight: 600;
-            color: #333;
-            font-size: 14px;
-            cursor: pointer;
-            user-select: none;
-        }
-        
-        .tabla-simple th:hover {
-            background: #e9ecef;
-        }
-        
-        .tabla-simple th i {
-            margin-left: 5px;
-            font-size: 12px;
-        }
-        
-        .tabla-simple tr:hover {
-            background: #f8f9fa;
-        }
-        
-        .acciones-container {
-            display: flex;
-            gap: 8px;
-            flex-wrap: nowrap;
-            align-items: center;
-        }
-        
-        .btn-accion {
-            display: inline-flex;
-            align-items: center;
-            gap: 5px;
-            padding: 6px 12px;
-            border: none;
-            border-radius: 4px;
-            font-size: 12px;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all 0.2s ease;
-            white-space: nowrap;
-        }
-        
-        .btn-accion i {
-            font-size: 12px;
-        }
-        
-        .btn-accion:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
-        
-        .btn-detalle {
-            background: #3b82f6;
-            color: white;
-        }
-        
-        .btn-detalle:hover {
-            background: #2563eb;
-        }
-        
-        .btn-renovar {
-            background: #10b981;
-            color: white;
-        }
-        
-        .btn-renovar:hover {
-            background: #059669;
-        }
-        
-        .btn-renovar:disabled {
-            background: #9ca3af;
-            cursor: not-allowed;
-            transform: none;
-        }
-        
-        .btn-cancelar {
-            background: #dc2626;
-            color: white;
-        }
-        
-        .btn-cancelar:hover {
-            background: #b91c1c;
-        }
-        
-        .badge-activa {
-            background: #10b981;
-            color: white;
-            padding: 4px 10px;
-            border-radius: 4px;
-            font-size: 12px;
-        }
-        
-        .badge-vencida {
-            background: #ef4444;
-            color: white;
-            padding: 4px 10px;
-            border-radius: 4px;
-            font-size: 12px;
-        }
-        
-        .badge-cancelada {
-            background: #6b7280;
-            color: white;
-            padding: 4px 10px;
-            border-radius: 4px;
-            font-size: 12px;
-        }
-        
-        .badge-visita {
-            background: #f59e0b;
-            color: white;
-            padding: 4px 10px;
-            border-radius: 4px;
-            font-size: 12px;
-        }
-        
-        .btn-custom-primary {
-            background: #1e3a8a;
-            color: white;
-            border: none;
-            padding: 8px 20px;
-            border-radius: 5px;
-            cursor: pointer;
-        }
-        
-        .btn-custom-primary:hover {
-            background: #152c6b;
-        }
-        
-        .qr-area {
-            border: 2px dashed #3b82f6;
-            border-radius: 8px;
-            padding: 20px;
-            text-align: center;
-            background: #f8f9fa;
-        }
-        
-        .qr-area i {
-            font-size: 48px;
-            color: #1e3a8a;
-        }
-        
-        .pagination {
-            margin-top: 20px;
-            justify-content: center;
-        }
-        
-        .page-link {
-            color: #1e3a8a;
-            cursor: pointer;
-        }
-        
-        .page-item.active .page-link {
-            background-color: #1e3a8a;
-            border-color: #1e3a8a;
-        }
-        
-        .precio-disabled {
-            background-color: #e9ecef;
-            cursor: not-allowed;
-        }
-        
-        .loading {
-            text-align: center;
-            padding: 20px;
-        }
-        
-        .spinner {
-            border: 3px solid #f3f3f3;
-            border-top: 3px solid #1e3a8a;
-            border-radius: 50%;
-            width: 40px;
-            height: 40px;
-            animation: spin 1s linear infinite;
-            margin: 0 auto;
-        }
-        
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-        
-        .info-box {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            border-radius: 10px;
-            padding: 20px;
-            color: white;
-            margin-bottom: 20px;
-        }
-        
-        .info-box h6 {
-            margin-bottom: 15px;
-            font-weight: 600;
-            border-bottom: 2px solid rgba(255,255,255,0.3);
-            padding-bottom: 8px;
-        }
-        
-        .info-box p {
-            margin-bottom: 8px;
-            font-size: 14px;
-        }
-        
-        .info-box .badge {
-            font-size: 12px;
-            padding: 5px 10px;
-        }
-        
-        .historial-card {
-            background: white;
-            border-radius: 10px;
-            padding: 20px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
-        
-        .historial-card h6 {
-            color: #333;
-            margin-bottom: 20px;
-            font-weight: 600;
-        }
-        
-        .table-historial {
-            width: 100%;
-            border-collapse: collapse;
-        }
-        
-        .table-historial th,
-        .table-historial td {
-            padding: 12px;
-            text-align: left;
-            border-bottom: 1px solid #e0e0e0;
-        }
-        
-        .table-historial th {
-            background: #f8f9fa;
-            font-weight: 600;
-            color: #555;
-            cursor: pointer;
-        }
-        
-        .table-historial th:hover {
-            background: #e9ecef;
-        }
-        
-        .table-historial tr:hover {
-            background: #f8f9fa;
-        }
-        
-        .search-box {
-            margin-bottom: 20px;
-        }
-        
-        .total-paid {
-            background: #10b981;
-            color: white;
-            padding: 15px;
-            border-radius: 8px;
-            margin-top: 20px;
-            text-align: right;
-        }
-        
-        @media (max-width: 768px) {
-            .sidebar {
-                transform: translateX(-100%);
-            }
-            
-            .main-content {
-                margin-left: 0;
-            }
-            
-            .tabla-simple th,
-            .tabla-simple td {
-                padding: 8px;
-                font-size: 12px;
-            }
-            
-            .btn-accion {
-                padding: 4px 8px;
-                font-size: 10px;
-            }
-            
-            .btn-accion span {
-                display: none;
-            }
-            
-            .btn-accion i {
-                font-size: 14px;
-                margin: 0;
-            }
-        }
-        
-        .modal.show.d-block {
-            display: block;
-        }
-        
-        .modal-backdrop {
-            z-index: 1040;
-        }
-        
-        button:disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-        }
-        
-        /* Estilo para campo de precio readonly en renovación */
-        .precio-readonly {
-            background-color: #e9ecef;
-            cursor: not-allowed;
-        }
-        
-        .qr-preview {
-            max-width: 100%;
-            max-height: 150px;
-            margin-top: 10px;
-        }
-    </style>
+    <link rel="stylesheet" href="css/inscripciones.css?v=<?php echo file_exists(__DIR__ . '/css/inscripciones.css') ? filemtime(__DIR__ . '/css/inscripciones.css') : time(); ?>">
 </head>
 <body>
     <?php include 'includes/sidebar.php'; ?>
     
-    <div class="main-content">
-        <div class="mb-4">
-            <h2>Gestión de Inscripciones</h2>
-        </div>
+    <main class="main-content">
+        <header class="page-header">
+            <div>
+                <h1>Gestión de Inscripciones</h1>
+                <p>Administra clientes, planes, renovaciones y pagos registrados.</p>
+            </div>
+            <button class="btn-custom-primary page-primary-action" data-bs-toggle="modal" data-bs-target="#modalNuevoCliente">
+                <i class="fas fa-user-plus"></i>
+                <span>Nueva inscripción</span>
+            </button>
+        </header>
         
         <?php if(isset($_SESSION['mensaje_exito'])): ?>
         <div class="alert alert-success alert-dismissible fade show" role="alert">
@@ -919,25 +592,29 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
             <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
         </div>
         <?php endif; ?>
-                
-        <div class="mb-3">
-            <button class="btn-custom-primary" data-bs-toggle="modal" data-bs-target="#modalNuevoCliente">
-                <i class="fas fa-user-plus"></i> Nuevo Cliente + Inscripción
-            </button>
-        </div>
-        
+
         <div class="card-custom">
-            <div class="card-header-custom">
-                <i class="fas fa-filter"></i> Filtros de Búsqueda
+            <div class="card-header-custom card-header-between">
+                <div class="card-header-title">
+                    <i class="fas fa-filter"></i>
+                    <span>Filtros de búsqueda</span>
+                </div>
+                <button type="button" class="btn-header-clear" id="limpiarFiltros">
+                    <i class="fas fa-rotate-left"></i>
+                    <span>Limpiar</span>
+                </button>
             </div>
             <div class="card-body-custom">
-                <div class="row">
-                    <div class="col-md-6 mb-3">
-                        <label class="form-label">Buscar</label>
-                        <input type="text" class="form-control" id="searchInput" placeholder="Nombre, apellido o teléfono..." value="<?php echo htmlspecialchars($search); ?>">
+                <div class="filters-grid">
+                    <div class="filter-field filter-search">
+                        <label class="form-label" for="searchInput">Buscar</label>
+                        <div class="input-icon-wrap">
+                            <i class="fas fa-magnifying-glass"></i>
+                            <input type="text" class="form-control" id="searchInput" placeholder="Nombre, apellido o teléfono..." value="<?php echo htmlspecialchars($search); ?>">
+                        </div>
                     </div>
-                    <div class="col-md-4 mb-3">
-                        <label class="form-label">Estado</label>
+                    <div class="filter-field">
+                        <label class="form-label" for="estadoSelect">Estado</label>
                         <select class="form-select" id="estadoSelect">
                             <option value="">Todos</option>
                             <option value="activa" <?php echo $estado == 'activa' ? 'selected' : ''; ?>>Activa</option>
@@ -945,22 +622,20 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
                             <option value="cancelada" <?php echo $estado == 'cancelada' ? 'selected' : ''; ?>>Cancelada</option>
                         </select>
                     </div>
-                    <div class="col-md-2 mb-3">
-                        <label class="form-label">&nbsp;</label>
-                        <button class="btn btn-secondary w-100" id="limpiarFiltros">
-                            <i class="fas fa-eraser"></i> Limpiar
-                        </button>
-                    </div>
                 </div>
             </div>
         </div>
         
         <div class="card-custom">
-            <div class="card-header-custom">
-                <i class="fas fa-list"></i> Listado de Inscripciones
+            <div class="card-header-custom card-header-between">
+                <div class="card-header-title">
+                    <i class="fas fa-list"></i>
+                    <span>Listado de inscripciones</span>
+                </div>
+                <span class="records-count"><?php echo number_format($total_rows); ?> <?php echo $total_rows == 1 ? 'registro' : 'registros'; ?></span>
             </div>
-            <div class="card-body-custom" style="padding: 0;">
-                <div style="overflow-x: auto;">
+            <div class="card-body-custom table-card-body">
+                <div class="table-responsive-custom">
                     <table class="tabla-simple">
                         <thead>
                             <tr>
@@ -981,19 +656,25 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
                                 $renovar_title = "Renovar inscripción";
                                 $mensaje_renovar = "";
                                 
-                                // Caso 1: Inscripción cancelada - NO se puede renovar
-                                if($ins['estado'] == 'cancelada') {
+                                // Caso 1: Cliente inactivo - NO se puede renovar bajo ninguna circunstancia
+                                if(($ins['cliente_estado'] ?? '') !== 'activo') {
+                                    $renovar_disabled = true;
+                                    $renovar_title = "Socio inactivo: actívelo primero para poder renovar";
+                                    $mensaje_renovar = $renovar_title;
+                                }
+                                // Caso 2: Inscripción cancelada - NO se puede renovar
+                                elseif($ins['estado'] == 'cancelada') {
                                     $renovar_disabled = true;
                                     $renovar_title = "No se puede renovar una inscripción cancelada";
                                     $mensaje_renovar = $renovar_title;
                                 } 
-                                // Caso 2: Plan sin vencimiento (duracion_dias = 0) - NO se puede renovar
+                                // Caso 3: Plan sin vencimiento (duracion_dias = 0) - NO se puede renovar
                                 elseif($ins['duracion_dias'] == 0) {
                                     $renovar_disabled = true;
                                     $renovar_title = "Este plan no requiere renovación (sin vencimiento)";
                                     $mensaje_renovar = $renovar_title;
                                 }
-                                // Caso 3: Planes de 1 día (Visita o cualquier plan de 1 día)
+                                // Caso 4: Planes de 1 día (Visita o cualquier plan de 1 día)
                                 elseif($ins['duracion_dias'] == 1) {
                                     if($ins['estado'] == 'activa') {
                                         // Verificar si la fecha de hoy es igual o menor a la fecha_fin
@@ -1015,7 +696,7 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
                                         $renovar_title = "Renovar plan (vencido)";
                                     }
                                 }
-                                // Caso 4: Planes normales (duración > 1 día)
+                                // Caso 5: Planes normales (duración > 1 día)
                                 else {
                                     if($ins['estado'] == 'vencida') {
                                         $renovar_disabled = false;
@@ -1026,19 +707,24 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
                                         $mensaje_renovar = $renovar_title;
                                     }
                                 }
+                            $nombre_cliente_qr = trim($ins['cliente_nombre'] . ' ' . $ins['cliente_apellido']);
+                            $codigo_cliente_qr = trim((string)($ins['cliente_codigo_qr'] ?? ''));
+                            $archivo_cliente_qr = $codigo_cliente_qr !== ''
+                                ? 'qrcodes/' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $codigo_cliente_qr) . '.png'
+                                : '';
                             ?>
                             <tr>
-                                <td><strong><?php echo htmlspecialchars($ins['cliente_nombre'] . ' ' . $ins['cliente_apellido']); ?></strong></td>
-                                <td><?php echo htmlspecialchars($ins['cliente_telefono']); ?></td>
-                                <td>
+                                <td data-label="Cliente"><strong><?php echo htmlspecialchars($ins['cliente_nombre'] . ' ' . $ins['cliente_apellido']); ?></strong></td>
+                                <td data-label="Teléfono"><?php echo htmlspecialchars($ins['cliente_telefono']); ?></td>
+                                <td data-label="Plan">
                                     <?php if($ins['duracion_dias'] == 1): ?>
                                         <span class="badge-visita"><?php echo htmlspecialchars($ins['plan_nombre']); ?></span>
                                     <?php else: ?>
                                         <?php echo htmlspecialchars($ins['plan_nombre']); ?>
                                     <?php endif; ?>
                                 </td>
-                                <td><?php echo date('d/m/Y', strtotime($ins['fecha_inicio'])); ?></td>
-                                <td>
+                                <td data-label="Fecha inicio"><?php echo date('d/m/Y', strtotime($ins['fecha_inicio'])); ?></td>
+                                <td data-label="Fecha fin">
                                     <?php 
                                     if($ins['duracion_dias'] == 1) {
                                         echo '<span class="text-warning">' . date('d/m/Y', strtotime($ins['fecha_fin'])) . ' (Solo hoy)</span>';
@@ -1047,8 +733,8 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
                                     }
                                     ?>
                                 </td>
-                                <td>$<?php echo number_format($ins['precio_pagado'], 2); ?></td>
-                                <td>
+                                <td data-label="Precio"><strong class="price-value">$<?php echo number_format($ins['precio_pagado'], 2); ?></strong></td>
+                                <td data-label="Estado">
                                     <?php if($ins['estado'] == 'activa'): ?>
                                         <span class="badge-activa">Activa</span>
                                     <?php elseif($ins['estado'] == 'vencida'): ?>
@@ -1057,19 +743,29 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
                                         <span class="badge-cancelada">Cancelada</span>
                                     <?php endif; ?>
                                 </td>
-                                <td class="acciones-cell">
+                                <td class="acciones-cell" data-label="Acciones">
                                     <div class="acciones-container">
                                         <button class="btn-accion btn-detalle" onclick="verDetalle(<?php echo $ins['id']; ?>)" title="Ver detalles completos">
                                             <i class="fas fa-eye"></i> <span>Ver</span>
                                         </button>
                                         
-                                        <a href="ver_qr.php?id=<?php echo $ins['cliente_id']; ?>" class="btn-accion btn-primary" target="_blank" title="Ver/Imprimir QR">
+                                        <button
+                                            type="button"
+                                            class="btn-accion btn-qr"
+                                            data-bs-toggle="modal"
+                                            data-bs-target="#modalQr"
+                                            data-cliente="<?php echo htmlspecialchars($nombre_cliente_qr, ENT_QUOTES, 'UTF-8'); ?>"
+                                            data-codigo="<?php echo htmlspecialchars($codigo_cliente_qr, ENT_QUOTES, 'UTF-8'); ?>"
+                                            data-ruta="<?php echo htmlspecialchars($archivo_cliente_qr, ENT_QUOTES, 'UTF-8'); ?>"
+                                            title="Ver código QR"
+                                            <?php echo $codigo_cliente_qr === '' ? 'disabled' : ''; ?>
+                                        >
                                             <i class="fas fa-qrcode"></i> <span>QR</span>
-                                        </a>
+                                        </button>
                                         
                                         <button class="btn-accion btn-renovar" 
                                                 onclick="abrirRenovar(<?php echo $ins['id']; ?>, <?php echo $ins['cliente_id']; ?>, <?php echo $renovar_disabled ? 'true' : 'false'; ?>, '<?php echo addslashes($mensaje_renovar ?: $renovar_title); ?>')"
-                                                <?php echo $renovar_disabled ? 'disabled style="opacity: 0.5; cursor: not-allowed;"' : ''; ?>
+                                                <?php echo $renovar_disabled ? 'disabled' : ''; ?>
                                                 title="<?php echo $renovar_title; ?>">
                                             <i class="fas fa-sync-alt"></i> <span>Renovar</span>
                                         </button>
@@ -1085,8 +781,8 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
                             <?php endforeach; ?>
                             <?php if(empty($inscripciones)): ?>
                             <tr>
-                                <td colspan="8" style="text-align: center; padding: 40px;">
-                                    <i class="fas fa-inbox" style="font-size: 48px; color: #ccc;"></i>
+                                <td colspan="8" class="empty-state">
+                                    <i class="fas fa-inbox"></i>
                                     <p class="mt-2">No hay inscripciones registradas</p>
                                 </td>
                             </tr>
@@ -1114,13 +810,13 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
                 <?php endif; ?>
             </div>
         </div>
-    </div>
+    </main>
     
     <!-- Modal Nuevo Cliente (MODIFICADO: Reemplazar huella por QR) -->
     <div class="modal fade" id="modalNuevoCliente" tabindex="-1">
         <div class="modal-dialog modal-lg">
             <div class="modal-content">
-                <div class="modal-header" style="background: #1e3a8a; color: white;">
+                <div class="modal-header modal-header-brand">
                     <h5 class="modal-title"><i class="fas fa-user-plus"></i> Nuevo Cliente e Inscripción</h5>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
@@ -1210,7 +906,7 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
     <div class="modal fade" id="modalRenovar" tabindex="-1">
         <div class="modal-dialog">
             <div class="modal-content">
-                <div class="modal-header" style="background: #1e3a8a; color: white;">
+                <div class="modal-header modal-header-brand">
                     <h5 class="modal-title"><i class="fas fa-sync-alt"></i> Renovar Inscripción</h5>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
@@ -1272,11 +968,43 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
         </div>
     </div>
     
+    <!-- Modal QR -->
+    <div class="modal fade" id="modalQr" tabindex="-1" aria-labelledby="modalQrTitulo" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered qr-modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header modal-header-brand">
+                    <h5 class="modal-title" id="modalQrTitulo">
+                        <i class="fas fa-qrcode"></i> Código QR del socio
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+                </div>
+                <div class="modal-body qr-modal-body">
+                    <div class="qr-modal-member" id="qrModalCliente">Socio</div>
+                    <div class="qr-modal-frame">
+                        <img id="qrModalImage" class="qr-modal-image" alt="Código QR del socio">
+                        <div id="qrModalFallback" class="qr-modal-fallback d-none">
+                            <i class="fas fa-triangle-exclamation"></i>
+                            <span>No se encontró la imagen del QR.</span>
+                        </div>
+                    </div>
+                    <div class="qr-modal-code-label">Código</div>
+                    <code class="qr-modal-code" id="qrModalCodigo">—</code>
+                </div>
+                <div class="modal-footer qr-modal-footer">
+                    <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cerrar</button>
+                    <button type="button" class="btn btn-primary" id="btnImprimirQr">
+                        <i class="fas fa-print"></i> Imprimir
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Modal Detalle -->
     <div class="modal fade" id="modalDetalle" tabindex="-1">
         <div class="modal-dialog modal-xl">
             <div class="modal-content">
-                <div class="modal-header" style="background: #1e3a8a; color: white;">
+                <div class="modal-header modal-header-brand">
                     <h5 class="modal-title"><i class="fas fa-info-circle"></i> Detalle de Inscripción e Historial de Pagos</h5>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
@@ -1295,7 +1023,116 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     
     <script>
+        // Mantener un solo scroll cuando cualquier modal esté abierto.
+        // El documento se bloquea y Bootstrap conserva únicamente el scroll del modal.
+        $(document).on('show.bs.modal', '.modal', function() {
+            document.documentElement.classList.add('modal-visible');
+        });
+
+        $(document).on('hidden.bs.modal', '.modal', function() {
+            if (!document.querySelector('.modal.show')) {
+                document.documentElement.classList.remove('modal-visible');
+            }
+        });
+
         let formularioEnviando = false;
+
+        const modalQrElement = document.getElementById('modalQr');
+        const qrModalImage = document.getElementById('qrModalImage');
+        const qrModalFallback = document.getElementById('qrModalFallback');
+        const qrModalCliente = document.getElementById('qrModalCliente');
+        const qrModalCodigo = document.getElementById('qrModalCodigo');
+        const btnImprimirQr = document.getElementById('btnImprimirQr');
+
+        function escaparHtml(valor) {
+            return String(valor ?? '').replace(/[&<>'"]/g, function(caracter) {
+                return {
+                    '&': '&amp;',
+                    '<': '&lt;',
+                    '>': '&gt;',
+                    "'": '&#039;',
+                    '"': '&quot;'
+                }[caracter];
+            });
+        }
+
+        if (modalQrElement) {
+            modalQrElement.addEventListener('show.bs.modal', function(event) {
+                const boton = event.relatedTarget;
+                const cliente = boton ? boton.getAttribute('data-cliente') : '';
+                const codigo = boton ? boton.getAttribute('data-codigo') : '';
+                const ruta = boton ? boton.getAttribute('data-ruta') : '';
+
+                qrModalCliente.textContent = cliente || 'Socio';
+                qrModalCodigo.textContent = codigo || 'Sin código QR';
+                qrModalFallback.classList.add('d-none');
+                qrModalImage.classList.remove('d-none');
+
+                if (ruta) {
+                    qrModalImage.alt = 'Código QR de ' + (cliente || 'socio');
+                    qrModalImage.src = ruta + '?v=' + Date.now();
+                } else {
+                    qrModalImage.removeAttribute('src');
+                    qrModalImage.classList.add('d-none');
+                    qrModalFallback.classList.remove('d-none');
+                }
+            });
+
+            qrModalImage.addEventListener('error', function() {
+                qrModalImage.classList.add('d-none');
+                qrModalFallback.classList.remove('d-none');
+            });
+        }
+
+        if (btnImprimirQr) {
+            btnImprimirQr.addEventListener('click', function() {
+                const ruta = qrModalImage.getAttribute('src') || '';
+                const cliente = qrModalCliente.textContent || 'Socio';
+                const codigo = qrModalCodigo.textContent || '';
+
+                if (!ruta || qrModalImage.classList.contains('d-none')) {
+                    Swal.fire('QR no disponible', 'No se encontró una imagen para imprimir.', 'warning');
+                    return;
+                }
+
+                const ventana = window.open('', '_blank', 'width=520,height=650');
+                if (!ventana) {
+                    Swal.fire('Ventana bloqueada', 'Permite ventanas emergentes para imprimir el QR.', 'info');
+                    return;
+                }
+
+                ventana.document.write(`
+                    <!doctype html>
+                    <html lang="es">
+                    <head>
+                        <meta charset="utf-8">
+                        <title>QR - ${escaparHtml(cliente)}</title>
+                        <style>
+                            body{margin:0;padding:32px;font-family:Arial,sans-serif;text-align:center;color:#172033}
+                            h1{margin:0 0 8px;font-size:24px}
+                            p{margin:0 0 24px;color:#667085}
+                            img{display:block;width:320px;max-width:100%;height:auto;margin:0 auto 20px}
+                            code{display:inline-block;padding:8px 12px;border:1px solid #dfe5ee;border-radius:6px;background:#f8fafc;font-size:15px}
+                            @media print{body{padding:10mm}}
+                        </style>
+                    </head>
+                    <body>
+                        <h1>${escaparHtml(cliente)}</h1>
+                        <p>Código de acceso del socio</p>
+                        <img src="${escaparHtml(ruta)}" alt="Código QR">
+                        <code>${escaparHtml(codigo)}</code>
+                        <script>
+                            window.addEventListener('load', function(){
+                                window.print();
+                                window.onafterprint = function(){ window.close(); };
+                            });
+                        <\/script>
+                    </body>
+                    </html>
+                `);
+                ventana.document.close();
+            });
+        }
         
         function actualizarPrecioNuevo() {
             const planSelect = document.getElementById('plan_id_nuevo');

@@ -1,8 +1,4 @@
 <?php
-// VERSION COMPATIBLE PHP 7 - SIN TIPOS UNION - 2026-07-11
-// Archivo: corte_caja.php
-// Ubicación: raíz de Sistema_gym
-
 
 require_once __DIR__ . '/includes/auth_guard.php';
 require_once __DIR__ . '/config/database.php';
@@ -78,6 +74,130 @@ function flashCaja($tipo, $titulo, $mensaje) {
 
     header('Location: corte_caja.php');
     exit();
+}
+
+
+/**
+ * Construye enlaces conservando los filtros/páginas del otro listado.
+ */
+function urlCorteCaja($cambios = array()) {
+    $parametros = $_GET;
+
+    foreach ($cambios as $clave => $valor) {
+        if ($valor === null || $valor === '') {
+            unset($parametros[$clave]);
+        } else {
+            $parametros[$clave] = $valor;
+        }
+    }
+
+    $consulta = http_build_query($parametros);
+    return 'corte_caja.php' . ($consulta !== '' ? '?' . $consulta : '');
+}
+
+/**
+ * Devuelve un rango compacto de páginas con separadores.
+ */
+function paginasCorteCaja($paginaActual, $totalPaginas) {
+    $paginaActual = max(1, (int) $paginaActual);
+    $totalPaginas = max(1, (int) $totalPaginas);
+
+    if ($totalPaginas <= 7) {
+        return range(1, $totalPaginas);
+    }
+
+    $paginas = array(1);
+    $inicio = max(2, $paginaActual - 1);
+    $fin = min($totalPaginas - 1, $paginaActual + 1);
+
+    if ($inicio > 2) {
+        $paginas[] = '...';
+    }
+
+    for ($pagina = $inicio; $pagina <= $fin; $pagina++) {
+        $paginas[] = $pagina;
+    }
+
+    if ($fin < $totalPaginas - 1) {
+        $paginas[] = '...';
+    }
+
+    $paginas[] = $totalPaginas;
+    return $paginas;
+}
+
+function contarCortesCerradosPaginados($conn, $usuarioId, $esAdmin) {
+    if ($esAdmin) {
+        $resultado = $conn->query("SELECT COUNT(*) AS total FROM cajas WHERE estado = 'cerrada'");
+        if (!$resultado) {
+            throw new RuntimeException('No fue posible contar el historial de cortes.');
+        }
+        return (int) $resultado->fetch_assoc()['total'];
+    }
+
+    $stmt = $conn->prepare(
+        "SELECT COUNT(*) AS total
+         FROM cajas
+         WHERE estado = 'cerrada'
+           AND usuario_apertura_id = ?"
+    );
+
+    if (!$stmt) {
+        throw new RuntimeException('No fue posible preparar el conteo del historial.');
+    }
+
+    $stmt->bind_param('i', $usuarioId);
+    $stmt->execute();
+    $resultado = $stmt->get_result();
+    $total = $resultado ? (int) $resultado->fetch_assoc()['total'] : 0;
+    $stmt->close();
+
+    return $total;
+}
+
+function listarCortesCerradosPaginados($conn, $usuarioId, $esAdmin, $limite, $offset) {
+    $limite = max(1, (int) $limite);
+    $offset = max(0, (int) $offset);
+
+    $seleccion = "SELECT c.*, COALESCE(u.nombre, 'Usuario no disponible') AS usuario_apertura
+                  FROM cajas c
+                  LEFT JOIN usuarios u ON u.id = c.usuario_apertura_id";
+
+    if ($esAdmin) {
+        $stmt = $conn->prepare(
+            $seleccion . "
+             WHERE c.estado = 'cerrada'
+             ORDER BY c.fecha_cierre DESC, c.id DESC
+             LIMIT ? OFFSET ?"
+        );
+
+        if (!$stmt) {
+            throw new RuntimeException('No fue posible preparar el historial de cortes.');
+        }
+
+        $stmt->bind_param('ii', $limite, $offset);
+    } else {
+        $stmt = $conn->prepare(
+            $seleccion . "
+             WHERE c.estado = 'cerrada'
+               AND c.usuario_apertura_id = ?
+             ORDER BY c.fecha_cierre DESC, c.id DESC
+             LIMIT ? OFFSET ?"
+        );
+
+        if (!$stmt) {
+            throw new RuntimeException('No fue posible preparar el historial de cortes.');
+        }
+
+        $stmt->bind_param('iii', $usuarioId, $limite, $offset);
+    }
+
+    $stmt->execute();
+    $resultado = $stmt->get_result();
+    $filas = $resultado ? $resultado->fetch_all(MYSQLI_ASSOC) : array();
+    $stmt->close();
+
+    return $filas;
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -346,30 +466,53 @@ $cajaAbierta = obtenerCajaAbierta($conn, $usuarioId);
 $resumen = null;
 $operaciones = array();
 $totalOperaciones = 0;
-$totalPaginas = 1;
+$totalPaginasOperaciones = 1;
 $errorConsultaCaja = null;
-$paginaActual = max(1, (int) (isset($_GET['pagina']) ? $_GET['pagina'] : 1));
-$porPagina = 12;
+
+$paginaOperaciones = max(1, (int) (isset($_GET['pagina_operaciones']) ? $_GET['pagina_operaciones'] : 1));
+$porPaginaOperaciones = 10;
 
 if ($cajaAbierta) {
     try {
         $resumen = calcularResumenCaja($conn, $cajaAbierta);
         $totalOperaciones = contarOperacionesCaja($conn, $cajaAbierta);
-        $totalPaginas = max(1, (int) ceil($totalOperaciones / $porPagina));
-        $paginaActual = min($paginaActual, $totalPaginas);
-        $offset = ($paginaActual - 1) * $porPagina;
-        $operaciones = listarOperacionesCaja($conn, $cajaAbierta, $porPagina, $offset);
+        $totalPaginasOperaciones = max(1, (int) ceil($totalOperaciones / $porPaginaOperaciones));
+        $paginaOperaciones = min($paginaOperaciones, $totalPaginasOperaciones);
+        $offsetOperaciones = ($paginaOperaciones - 1) * $porPaginaOperaciones;
+        $operaciones = listarOperacionesCaja(
+            $conn,
+            $cajaAbierta,
+            $porPaginaOperaciones,
+            $offsetOperaciones
+        );
     } catch (Throwable $errorCaja) {
         $errorConsultaCaja = $errorCaja->getMessage();
     }
 }
 
-$cortesRecientes = listarCortesRecientes(
-    $conn,
-    $usuarioId,
-    $usuarioRol === 'admin',
-    12
-);
+$cortesRecientes = array();
+$totalCortes = 0;
+$totalPaginasCortes = 1;
+$errorHistorialCaja = null;
+$paginaCortes = max(1, (int) (isset($_GET['pagina_cortes']) ? $_GET['pagina_cortes'] : 1));
+$porPaginaCortes = 8;
+
+try {
+    $esAdministradorCaja = $usuarioRol === 'admin';
+    $totalCortes = contarCortesCerradosPaginados($conn, $usuarioId, $esAdministradorCaja);
+    $totalPaginasCortes = max(1, (int) ceil($totalCortes / $porPaginaCortes));
+    $paginaCortes = min($paginaCortes, $totalPaginasCortes);
+    $offsetCortes = ($paginaCortes - 1) * $porPaginaCortes;
+    $cortesRecientes = listarCortesCerradosPaginados(
+        $conn,
+        $usuarioId,
+        $esAdministradorCaja,
+        $porPaginaCortes,
+        $offsetCortes
+    );
+} catch (Throwable $errorHistorial) {
+    $errorHistorialCaja = $errorHistorial->getMessage();
+}
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -383,671 +526,7 @@ $cortesRecientes = listarCortesRecientes(
         referrerpolicy="no-referrer"
     >
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-    <style>
-        :root {
-            --caja-primary: #0a2540;
-            --caja-primary-soft: #edf4fb;
-            --caja-blue: #2563eb;
-            --caja-green: #17875d;
-            --caja-red: #c2414b;
-            --caja-orange: #d97706;
-            --caja-text: #172033;
-            --caja-muted: #667085;
-            --caja-border: #dce4ed;
-            --caja-bg: #f5f7fa;
-            --caja-card: #ffffff;
-        }
-
-        .caja-page {
-            min-height: 100vh;
-            padding: 22px;
-            background:
-                radial-gradient(circle at top right, rgba(37, 99, 235, .08), transparent 28%),
-                var(--caja-bg);
-        }
-
-        .caja-shell {
-            width: min(1450px, 100%);
-            margin: 0 auto;
-        }
-
-        .caja-topbar {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 18px;
-            margin-bottom: 18px;
-        }
-
-        .caja-heading h1 {
-            margin: 0;
-            color: var(--caja-primary);
-            font-size: clamp(1.6rem, 3vw, 2.15rem);
-        }
-
-        .caja-heading p {
-            margin: 6px 0 0;
-            color: var(--caja-muted);
-        }
-
-        .caja-status {
-            display: inline-flex;
-            align-items: center;
-            gap: 9px;
-            padding: 10px 15px;
-            border-radius: 999px;
-            font-weight: 800;
-            white-space: nowrap;
-        }
-
-        .caja-status.abierta {
-            color: #126342;
-            background: #e8f7f0;
-            border: 1px solid #b9e7d1;
-        }
-
-        .caja-status.cerrada {
-            color: #7b3440;
-            background: #fff0f2;
-            border: 1px solid #f2c7ce;
-        }
-
-        .caja-status-dot {
-            width: 9px;
-            height: 9px;
-            border-radius: 50%;
-            background: currentColor;
-            box-shadow: 0 0 0 4px rgba(23, 135, 93, .12);
-        }
-
-        .caja-card {
-            background: var(--caja-card);
-            border: 1px solid var(--caja-border);
-            border-radius: 18px;
-            box-shadow: 0 12px 34px rgba(15, 36, 58, .07);
-        }
-
-        .caja-open-layout {
-            display: block;
-        }
-
-        .caja-open-panel {
-            width: min(820px, 100%);
-            margin: 0 auto;
-            overflow: hidden;
-            border-radius: 16px;
-        }
-
-        .caja-open-hero {
-            padding: 22px 25px;
-            background: linear-gradient(135deg, #0a2540, #173f67);
-            color: #fff;
-        }
-
-        .caja-open-hero h2 {
-            margin: 0 0 6px;
-            font-size: 1.32rem;
-        }
-
-        .caja-open-hero p {
-            margin: 0;
-            color: rgba(255,255,255,.78);
-            line-height: 1.5;
-            font-size: .92rem;
-        }
-
-        .caja-form-body {
-            padding: 20px 25px 23px;
-        }
-
-        .caja-field {
-            margin-bottom: 17px;
-        }
-
-        .caja-field label {
-            display: block;
-            margin-bottom: 7px;
-            color: var(--caja-text);
-            font-size: .9rem;
-            font-weight: 800;
-        }
-
-        .caja-field input,
-        .caja-field select,
-        .caja-field textarea {
-            width: 100%;
-            border: 1px solid #cfd9e5;
-            border-radius: 11px;
-            padding: 12px 13px;
-            background: #fff;
-            color: var(--caja-text);
-            font: inherit;
-            transition: border-color .2s, box-shadow .2s;
-        }
-
-        .caja-field input:focus,
-        .caja-field select:focus,
-        .caja-field textarea:focus {
-            outline: none;
-            border-color: #6b9bea;
-            box-shadow: 0 0 0 4px rgba(37,99,235,.11);
-        }
-
-        .caja-field textarea {
-            min-height: 74px;
-            resize: vertical;
-        }
-
-        .caja-open-panel .caja-field {
-            margin-bottom: 14px;
-        }
-
-        .caja-open-panel .caja-btn {
-            min-height: 44px;
-        }
-
-        .caja-help {
-            display: block;
-            margin-top: 6px;
-            color: var(--caja-muted);
-            font-size: .78rem;
-        }
-
-        .caja-btn {
-            appearance: none;
-            border: 0;
-            border-radius: 11px;
-            padding: 12px 17px;
-            font: inherit;
-            font-weight: 800;
-            cursor: pointer;
-            transition: transform .18s, box-shadow .18s, opacity .18s;
-            text-decoration: none;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-        }
-
-        .caja-btn:hover {
-            transform: translateY(-1px);
-        }
-
-        .caja-btn-primary {
-            color: #fff;
-            background: linear-gradient(135deg, #2563eb, #174db7);
-            box-shadow: 0 9px 20px rgba(37,99,235,.2);
-        }
-
-        .caja-btn-danger {
-            color: #fff;
-            background: linear-gradient(135deg, #c2414b, #9f2935);
-            box-shadow: 0 9px 20px rgba(194,65,75,.18);
-        }
-
-        .caja-btn-soft {
-            color: var(--caja-primary);
-            background: #eef3f8;
-            border: 1px solid #d7e0ea;
-        }
-
-        .caja-btn-block {
-            width: 100%;
-        }
-
-        .caja-info-card {
-            padding: 24px;
-        }
-
-        .caja-info-card h3,
-        .caja-section-title {
-            margin: 0 0 14px;
-            color: var(--caja-primary);
-        }
-
-        .caja-info-list {
-            display: grid;
-            gap: 12px;
-            color: var(--caja-muted);
-            line-height: 1.5;
-        }
-
-        .caja-info-item {
-            display: grid;
-            grid-template-columns: 34px 1fr;
-            gap: 10px;
-            align-items: start;
-        }
-
-        .caja-info-number {
-            width: 30px;
-            height: 30px;
-            border-radius: 9px;
-            background: var(--caja-primary-soft);
-            color: var(--caja-blue);
-            display: grid;
-            place-items: center;
-            font-weight: 900;
-        }
-
-
-        .caja-warning-box,
-        .caja-error-box {
-            display: flex;
-            align-items: flex-start;
-            gap: 12px;
-            margin-bottom: 18px;
-            padding: 16px 18px;
-            border-radius: 14px;
-            border: 1px solid #f2c879;
-            background: #fff8e8;
-            color: #7a4a00;
-            box-shadow: 0 8px 24px rgba(122, 74, 0, 0.06);
-        }
-
-        .caja-error-box {
-            border-color: #efb5bb;
-            background: #fff1f2;
-            color: #8f2530;
-        }
-
-        .caja-warning-box i,
-        .caja-error-box i {
-            margin-top: 2px;
-            font-size: 1.1rem;
-        }
-
-        .caja-warning-box strong,
-        .caja-error-box strong {
-            display: block;
-            margin-bottom: 4px;
-        }
-
-        .caja-main-grid {
-            display: grid;
-            grid-template-columns: minmax(0, 1fr) 355px;
-            gap: 18px;
-            align-items: start;
-        }
-
-        .caja-summary-grid {
-            display: grid;
-            grid-template-columns: repeat(4, minmax(0, 1fr));
-            gap: 13px;
-            margin-bottom: 18px;
-        }
-
-        .caja-summary-card {
-            padding: 18px;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .caja-summary-card::after {
-            content: '';
-            position: absolute;
-            right: -18px;
-            top: -18px;
-            width: 72px;
-            height: 72px;
-            border-radius: 50%;
-            background: rgba(37,99,235,.06);
-        }
-
-        .caja-summary-label {
-            color: var(--caja-muted);
-            font-size: .79rem;
-            font-weight: 800;
-            text-transform: uppercase;
-            letter-spacing: .04em;
-        }
-
-        .caja-summary-value {
-            display: block;
-            margin-top: 8px;
-            color: var(--caja-primary);
-            font-size: 1.42rem;
-            font-weight: 900;
-        }
-
-        .caja-summary-note {
-            display: block;
-            margin-top: 5px;
-            color: var(--caja-muted);
-            font-size: .75rem;
-        }
-
-        .caja-detail-card,
-        .caja-table-card,
-        .caja-side-card,
-        .caja-history-card {
-            padding: 21px;
-        }
-
-        .caja-breakdown {
-            display: grid;
-            grid-template-columns: repeat(3, minmax(0, 1fr));
-            gap: 12px;
-        }
-
-        .caja-breakdown-box {
-            padding: 15px;
-            border: 1px solid var(--caja-border);
-            border-radius: 13px;
-            background: #fafbfd;
-        }
-
-        .caja-breakdown-box h4 {
-            margin: 0 0 12px;
-            color: var(--caja-primary);
-        }
-
-        .caja-breakdown-row {
-            display: flex;
-            justify-content: space-between;
-            gap: 12px;
-            padding: 7px 0;
-            color: var(--caja-muted);
-            border-bottom: 1px dashed #e1e7ee;
-        }
-
-        .caja-breakdown-row:last-child {
-            border-bottom: 0;
-        }
-
-        .caja-breakdown-row strong {
-            color: var(--caja-text);
-        }
-
-        .caja-side-stack {
-            display: grid;
-            gap: 18px;
-        }
-
-        .caja-side-card h3 {
-            margin: 0 0 16px;
-            color: var(--caja-primary);
-        }
-
-        .caja-table-wrap {
-            overflow-x: auto;
-        }
-
-        .caja-table {
-            width: 100%;
-            border-collapse: collapse;
-            min-width: 760px;
-        }
-
-        .caja-table th,
-        .caja-table td {
-            padding: 12px 11px;
-            text-align: left;
-            border-bottom: 1px solid #e7ecf2;
-            font-size: .86rem;
-        }
-
-        .caja-table th {
-            color: #4b5970;
-            background: #f7f9fc;
-            font-size: .76rem;
-            text-transform: uppercase;
-            letter-spacing: .04em;
-        }
-
-        .caja-table td {
-            color: var(--caja-text);
-        }
-
-        .caja-amount {
-            font-weight: 900;
-            white-space: nowrap;
-        }
-
-        .caja-amount.entrada { color: var(--caja-green); }
-        .caja-amount.salida { color: var(--caja-red); }
-
-        .caja-pill {
-            display: inline-flex;
-            padding: 5px 9px;
-            border-radius: 999px;
-            font-size: .72rem;
-            font-weight: 800;
-            background: #eef3f8;
-            color: #42526a;
-            white-space: nowrap;
-        }
-
-        .caja-empty {
-            padding: 30px 15px;
-            text-align: center;
-            color: var(--caja-muted);
-        }
-
-        .caja-pagination {
-            display: flex;
-            justify-content: flex-end;
-            gap: 6px;
-            margin-top: 16px;
-            flex-wrap: wrap;
-        }
-
-        .caja-page-link {
-            min-width: 36px;
-            height: 36px;
-            padding: 0 10px;
-            display: grid;
-            place-items: center;
-            border: 1px solid var(--caja-border);
-            border-radius: 9px;
-            color: var(--caja-primary);
-            text-decoration: none;
-            font-weight: 800;
-            background: #fff;
-        }
-
-        .caja-page-link.active {
-            color: #fff;
-            background: var(--caja-blue);
-            border-color: var(--caja-blue);
-        }
-
-        .caja-history-card {
-            margin-top: 18px;
-        }
-
-        .caja-difference-preview {
-            margin: 14px 0 17px;
-            padding: 13px;
-            border-radius: 11px;
-            background: #f5f8fc;
-            border: 1px solid #dde6ef;
-            color: var(--caja-muted);
-            font-size: .88rem;
-        }
-
-        .caja-difference-preview strong {
-            color: var(--caja-primary);
-        }
-
-
-        /* Historial de cortes cerrados */
-        .caja-history-card {
-            margin-top: 18px;
-            padding: 22px;
-        }
-
-        .caja-history-head {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-end;
-            gap: 14px;
-            margin-bottom: 17px;
-        }
-
-        .caja-history-head .caja-section-title {
-            margin: 0;
-        }
-
-        .caja-history-head p {
-            margin: 5px 0 0;
-            color: var(--caja-muted);
-            font-size: .86rem;
-        }
-
-        .caja-history-count {
-            display: inline-flex;
-            align-items: center;
-            gap: 7px;
-            padding: 7px 11px;
-            border-radius: 999px;
-            color: #42526a;
-            background: #eef3f8;
-            border: 1px solid #dae3ec;
-            font-size: .76rem;
-            font-weight: 800;
-            white-space: nowrap;
-        }
-
-        .caja-history-table-wrap {
-            overflow-x: auto;
-            border: 1px solid #e1e7ee;
-            border-radius: 13px;
-            background: #fff;
-        }
-
-        .caja-history-table {
-            width: 100%;
-            min-width: 1050px;
-            border-collapse: collapse;
-        }
-
-        .caja-history-table th,
-        .caja-history-table td {
-            padding: 14px 15px;
-            text-align: left;
-            border-bottom: 1px solid #e8edf3;
-            vertical-align: middle;
-        }
-
-        .caja-history-table th {
-            color: #45546a;
-            background: #f5f8fc;
-            font-size: .72rem;
-            font-weight: 900;
-            text-transform: uppercase;
-            letter-spacing: .045em;
-            white-space: nowrap;
-        }
-
-        .caja-history-table tbody tr {
-            transition: background .18s ease;
-        }
-
-        .caja-history-table tbody tr:hover {
-            background: #f9fbfd;
-        }
-
-        .caja-history-table tbody tr:last-child td {
-            border-bottom: 0;
-        }
-
-        .caja-history-folio {
-            color: var(--caja-primary);
-            font-weight: 900;
-            white-space: nowrap;
-        }
-
-        .caja-history-owner {
-            color: var(--caja-text);
-            font-weight: 700;
-            white-space: nowrap;
-        }
-
-        .caja-history-date {
-            color: #526176;
-            font-size: .82rem;
-            white-space: nowrap;
-        }
-
-        .caja-history-money {
-            color: var(--caja-primary);
-            font-weight: 850;
-            white-space: nowrap;
-        }
-
-        .caja-history-difference {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            min-width: 92px;
-            padding: 6px 9px;
-            border-radius: 999px;
-            font-size: .76rem;
-            font-weight: 900;
-            white-space: nowrap;
-        }
-
-        .caja-history-difference.neutral {
-            color: #35644f;
-            background: #edf8f2;
-            border: 1px solid #cce9da;
-        }
-
-        .caja-history-difference.positive {
-            color: #9a5a00;
-            background: #fff7e8;
-            border: 1px solid #f2d39d;
-        }
-
-        .caja-history-difference.negative {
-            color: #9c2f3b;
-            background: #fff0f2;
-            border: 1px solid #efc3c9;
-        }
-
-        .caja-history-status {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 6px 9px;
-            border-radius: 999px;
-            color: #4b5a6f;
-            background: #eef2f6;
-            border: 1px solid #d9e1e9;
-            font-size: .72rem;
-            font-weight: 850;
-            white-space: nowrap;
-        }
-
-        .caja-history-action {
-            padding: 9px 12px;
-            border-radius: 9px;
-            font-size: .78rem;
-            white-space: nowrap;
-        }
-
-        @media (max-width: 1180px) {
-            .caja-main-grid { grid-template-columns: 1fr; }
-            .caja-side-stack { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-            .caja-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-        }
-
-        @media (max-width: 900px) {
-            .caja-open-layout { grid-template-columns: 1fr; }
-            .caja-breakdown { grid-template-columns: 1fr; }
-        }
-
-        @media (max-width: 700px) {
-            .caja-page { padding: 15px; }
-            .caja-topbar { align-items: flex-start; flex-direction: column; }
-            .caja-summary-grid { grid-template-columns: 1fr; }
-            .caja-side-stack { grid-template-columns: 1fr; }
-            .caja-open-hero { padding: 19px 20px; }
-            .caja-form-body { padding: 18px 20px 20px; }
-            .caja-history-head { align-items: flex-start; flex-direction: column; }
-        }
-    </style>
+    <link rel="stylesheet" href="css/corte_caja.css?v=<?= is_file(__DIR__ . '/css/corte_caja.css') ? filemtime(__DIR__ . '/css/corte_caja.css') : '1' ?>">
 </head>
 <body>
 <?php require_once __DIR__ . '/includes/sidebar.php'; ?>
@@ -1056,6 +535,7 @@ $cortesRecientes = listarCortesRecientes(
     <div class="caja-shell">
         <header class="caja-topbar">
             <div class="caja-heading">
+                <span class="caja-eyebrow"><i class="fas fa-cash-register"></i> Control de efectivo</span>
                 <h1>Corte de Caja</h1>
                 <p>Administra la apertura, los movimientos y el cierre de cada turno.</p>
             </div>
@@ -1070,7 +550,7 @@ $cortesRecientes = listarCortesRecientes(
             <section class="caja-open-layout">
                 <article class="caja-card caja-open-panel">
                     <div class="caja-open-hero">
-                        <h2>Iniciar un nuevo turno</h2>
+                        <h2><i class="fas fa-door-open"></i> Iniciar un nuevo turno</h2>
                         <p>
                             Desde la apertura se contabilizarán automáticamente las operaciones registradas por
                             <?= hCaja($usuarioNombre) ?>.
@@ -1132,25 +612,29 @@ $cortesRecientes = listarCortesRecientes(
             <?php endif; ?>
 
             <section class="caja-summary-grid">
-                <article class="caja-card caja-summary-card">
+                <article class="caja-card caja-summary-card caja-summary-cash">
+                    <span class="caja-summary-icon"><i class="fas fa-money-bill-wave"></i></span>
                     <span class="caja-summary-label">Efectivo esperado</span>
                     <strong class="caja-summary-value"><?= dineroCaja($resumen['efectivo_esperado']) ?></strong>
                     <small class="caja-summary-note">Incluye fondo inicial y movimientos en efectivo.</small>
                 </article>
 
-                <article class="caja-card caja-summary-card">
+                <article class="caja-card caja-summary-card caja-summary-net">
+                    <span class="caja-summary-icon"><i class="fas fa-chart-line"></i></span>
                     <span class="caja-summary-label">Ingresos netos</span>
                     <strong class="caja-summary-value"><?= dineroCaja($resumen['total_neto']) ?></strong>
                     <small class="caja-summary-note">Productos + membresías − devoluciones.</small>
                 </article>
 
-                <article class="caja-card caja-summary-card">
+                <article class="caja-card caja-summary-card caja-summary-cardpay">
+                    <span class="caja-summary-icon"><i class="fas fa-credit-card"></i></span>
                     <span class="caja-summary-label">Tarjeta neta</span>
                     <strong class="caja-summary-value"><?= dineroCaja($resumen['total_tarjeta_neto']) ?></strong>
                     <small class="caja-summary-note">No forma parte del efectivo físico.</small>
                 </article>
 
-                <article class="caja-card caja-summary-card">
+                <article class="caja-card caja-summary-card caja-summary-transfer">
+                    <span class="caja-summary-icon"><i class="fas fa-building-columns"></i></span>
                     <span class="caja-summary-label">Transferencias netas</span>
                     <strong class="caja-summary-value"><?= dineroCaja($resumen['total_transferencia_neto']) ?></strong>
                     <small class="caja-summary-note"><?= (int) $resumen['operaciones'] ?> operaciones detectadas.</small>
@@ -1160,8 +644,11 @@ $cortesRecientes = listarCortesRecientes(
             <section class="caja-main-grid">
                 <div>
                     <article class="caja-card caja-detail-card">
-                        <h2 class="caja-section-title">Resumen del turno <?= hCaja($cajaAbierta['folio']) ?></h2>
-
+                        <div class="caja-card-head">
+                            <h2><i class="fas fa-chart-pie"></i> Resumen del turno</h2>
+                            <span class="caja-head-badge"><?= hCaja($cajaAbierta['folio']) ?></span>
+                        </div>
+                        <div class="caja-card-body">
                         <div class="caja-breakdown">
                             <div class="caja-breakdown-box">
                                 <h4>Ventas de productos</h4>
@@ -1187,10 +674,15 @@ $cortesRecientes = listarCortesRecientes(
                                 <div class="caja-breakdown-row"><span>Fondo inicial</span><strong><?= dineroCaja($resumen['monto_inicial']) ?></strong></div>
                             </div>
                         </div>
+                        </div>
                     </article>
 
-                    <article class="caja-card caja-table-card" style="margin-top:18px;">
-                        <h2 class="caja-section-title">Operaciones del turno</h2>
+                    <article class="caja-card caja-table-card caja-spaced-card">
+                        <div class="caja-card-head">
+                            <h2><i class="fas fa-list"></i> Operaciones del turno</h2>
+                            <span class="caja-head-badge"><?= (int) $totalOperaciones ?> registros</span>
+                        </div>
+                        <div class="caja-card-body caja-table-body">
 
                         <?php if (!$operaciones): ?>
                             <div class="caja-empty">Todavía no hay operaciones registradas durante este turno.</div>
@@ -1210,12 +702,12 @@ $cortesRecientes = listarCortesRecientes(
                                     <tbody>
                                     <?php foreach ($operaciones as $operacion): ?>
                                         <tr>
-                                            <td><?= hCaja(date('d/m/Y H:i', strtotime((string) $operacion['fecha']))) ?></td>
-                                            <td><span class="caja-pill"><?= hCaja($operacion['origen']) ?></span></td>
-                                            <td><?= hCaja($operacion['concepto']) ?></td>
-                                            <td><?= hCaja(ucfirst((string) $operacion['metodo_pago'])) ?></td>
-                                            <td><?= $operacion['naturaleza'] === 'entrada' ? 'Entrada' : 'Salida' ?></td>
-                                            <td class="caja-amount <?= hCaja($operacion['naturaleza']) ?>">
+                                            <td data-label="Fecha"><?= hCaja(date('d/m/Y H:i', strtotime((string) $operacion['fecha']))) ?></td>
+                                            <td data-label="Origen"><span class="caja-pill"><?= hCaja($operacion['origen']) ?></span></td>
+                                            <td data-label="Concepto"><?= hCaja($operacion['concepto']) ?></td>
+                                            <td data-label="Método"><?= hCaja(ucfirst((string) $operacion['metodo_pago'])) ?></td>
+                                            <td data-label="Movimiento"><?= $operacion['naturaleza'] === 'entrada' ? 'Entrada' : 'Salida' ?></td>
+                                            <td data-label="Monto" class="caja-amount <?= hCaja($operacion['naturaleza']) ?>">
                                                 <?= $operacion['naturaleza'] === 'entrada' ? '+' : '−' ?><?= dineroCaja($operacion['monto']) ?>
                                             </td>
                                         </tr>
@@ -1224,23 +716,49 @@ $cortesRecientes = listarCortesRecientes(
                                 </table>
                             </div>
 
-                            <?php if ($totalPaginas > 1): ?>
-                                <nav class="caja-pagination" aria-label="Paginación de operaciones">
-                                    <?php for ($pagina = 1; $pagina <= $totalPaginas; $pagina++): ?>
+                            <?php if ($totalPaginasOperaciones > 1): ?>
+                                <div class="caja-pagination-wrap">
+                                    <span class="caja-pagination-info">
+                                        Página <?= (int) $paginaOperaciones ?> de <?= (int) $totalPaginasOperaciones ?>
+                                    </span>
+                                    <nav class="caja-pagination" aria-label="Paginación de operaciones">
                                         <a
-                                            href="?pagina=<?= $pagina ?>"
-                                            class="caja-page-link <?= $pagina === $paginaActual ? 'active' : '' ?>"
-                                        ><?= $pagina ?></a>
-                                    <?php endfor; ?>
-                                </nav>
+                                            href="<?= hCaja(urlCorteCaja(array('pagina_operaciones' => max(1, $paginaOperaciones - 1)))) ?>"
+                                            class="caja-page-link caja-page-arrow <?= $paginaOperaciones <= 1 ? 'disabled' : '' ?>"
+                                            aria-label="Página anterior"
+                                        ><i class="fas fa-chevron-left"></i></a>
+
+                                        <?php foreach (paginasCorteCaja($paginaOperaciones, $totalPaginasOperaciones) as $pagina): ?>
+                                            <?php if ($pagina === '...'): ?>
+                                                <span class="caja-page-ellipsis">…</span>
+                                            <?php else: ?>
+                                                <a
+                                                    href="<?= hCaja(urlCorteCaja(array('pagina_operaciones' => $pagina))) ?>"
+                                                    class="caja-page-link <?= (int) $pagina === $paginaOperaciones ? 'active' : '' ?>"
+                                                    <?= (int) $pagina === $paginaOperaciones ? 'aria-current="page"' : '' ?>
+                                                ><?= (int) $pagina ?></a>
+                                            <?php endif; ?>
+                                        <?php endforeach; ?>
+
+                                        <a
+                                            href="<?= hCaja(urlCorteCaja(array('pagina_operaciones' => min($totalPaginasOperaciones, $paginaOperaciones + 1)))) ?>"
+                                            class="caja-page-link caja-page-arrow <?= $paginaOperaciones >= $totalPaginasOperaciones ? 'disabled' : '' ?>"
+                                            aria-label="Página siguiente"
+                                        ><i class="fas fa-chevron-right"></i></a>
+                                    </nav>
+                                </div>
                             <?php endif; ?>
                         <?php endif; ?>
+                        </div>
                     </article>
                 </div>
 
                 <aside class="caja-side-stack">
                     <article class="caja-card caja-side-card">
-                        <h3>Registrar movimiento manual</h3>
+                        <div class="caja-card-head caja-card-head-compact">
+                            <h2><i class="fas fa-right-left"></i> Movimiento manual</h2>
+                        </div>
+                        <div class="caja-card-body caja-side-body">
                         <form method="post" id="formMovimiento">
                             <input type="hidden" name="csrf_token" value="<?= hCaja($_SESSION['csrf_corte_caja']) ?>">
                             <input type="hidden" name="accion" value="movimiento_manual">
@@ -1268,14 +786,19 @@ $cortesRecientes = listarCortesRecientes(
                                 <textarea id="concepto" name="concepto" maxlength="255" required placeholder="Describe claramente el motivo."></textarea>
                             </div>
 
-                            <button type="submit" class="caja-btn caja-btn-soft caja-btn-block">
+                            <button type="submit" class="caja-btn caja-btn-primary caja-btn-block">
+                                <i class="fas fa-floppy-disk"></i>
                                 Guardar movimiento
                             </button>
                         </form>
+                        </div>
                     </article>
 
-                    <article class="caja-card caja-side-card">
-                        <h3>Cerrar caja</h3>
+                    <article class="caja-card caja-side-card caja-close-card">
+                        <div class="caja-card-head caja-card-head-compact">
+                            <h2><i class="fas fa-lock"></i> Cerrar caja</h2>
+                        </div>
+                        <div class="caja-card-body caja-side-body">
                         <form method="post" id="formCerrarCaja">
                             <input type="hidden" name="csrf_token" value="<?= hCaja($_SESSION['csrf_corte_caja']) ?>">
                             <input type="hidden" name="accion" value="cerrar_caja">
@@ -1309,27 +832,28 @@ $cortesRecientes = listarCortesRecientes(
                                 Realizar corte y cerrar
                             </button>
                         </form>
+                        </div>
                     </article>
                 </aside>
             </section>
         <?php endif; ?>
 
         <section class="caja-card caja-history-card">
-            <div class="caja-history-head">
+            <div class="caja-card-head caja-history-head">
                 <div>
-                    <h2 class="caja-section-title">Historial de cortes</h2>
+                    <h2><i class="fas fa-box-archive"></i> Historial de cortes</h2>
                     <p>Consulta las cajas cerradas y revisa sus importes principales.</p>
                 </div>
-
-                <?php if ($cortesRecientes): ?>
-                    <span class="caja-history-count">
-                        <i class="fas fa-box-archive"></i>
-                        <?= count($cortesRecientes) ?> cortes
-                    </span>
-                <?php endif; ?>
+                <span class="caja-head-badge"><?= (int) $totalCortes ?> cortes</span>
             </div>
+            <div class="caja-card-body caja-history-body">
 
-            <?php if (!$cortesRecientes): ?>
+            <?php if ($errorHistorialCaja): ?>
+                <div class="caja-empty caja-empty-error">
+                    <i class="fas fa-triangle-exclamation"></i>
+                    <?= hCaja($errorHistorialCaja) ?>
+                </div>
+            <?php elseif (!$cortesRecientes): ?>
                 <div class="caja-empty">Aún no existen cortes cerrados.</div>
             <?php else: ?>
                 <div class="caja-history-table-wrap">
@@ -1361,48 +885,48 @@ $cortesRecientes = listarCortesRecientes(
                             }
                             ?>
                             <tr>
-                                <td>
+                                <td data-label="Folio">
                                     <span class="caja-history-folio">
                                         <?= hCaja($corte['folio']) ?>
                                     </span>
                                 </td>
 
-                                <td>
+                                <td data-label="Responsable">
                                     <span class="caja-history-owner">
                                         <?= hCaja($corte['usuario_apertura']) ?>
                                     </span>
                                 </td>
 
-                                <td class="caja-history-date">
+                                <td data-label="Apertura" class="caja-history-date">
                                     <?= hCaja(date('d/m/Y H:i', strtotime((string) $corte['fecha_apertura']))) ?>
                                 </td>
 
-                                <td class="caja-history-date">
+                                <td data-label="Cierre" class="caja-history-date">
                                     <?= hCaja(date('d/m/Y H:i', strtotime((string) $corte['fecha_cierre']))) ?>
                                 </td>
 
-                                <td class="caja-history-money">
+                                <td data-label="Esperado" class="caja-history-money">
                                     <?= dineroCaja($corte['efectivo_esperado']) ?>
                                 </td>
 
-                                <td class="caja-history-money">
+                                <td data-label="Contado" class="caja-history-money">
                                     <?= dineroCaja($corte['efectivo_contado']) ?>
                                 </td>
 
-                                <td>
+                                <td data-label="Diferencia">
                                     <span class="caja-history-difference <?= hCaja($claseDiferencia) ?>">
                                         <?= dineroCaja($diferenciaCorte) ?>
                                     </span>
                                 </td>
 
-                                <td>
+                                <td data-label="Estado">
                                     <span class="caja-history-status">
                                         <i class="fas fa-lock"></i>
                                         Cerrada
                                     </span>
                                 </td>
 
-                                <td>
+                                <td data-label="Acciones">
                                     <a
                                         class="caja-btn caja-btn-soft caja-history-action"
                                         href="corte_caja_detalle.php?id=<?= (int) $corte['id'] ?>"
@@ -1416,7 +940,41 @@ $cortesRecientes = listarCortesRecientes(
                         </tbody>
                     </table>
                 </div>
+
+                <?php if ($totalPaginasCortes > 1): ?>
+                    <div class="caja-pagination-wrap caja-history-pagination">
+                        <span class="caja-pagination-info">
+                            Página <?= (int) $paginaCortes ?> de <?= (int) $totalPaginasCortes ?>
+                        </span>
+                        <nav class="caja-pagination" aria-label="Paginación del historial de cortes">
+                            <a
+                                href="<?= hCaja(urlCorteCaja(array('pagina_cortes' => max(1, $paginaCortes - 1)))) ?>"
+                                class="caja-page-link caja-page-arrow <?= $paginaCortes <= 1 ? 'disabled' : '' ?>"
+                                aria-label="Página anterior"
+                            ><i class="fas fa-chevron-left"></i></a>
+
+                            <?php foreach (paginasCorteCaja($paginaCortes, $totalPaginasCortes) as $pagina): ?>
+                                <?php if ($pagina === '...'): ?>
+                                    <span class="caja-page-ellipsis">…</span>
+                                <?php else: ?>
+                                    <a
+                                        href="<?= hCaja(urlCorteCaja(array('pagina_cortes' => $pagina))) ?>"
+                                        class="caja-page-link <?= (int) $pagina === $paginaCortes ? 'active' : '' ?>"
+                                        <?= (int) $pagina === $paginaCortes ? 'aria-current="page"' : '' ?>
+                                    ><?= (int) $pagina ?></a>
+                                <?php endif; ?>
+                            <?php endforeach; ?>
+
+                            <a
+                                href="<?= hCaja(urlCorteCaja(array('pagina_cortes' => min($totalPaginasCortes, $paginaCortes + 1)))) ?>"
+                                class="caja-page-link caja-page-arrow <?= $paginaCortes >= $totalPaginasCortes ? 'disabled' : '' ?>"
+                                aria-label="Página siguiente"
+                            ><i class="fas fa-chevron-right"></i></a>
+                        </nav>
+                    </div>
+                <?php endif; ?>
             <?php endif; ?>
+            </div>
         </section>
     </div>
 </main>
@@ -1431,7 +989,7 @@ $cortesRecientes = listarCortesRecientes(
             title: flash.titulo || 'Corte de caja',
             text: flash.mensaje || '',
             confirmButtonText: 'Entendido',
-            confirmButtonColor: '#2563eb'
+            confirmButtonColor: '#244292'
         };
 
         if (window.Swal) {
