@@ -135,7 +135,6 @@ if (
     }
 }
 
-require_once 'includes/sidebar.php';
 ?>
 
 <!DOCTYPE html>
@@ -146,586 +145,14 @@ require_once 'includes/sidebar.php';
     <title>Historial de Ventas - Ego Gym</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            background: #0f172a;
-            font-family: 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-            min-height: 100vh;
-        }
-
-        .main-content {
-            margin-left: 280px;
-            padding: 25px;
-            transition: all 0.3s;
-        }
-
-        @media (max-width: 768px) {
-            .main-content {
-                margin-left: 0;
-                padding: 80px 15px 15px 15px;
-            }
-        }
-
-        .historial-card {
-            background: #ffffff;
-            border-radius: 16px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-            overflow: hidden;
-        }
-
-        .historial-header {
-            background: #1e293b;
-            padding: 20px 25px;
-            color: #ffffff;
-        }
-
-        .historial-header h1 {
-            font-size: 1.5rem;
-            font-weight: 600;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        .historial-header h1 i {
-            color: #3b82f6;
-        }
-
-        .historial-header p {
-            color: #94a3b8;
-            margin-top: 5px;
-            font-size: 0.85rem;
-        }
-
-        .filtros-section {
-            padding: 20px 25px;
-            background: #f8fafc;
-            border-bottom: 1px solid #e2e8f0;
-        }
-
-        .filtros-grid {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 12px;
-            align-items: flex-end;
-        }
-
-        .filtro-group {
-            flex: 1;
-            min-width: 160px;
-        }
-
-        .filtro-group label {
-            display: block;
-            font-size: 0.7rem;
-            font-weight: 600;
-            color: #64748b;
-            margin-bottom: 4px;
-            text-transform: uppercase;
-        }
-
-        .filtro-group input,
-        .filtro-group select {
-            width: 100%;
-            padding: 8px 10px;
-            border: 1px solid #e2e8f0;
-            border-radius: 8px;
-            font-size: 0.85rem;
-            background: #ffffff;
-        }
-
-        .filtro-group input:focus,
-        .filtro-group select:focus {
-            outline: none;
-            border-color: #3b82f6;
-        }
-
-        .btn-limpiar {
-            background: #ef4444;
-            color: #ffffff;
-            border: none;
-            padding: 8px 16px;
-            border-radius: 8px;
-            cursor: pointer;
-            font-weight: 600;
-            font-size: 0.85rem;
-            white-space: nowrap;
-        }
-
-        .btn-limpiar:hover {
-            background: #dc2626;
-        }
-
-        .stats-grid {
-            display: flex;
-            gap: 20px;
-            padding: 20px 25px;
-            background: #ffffff;
-            border-bottom: 1px solid #e2e8f0;
-            flex-wrap: wrap;
-        }
-
-        .stat-card {
-            background: #f8fafc;
-            border-radius: 12px;
-            padding: 15px 20px;
-            text-align: center;
-            flex: 1;
-            min-width: 150px;
-        }
-
-        .stat-card i {
-            font-size: 1.5rem;
-            color: #3b82f6;
-            margin-bottom: 8px;
-        }
-
-        .stat-card .stat-value {
-            font-size: 1.5rem;
-            font-weight: 700;
-            color: #1e293b;
-        }
-
-        .stat-card .stat-label {
-            font-size: 0.75rem;
-            color: #64748b;
-            margin-top: 4px;
-        }
-
-        .tabla-container {
-            overflow-x: auto;
-            padding: 0 25px 25px 25px;
-        }
-
-        .ventas-table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 0.85rem;
-        }
-
-        .ventas-table th {
-            text-align: left;
-            padding: 12px 10px;
-            background: #f8fafc;
-            color: #1e293b;
-            font-weight: 600;
-            border-bottom: 2px solid #e2e8f0;
-        }
-
-        .ventas-table td {
-            padding: 12px 10px;
-            border-bottom: 1px solid #e2e8f0;
-            color: #334155;
-        }
-
-        .ventas-table tbody tr:hover {
-            background: #f8fafc;
-            cursor: pointer;
-        }
-
-        .badge {
-            display: inline-block;
-            padding: 3px 8px;
-            border-radius: 12px;
-            font-size: 0.7rem;
-            font-weight: 600;
-        }
-
-        .badge-completada {
-            background: #d1fae5;
-            color: #065f46;
-        }
-
-        .badge-cancelada {
-            background: #fee2e2;
-            color: #991b1b;
-        }
-
-        .acciones {
-            display: flex;
-            gap: 6px;
-            flex-wrap: nowrap;
-        }
-
-        .btn-icon {
-            padding: 5px 8px;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 0.7rem;
-            font-weight: 500;
-            display: inline-flex;
-            align-items: center;
-            gap: 4px;
-            white-space: nowrap;
-        }
-
-        .btn-ver { background: #3b82f6; color: #ffffff; }
-        .btn-cancelar { background: #ef4444; color: #ffffff; }
-        .btn-devolver { background: #f59e0b; color: #ffffff; }
-        .btn-devolver-disabled { background: #94a3b8; color: #ffffff; cursor: not-allowed; }
-        .btn-email { background: #10b981; color: #ffffff; }
-        .btn-email-disabled { background: #94a3b8; color: #ffffff; cursor: not-allowed; }
-
-        .btn-icon:hover:not(.btn-email-disabled):not(.btn-devolver-disabled) {
-            filter: brightness(0.9);
-        }
-
-        .pagination {
-            display: flex;
-            justify-content: center;
-            gap: 6px;
-            padding: 15px 25px;
-            border-top: 1px solid #e2e8f0;
-            background: #f8fafc;
-        }
-
-        .pagination button {
-            padding: 6px 12px;
-            border: 1px solid #e2e8f0;
-            background: #ffffff;
-            border-radius: 6px;
-            cursor: pointer;
-            font-weight: 500;
-        }
-
-        .pagination button:hover,
-        .pagination button.active {
-            background: #3b82f6;
-            color: #ffffff;
-            border-color: #3b82f6;
-        }
-
-        .loading {
-            text-align: center;
-            padding: 40px;
-            color: #94a3b8;
-        }
-
-        .loading i {
-            font-size: 2rem;
-            animation: spin 1s linear infinite;
-        }
-
-        @keyframes spin {
-            from { transform: rotate(0deg); }
-            to { transform: rotate(360deg); }
-        }
-
-        .empty-state {
-            text-align: center;
-            padding: 50px 25px;
-            color: #94a3b8;
-        }
-
-        .empty-state i {
-            font-size: 3rem;
-            margin-bottom: 10px;
-            opacity: 0.5;
-        }
-
-        .ticket-number {
-            font-family: monospace;
-            font-weight: 600;
-            color: #3b82f6;
-        }
-
-        /* ============================================
-           MODAL DE DETALLE CON ESTILO DE TICKET
-        ============================================ */
-        .swal2-popup.swal-ticket-popup {
-            width: 470px !important;
-            max-width: calc(100vw - 24px) !important;
-            padding: 0 0 18px !important;
-            border-radius: 22px !important;
-            overflow: hidden !important;
-            background: #f3f6fa !important;
-            box-shadow: 0 24px 70px rgba(15, 23, 42, 0.24) !important;
-        }
-
-        .swal-ticket-popup .swal2-html-container {
-            margin: 0 !important;
-            padding: 0 !important;
-            overflow: visible !important;
-        }
-
-        .swal-ticket-popup .swal2-actions {
-            width: calc(100% - 36px);
-            margin: 16px 18px 0 !important;
-            gap: 10px;
-        }
-
-        .swal-ticket-popup .swal2-confirm,
-        .swal-ticket-popup .swal2-cancel {
-            flex: 1;
-            min-height: 44px;
-            margin: 0 !important;
-            border-radius: 10px !important;
-            font-size: 0.88rem !important;
-            font-weight: 750 !important;
-            transition:
-                transform 0.18s ease,
-                box-shadow 0.18s ease,
-                background 0.18s ease !important;
-        }
-
-        .swal-ticket-popup .ticket-print-btn {
-            color: #ffffff !important;
-            border: 1px solid #1d4ed8 !important;
-            background: linear-gradient(135deg, #2563eb, #1d4ed8) !important;
-            box-shadow: 0 7px 16px rgba(37, 99, 235, 0.22) !important;
-        }
-
-        .swal-ticket-popup .ticket-print-btn:hover {
-            transform: translateY(-1px);
-            background: linear-gradient(135deg, #2f6df2, #1e40af) !important;
-            box-shadow: 0 9px 20px rgba(37, 99, 235, 0.28) !important;
-        }
-
-        .swal-ticket-popup .ticket-close-btn {
-            color: #475569 !important;
-            border: 1px solid #cbd5e1 !important;
-            background: #ffffff !important;
-            box-shadow: none !important;
-        }
-
-        .swal-ticket-popup .ticket-close-btn:hover {
-            transform: translateY(-1px);
-            color: #1e293b !important;
-            border-color: #94a3b8 !important;
-            background: #f8fafc !important;
-        }
-
-        .swal-ticket-popup .swal2-confirm:focus-visible,
-        .swal-ticket-popup .swal2-cancel:focus-visible {
-            outline: 3px solid rgba(37, 99, 235, 0.18) !important;
-            outline-offset: 2px !important;
-        }
-
-        .ticket-modal-status {
-            padding: 25px 20px 17px;
-            text-align: center;
-        }
-
-        .ticket-status-icon {
-            width: 72px;
-            height: 72px;
-            margin: 0 auto 12px;
-            display: grid;
-            place-items: center;
-            border-radius: 50%;
-            font-size: 2rem;
-            border: 4px solid;
-        }
-
-        .ticket-status-icon.completada {
-            color: #65b94a;
-            background: #f6fff2;
-            border-color: #d9efcf;
-        }
-
-        .ticket-status-icon.cancelada {
-            color: #dc3545;
-            background: #fff4f5;
-            border-color: #f3c9ce;
-        }
-
-        .ticket-modal-status h2 {
-            margin: 0;
-            color: #334155;
-            font-size: 1.65rem;
-            font-weight: 750;
-        }
-
-        .ticket-modal-status p {
-            margin: 5px 0 0;
-            color: #94a3b8;
-            font-size: .78rem;
-        }
-
-        .ticket-paper {
-            width: min(365px, calc(100% - 36px));
-            margin: 0 auto;
-            padding: 22px 24px 20px;
-            color: #3f3f46;
-            background: #ffffff;
-            border: 1px solid #e7ebf0;
-            border-radius: 4px;
-            box-shadow: 0 10px 28px rgba(15, 23, 42, .11);
-            font-family: "Courier New", Courier, monospace;
-            text-align: left;
-        }
-
-        .ticket-brand {
-            text-align: center;
-            margin-bottom: 8px;
-        }
-
-        .ticket-brand img {
-            display: block;
-            width: 48px;
-            height: 48px;
-            margin: 0 auto 6px;
-            object-fit: contain;
-        }
-
-        .ticket-brand-placeholder {
-            width: 46px;
-            height: 46px;
-            margin: 0 auto 6px;
-            display: grid;
-            place-items: center;
-            border-radius: 50%;
-            color: #2563eb;
-            background: #edf4ff;
-            font-size: 1.2rem;
-        }
-
-        .ticket-brand-name {
-            color: #30343b;
-            font-family: "Segoe UI", Arial, sans-serif;
-            font-size: 1rem;
-            font-weight: 900;
-            letter-spacing: .04em;
-            text-transform: uppercase;
-        }
-
-        .ticket-number-main {
-            margin-top: 4px;
-            color: #52525b;
-            font-size: .78rem;
-            text-align: center;
-        }
-
-        .ticket-date {
-            margin-top: 3px;
-            color: #71717a;
-            font-size: .72rem;
-            text-align: center;
-        }
-
-        .ticket-divider {
-            margin: 11px 0;
-            border-top: 2px dotted #3f3f46;
-        }
-
-        .ticket-products {
-            display: grid;
-            gap: 10px;
-        }
-
-        .ticket-product {
-            display: grid;
-            gap: 3px;
-        }
-
-        .ticket-product-main {
-            display: grid;
-            grid-template-columns: minmax(0, 1fr) auto;
-            gap: 14px;
-            align-items: start;
-            color: #46464e;
-            font-size: .88rem;
-        }
-
-        .ticket-product-main span {
-            font-weight: 800;
-            overflow-wrap: anywhere;
-        }
-
-        .ticket-product-main strong {
-            font-weight: 500;
-            white-space: nowrap;
-        }
-
-        .ticket-product-unit {
-            color: #8a8a93;
-            font-size: .67rem;
-        }
-
-        .ticket-total-row,
-        .ticket-info-row {
-            display: flex;
-            justify-content: space-between;
-            gap: 14px;
-            align-items: baseline;
-        }
-
-        .ticket-total-row {
-            color: #404047;
-            font-size: 1rem;
-            font-weight: 900;
-        }
-
-        .ticket-info-list {
-            display: grid;
-            gap: 5px;
-            margin-top: 9px;
-            color: #6b6b73;
-            font-size: .78rem;
-        }
-
-        .ticket-info-row span:last-child {
-            color: #52525b;
-            text-align: right;
-            overflow-wrap: anywhere;
-        }
-
-        .ticket-sale-meta {
-            display: grid;
-            gap: 4px;
-            margin-top: 10px;
-            color: #7b7b84;
-            font-size: .67rem;
-        }
-
-        .ticket-footer {
-            margin-top: 12px;
-            text-align: center;
-            color: #6b6b73;
-        }
-
-        .ticket-footer strong {
-            display: block;
-            font-size: .98rem;
-            font-weight: 500;
-        }
-
-        .ticket-footer small {
-            display: block;
-            margin-top: 3px;
-            font-size: .61rem;
-        }
-
-        @media (max-width: 520px) {
-            .swal-ticket-popup .swal2-actions {
-                flex-direction: column;
-            }
-
-            .swal-ticket-popup .swal2-confirm,
-            .swal-ticket-popup .swal2-deny {
-                width: 100%;
-            }
-
-            .ticket-paper {
-                width: calc(100% - 24px);
-                padding: 19px 17px;
-            }
-
-            .ticket-modal-status h2 {
-                font-size: 1.4rem;
-            }
-        }
-    </style>
+    <link rel="stylesheet" href="css/historial_ventas.css">
 </head>
 <body>
-    <div class="main-content">
+    <!-- historial-ventas-acciones-v4 -->
+    <?php require_once __DIR__ . '/includes/sidebar.php'; ?>
+
+    <main class="main-content ventas-page">
+        <div class="ventas-shell">
         <div class="historial-card">
             <div class="historial-header">
                 <h1>
@@ -758,8 +185,8 @@ require_once 'includes/sidebar.php';
                             <option value="transferencia">Transferencia</option>
                         </select>
                     </div>
-                    <div class="filtro-group">
-                        <button class="btn-limpiar" id="btn-limpiar">
+                    <div class="filtro-group filtro-actions">
+                        <button type="button" class="btn-limpiar" id="btn-limpiar">
                             <i class="fas fa-eraser"></i> Limpiar
                         </button>
                     </div>
@@ -813,7 +240,8 @@ require_once 'includes/sidebar.php';
 
             <div class="pagination" id="pagination" style="display: none;"></div>
         </div>
-    </div>
+        </div>
+    </main>
 
     <script>
     let currentPage = 1;
@@ -926,41 +354,78 @@ require_once 'includes/sidebar.php';
             const tieneEmail = venta.cliente_id !== null && venta.cliente_id !== undefined && parseInt(venta.cliente_id) > 0;
             
             // Cliente nombre: si es null mostrar "Venta al público"
-            const clienteNombre = venta.cliente_nombre && venta.cliente_nombre.trim() !== '' ? venta.cliente_nombre : 'Venta al público';
-            
+            const clienteNombre = venta.cliente_nombre && venta.cliente_nombre.trim() !== ''
+                ? venta.cliente_nombre
+                : 'Venta al público';
+
+            const metodoPago = String(venta.metodo_pago || '').toLowerCase();
+            const metodoClase = ['efectivo', 'tarjeta', 'transferencia'].includes(metodoPago)
+                ? metodoPago
+                : 'otro';
+
+            const estadoVenta = String(venta.estado || '').toLowerCase();
+
             row.innerHTML = `
-                <td class="ticket-number">#${String(venta.id).padStart(8, '0')}</td>
-                <td style="white-space: nowrap;">${new Date(venta.fecha_venta).toLocaleString()}</td>
-                <td><i class="fas fa-user" style="color: #3b82f6; margin-right: 6px;"></i>${escapeHtml(clienteNombre)}</td>
-                <td><i class="fas fa-store" style="color: #8b5cf6; margin-right: 6px;"></i>${escapeHtml(venta.usuario_nombre)}</td>
-                <td><strong style="color: #16a34a;">$${parseFloat(venta.total).toFixed(2)}</strong></td>
-                <td><span style="background: #e2e8f0; padding: 4px 8px; border-radius: 12px; font-size: 0.7rem;">${venta.metodo_pago.charAt(0).toUpperCase() + venta.metodo_pago.slice(1)}</span></td>
-                <td><span class="badge badge-${venta.estado}">${venta.estado}</span></td>
-                <td class="acciones">
-                    <button class="btn-icon btn-ver" onclick="event.stopPropagation(); verDetalle(${venta.id})">
-                        <i class="fas fa-eye"></i> Ver
-                    </button>
-                    ${venta.estado === 'completada' ? `
-                        <button class="btn-icon btn-cancelar" onclick="event.stopPropagation(); cancelarVenta(${venta.id})">
-                            <i class="fas fa-times"></i> Cancelar
+                <td data-label="Ticket" class="ticket-number">
+                    #${String(venta.id).padStart(8, '0')}
+                </td>
+                <td data-label="Fecha" class="venta-fecha">
+                    ${new Date(venta.fecha_venta).toLocaleString('es-MX')}
+                </td>
+                <td data-label="Cliente">
+                    <span class="venta-persona">
+                        <i class="fas fa-user" style="color:#2563eb;"></i>
+                        <span>${escapeHtml(clienteNombre)}</span>
+                    </span>
+                </td>
+                <td data-label="Vendedor">
+                    <span class="venta-persona">
+                        <i class="fas fa-store" style="color:#7c3aed;"></i>
+                        <span>${escapeHtml(venta.usuario_nombre)}</span>
+                    </span>
+                </td>
+                <td data-label="Total">
+                    <strong class="venta-total">$${parseFloat(venta.total).toFixed(2)}</strong>
+                </td>
+                <td data-label="Método">
+                    <span class="payment-badge payment-${metodoClase}">
+                        ${escapeHtml(capitalizarTexto(metodoPago))}
+                    </span>
+                </td>
+                <td data-label="Estado">
+                    <span class="badge badge-${estadoVenta}">
+                        ${escapeHtml(capitalizarTexto(estadoVenta))}
+                    </span>
+                </td>
+                <td data-label="Acciones" class="acciones">
+                    <div class="acciones-list">
+                        <button type="button" class="btn-icon btn-ver" onclick="event.stopPropagation(); verDetalle(${venta.id})">
+                            <i class="fas fa-eye"></i> Ver
                         </button>
-                        ${puedeDevolver ? 
-                            `<button class="btn-icon btn-devolver" onclick="event.stopPropagation(); devolverArticulos(${venta.id})">
-                                <i class="fas fa-undo-alt"></i> Devolver
-                            </button>` : 
-                            `<button class="btn-icon btn-devolver-disabled" disabled style="opacity:0.5; cursor:not-allowed;" title="Solo se puede devolver si hay más de un producto o más de una unidad">
-                                <i class="fas fa-undo-alt"></i> Devolver
-                            </button>`
+                        ${estadoVenta === 'completada' ? `
+                            <button type="button" class="btn-icon btn-cancelar" onclick="event.stopPropagation(); cancelarVenta(${venta.id})">
+                                <i class="fas fa-times"></i> Cancelar
+                            </button>
+                            ${puedeDevolver
+                                ? `<button type="button" class="btn-icon btn-devolver" onclick="event.stopPropagation(); devolverArticulos(${venta.id})">
+                                    <i class="fas fa-undo-alt"></i> Devolver
+                                   </button>`
+                                : `<button type="button" class="btn-icon btn-devolver-disabled" disabled
+                                           title="Solo se puede devolver si hay más de un producto o más de una unidad">
+                                    <i class="fas fa-undo-alt"></i> Devolver
+                                   </button>`
+                            }
+                        ` : ''}
+                        ${tieneEmail
+                            ? `<button type="button" class="btn-icon btn-email" onclick="event.stopPropagation(); reenviarTicket(${venta.id})">
+                                <i class="fas fa-envelope"></i> Ticket
+                               </button>`
+                            : `<button type="button" class="btn-icon btn-email-disabled" disabled
+                                       title="Cliente sin correo registrado">
+                                <i class="fas fa-envelope"></i> Ticket
+                               </button>`
                         }
-                    ` : ''}
-                    ${tieneEmail ? 
-                        `<button class="btn-icon btn-email" onclick="event.stopPropagation(); reenviarTicket(${venta.id})">
-                            <i class="fas fa-envelope"></i> Ticket
-                        </button>` : 
-                        `<button class="btn-icon btn-email-disabled" disabled style="opacity:0.5; cursor:not-allowed;" title="Cliente sin correo registrado">
-                            <i class="fas fa-envelope"></i> Ticket
-                        </button>`
-                    }
+                    </div>
                 </td>
             `;
         });
@@ -980,7 +445,9 @@ require_once 'includes/sidebar.php';
         pagination.innerHTML = '';
         
         const prevBtn = document.createElement('button');
+        prevBtn.type = 'button';
         prevBtn.innerHTML = '<i class="fas fa-chevron-left"></i>';
+        prevBtn.disabled = currentPage <= 1;
         prevBtn.onclick = () => {
             if (currentPage > 1) {
                 currentPage--;
@@ -994,6 +461,7 @@ require_once 'includes/sidebar.php';
         
         for (let i = startPage; i <= endPage; i++) {
             const btn = document.createElement('button');
+            btn.type = 'button';
             btn.textContent = i;
             btn.className = i === currentPage ? 'active' : '';
             btn.onclick = () => {
@@ -1004,7 +472,9 @@ require_once 'includes/sidebar.php';
         }
         
         const nextBtn = document.createElement('button');
+        nextBtn.type = 'button';
         nextBtn.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        nextBtn.disabled = currentPage >= total;
         nextBtn.onclick = () => {
             if (currentPage < total) {
                 currentPage++;
@@ -1683,9 +1153,14 @@ require_once 'includes/sidebar.php';
     }
 
     // Event listeners
+    let temporizadorBusqueda = null;
+
     document.getElementById('buscar').addEventListener('input', () => {
-        currentPage = 1;
-        cargarVentas();
+        clearTimeout(temporizadorBusqueda);
+        temporizadorBusqueda = setTimeout(() => {
+            currentPage = 1;
+            cargarVentas();
+        }, 320);
     });
     
     document.getElementById('fecha-inicio').addEventListener('change', () => {

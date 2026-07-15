@@ -481,74 +481,125 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action'])) {
     }
 }
 
-// Configuración de paginación y búsqueda
-$registros_por_pagina = isset($_GET['limite']) ? (int)$_GET['limite'] : 10;
-$pagina_actual = isset($_GET['pagina']) ? (int)$_GET['pagina'] : 1;
-$offset = ($pagina_actual - 1) * $registros_por_pagina;
-$busqueda = isset($_GET['busqueda']) ? $_GET['busqueda'] : '';
-$categoria_filtro = isset($_GET['categoria']) ? (int)$_GET['categoria'] : 0;
-$estado_filtro = isset($_GET['estado']) ? $_GET['estado'] : 'todos';
+// Configuración segura de paginación y búsqueda
+$limites_permitidos = [10, 20, 50, 100];
+$registros_por_pagina = isset($_GET['limite']) ? (int) $_GET['limite'] : 10;
+if (!in_array($registros_por_pagina, $limites_permitidos, true)) {
+    $registros_por_pagina = 10;
+}
+
+$pagina_actual = isset($_GET['pagina']) ? max(1, (int) $_GET['pagina']) : 1;
+$busqueda = isset($_GET['busqueda']) ? trim((string) $_GET['busqueda']) : '';
+$categoria_filtro = isset($_GET['categoria']) ? max(0, (int) $_GET['categoria']) : 0;
+$estado_filtro = isset($_GET['estado']) ? (string) $_GET['estado'] : 'todos';
+
+if (!in_array($estado_filtro, ['todos', 'activo', 'inactivo'], true)) {
+    $estado_filtro = 'todos';
+}
 
 // Construir consulta de productos
 $where = [];
 $params = [];
-$types = "";
+$types = '';
 
-if (!empty($busqueda)) {
-    $where[] = "(p.nombre LIKE ? OR p.descripcion LIKE ?)";
-    $params[] = "%$busqueda%";
-    $params[] = "%$busqueda%";
-    $types .= "ss";
+if ($busqueda !== '') {
+    $where[] = '(p.nombre LIKE ? OR p.descripcion LIKE ?)';
+    $params[] = '%' . $busqueda . '%';
+    $params[] = '%' . $busqueda . '%';
+    $types .= 'ss';
 }
 
 if ($categoria_filtro > 0) {
-    $where[] = "p.categoria_id = ?";
+    $where[] = 'p.categoria_id = ?';
     $params[] = $categoria_filtro;
-    $types .= "i";
+    $types .= 'i';
 }
 
 if ($estado_filtro !== 'todos') {
-    $where[] = "p.estado = ?";
+    $where[] = 'p.estado = ?';
     $params[] = $estado_filtro;
-    $types .= "s";
+    $types .= 's';
 }
 
-$where_sql = !empty($where) ? "WHERE " . implode(" AND ", $where) : "";
+$where_sql = !empty($where) ? 'WHERE ' . implode(' AND ', $where) : '';
 
 // Contar total
-$count_sql = "SELECT COUNT(*) as total FROM productos p $where_sql";
+$count_sql = "SELECT COUNT(*) AS total FROM productos p $where_sql";
 $count_stmt = $conn->prepare($count_sql);
+
+if (!$count_stmt) {
+    die('Error al preparar el conteo de productos: ' . $conn->error);
+}
+
 if (!empty($params)) {
     $count_stmt->bind_param($types, ...$params);
 }
+
 $count_stmt->execute();
 $count_result = $count_stmt->get_result();
-$total_registros = $count_result->fetch_assoc()['total'];
-$total_paginas = ceil($total_registros / $registros_por_pagina);
+$total_registros = (int) $count_result->fetch_assoc()['total'];
 $count_stmt->close();
 
+$total_paginas = max(1, (int) ceil($total_registros / $registros_por_pagina));
+if ($pagina_actual > $total_paginas) {
+    $pagina_actual = $total_paginas;
+}
+
+$offset = ($pagina_actual - 1) * $registros_por_pagina;
+
 // Obtener productos
-$sql = "SELECT p.*, c.nombre as categoria_nombre, prov.nombre as proveedor_nombre 
-        FROM productos p 
-        LEFT JOIN categorias_productos c ON p.categoria_id = c.id 
-        LEFT JOIN proveedores prov ON p.proveedor_id = prov.id 
-        $where_sql 
-        ORDER BY p.fecha_registro DESC 
+$sql = "SELECT
+            p.*,
+            c.nombre AS categoria_nombre,
+            prov.nombre AS proveedor_nombre
+        FROM productos p
+        LEFT JOIN categorias_productos c ON p.categoria_id = c.id
+        LEFT JOIN proveedores prov ON p.proveedor_id = prov.id
+        $where_sql
+        ORDER BY p.fecha_registro DESC
         LIMIT ? OFFSET ?";
 
-$params[] = $registros_por_pagina;
-$params[] = $offset;
-$types .= "ii";
+$params_consulta = $params;
+$types_consulta = $types;
+$params_consulta[] = $registros_por_pagina;
+$params_consulta[] = $offset;
+$types_consulta .= 'ii';
 
 $stmt = $conn->prepare($sql);
-$stmt->bind_param($types, ...$params);
+if (!$stmt) {
+    die('Error al preparar la consulta de productos: ' . $conn->error);
+}
+
+$stmt->bind_param($types_consulta, ...$params_consulta);
 $stmt->execute();
 $result = $stmt->get_result();
+
 $productos = [];
 while ($row = $result->fetch_assoc()) {
     $productos[] = $row;
 }
 $stmt->close();
+
+$query_base = [
+    'busqueda' => $busqueda,
+    'categoria' => $categoria_filtro,
+    'estado' => $estado_filtro,
+    'limite' => $registros_por_pagina
+];
+
+function construirUrlProductos($base, $cambios = [])
+{
+    $parametros = array_merge($base, $cambios);
+
+    foreach ($parametros as $clave => $valor) {
+        if ($valor === '' || $valor === null || $valor === 'todos' || $valor === 0 || $valor === '0') {
+            unset($parametros[$clave]);
+        }
+    }
+
+    return '?' . http_build_query($parametros) . '#lista-productos';
+}
+
 ?>
 
 <!DOCTYPE html>
@@ -567,129 +618,7 @@ $stmt->close();
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/admin-lte@3.2/dist/css/adminlte.min.css">
     <!-- SweetAlert2 -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css">
-    <style>
-        .main-content {
-            margin-left: 280px;
-            padding: 20px 30px;
-            transition: margin-left 0.3s ease;
-        }
-        
-        @media (max-width: 768px) {
-            .main-content {
-                margin-left: 0;
-                padding: 15px;
-            }
-        }
-        
-        .card {
-            box-shadow: 0 0 1px rgba(0,0,0,.125), 0 1px 3px rgba(0,0,0,.2);
-            margin-bottom: 1rem;
-        }
-        
-        .card-header {
-            background-color: transparent;
-            border-bottom: 1px solid rgba(0,0,0,.125);
-            padding: 0.75rem 1.25rem;
-        }
-        
-        .card-title {
-            font-weight: 600;
-            font-size: 1.1rem;
-        }
-        
-        .select-with-add {
-            display: flex;
-            gap: 8px;
-            align-items: center;
-        }
-        
-        .select-with-add select {
-            flex: 1;
-        }
-        
-        .btn-add {
-            padding: 6px 12px;
-            background: #28a745;
-            color: white;
-            border: none;
-            border-radius: 0.25rem;
-            cursor: pointer;
-            transition: all 0.3s;
-        }
-        
-        .btn-add:hover {
-            background: #218838;
-            transform: translateY(-1px);
-        }
-        
-        .producto-imagen {
-            width: 50px;
-            height: 50px;
-            object-fit: cover;
-            border-radius: 0.25rem;
-            background-color: #f8f9fa;
-        }
-        
-        .preview-image {
-            max-width: 150px;
-            max-height: 150px;
-            border-radius: 0.25rem;
-            margin-top: 10px;
-        }
-        
-        .filter-card {
-            margin-bottom: 20px;
-        }
-        
-        @media (max-width: 768px) {
-            .action-buttons {
-                flex-direction: column;
-            }
-            
-            .action-btn {
-                width: 100%;
-                text-align: center;
-            }
-            
-            .select-with-add {
-                flex-direction: column;
-            }
-            
-            .btn-add {
-                width: 100%;
-            }
-        }
-        
-        .table-responsive {
-            overflow-x: auto;
-        }
-        
-        .table {
-            width: 100%;
-            margin-bottom: 0;
-        }
-        
-        .alert {
-            animation: fadeInDown 0.5s ease;
-        }
-        
-        @keyframes fadeInDown {
-            from {
-                opacity: 0;
-                transform: translateY(-20px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-        
-        .page-title h2 {
-            font-size: 1.75rem;
-            font-weight: 600;
-            margin-bottom: 0.25rem;
-        }
-    </style>
+    <link rel="stylesheet" href="css/productos.css">
 </head>
 <body>
     <div class="dashboard-layout">
@@ -697,40 +626,51 @@ $stmt->close();
 
         <main class="main-content">
             <div class="container-fluid p-0">
-                <!-- Header -->
-                <div class="row mb-4">
-                    <div class="col-12">
-                        <div class="page-title">
-                            <h2>Gestión de Productos</h2>
+                <div class="products-page">
+                    <!-- Encabezado -->
+                    <header class="module-header">
+                        <div class="module-heading">
+                            <span class="module-heading-icon" aria-hidden="true">
+                                <i class="fas fa-boxes-stacked"></i>
+                            </span>
+                            <div>
+                                <h1>Gestión de productos</h1>
+                                <p>Administra el catálogo, precios, existencias y proveedores.</p>
+                            </div>
                         </div>
-                    </div>
-                </div>
+                    </header>
 
-                <!-- Alertas -->
-                <?php if ($error): ?>
-                    <div class="alert alert-danger alert-dismissible fade show" role="alert">
-                        <i class="fas fa-exclamation-circle"></i> <?php echo $error; ?>
-                        <button type="button" class="close" data-dismiss="alert" aria-label="Close">
-                            <span aria-hidden="true">&times;</span>
-                        </button>
-                    </div>
-                <?php endif; ?>
-                
-                <?php if ($success): ?>
-                    <div class="alert alert-success alert-dismissible fade show" role="alert">
-                        <i class="fas fa-check-circle"></i> <?php echo $success; ?>
-                        <button type="button" class="close" data-dismiss="alert" aria-label="Close">
-                            <span aria-hidden="true">&times;</span>
-                        </button>
-                    </div>
-                <?php endif; ?>
+                    <!-- Alertas -->
+                    <?php if ($error): ?>
+                        <div class="alert alert-danger alert-dismissible fade show module-alert" role="alert">
+                            <i class="fas fa-circle-exclamation" aria-hidden="true"></i>
+                            <span><?php echo htmlspecialchars((string) $error, ENT_QUOTES, 'UTF-8'); ?></span>
+                            <button type="button" class="close ml-auto" data-dismiss="alert" aria-label="Cerrar">
+                                <span aria-hidden="true">&times;</span>
+                            </button>
+                        </div>
+                    <?php endif; ?>
+
+                    <?php if ($success): ?>
+                        <div class="alert alert-success alert-dismissible fade show module-alert" role="alert">
+                            <i class="fas fa-circle-check" aria-hidden="true"></i>
+                            <span><?php echo htmlspecialchars((string) $success, ENT_QUOTES, 'UTF-8'); ?></span>
+                            <button type="button" class="close ml-auto" data-dismiss="alert" aria-label="Cerrar">
+                                <span aria-hidden="true">&times;</span>
+                            </button>
+                        </div>
+                    <?php endif; ?>
 
                 <!-- Formulario de Nuevo Producto -->
-                <div class="card card-primary card-outline">
+                <div class="card module-card create-card" id="nuevoProductoCard">
                     <div class="card-header">
-                        <h3 class="card-title">
-                            <i class="fas fa-plus-circle"></i> Nuevo Producto
-                        </h3>
+                        <div>
+                            <h3 class="card-title">
+                                <i class="fas fa-plus-circle"></i> Nuevo producto
+                            </h3>
+                            <p class="card-description">Registra la información comercial y el stock inicial.</p>
+                        </div>
+                        <span class="section-chip">Alta de inventario</span>
                     </div>
                     <div class="card-body">
                         <form method="POST" enctype="multipart/form-data" id="nuevoProductoForm">
@@ -826,7 +766,7 @@ $stmt->close();
                                 <textarea name="descripcion" class="form-control" rows="3" placeholder="Descripción del producto..."></textarea>
                             </div>
                             
-                            <div class="form-group text-right">
+                            <div class="form-group form-actions">
                                 <button type="submit" class="btn btn-primary">
                                     <i class="fas fa-save"></i> Guardar Producto
                                 </button>
@@ -839,74 +779,293 @@ $stmt->close();
                 </div>
 
                 <!-- Filtros de búsqueda -->
-                <div class="card filter-card">
+                <section class="card module-card filter-card" id="filtros-productos">
                     <div class="card-header">
-                        <h3 class="card-title">
-                            <i class="fas fa-filter"></i> Filtros de búsqueda
-                        </h3>
-                    </div>
-                    <div class="card-body">
-                        <div class="row">
-                            <div class="col-md-4">
-                                <div class="form-group">
-                                    <label><i class="fas fa-search"></i> Buscar producto</label>
-                                    <input type="text" id="searchInput" class="form-control" 
-                                           placeholder="Nombre o descripción..." 
-                                           value="<?php echo htmlspecialchars($busqueda); ?>"
-                                           onkeyup="buscarProductos()">
-                                </div>
-                            </div>
-                            <div class="col-md-3">
-                                <div class="form-group">
-                                    <label><i class="fas fa-list"></i> Categoría</label>
-                                    <select id="categoriaFilter" class="form-control" onchange="buscarProductos()">
-                                        <option value="0">Todas las categorías</option>
-                                        <?php foreach ($categorias as $cat): ?>
-                                            <option value="<?php echo $cat['id']; ?>" 
-                                                <?php echo $categoria_filtro == $cat['id'] ? 'selected' : ''; ?>>
-                                                <?php echo htmlspecialchars($cat['nombre']); ?>
-                                            </option>
-                                        <?php endforeach; ?>
-                                    </select>
-                                </div>
-                            </div>
-                            <div class="col-md-3">
-                                <div class="form-group">
-                                    <label><i class="fas fa-circle"></i> Estado</label>
-                                    <select id="estadoFilter" class="form-control" onchange="buscarProductos()">
-                                        <option value="todos" <?php echo $estado_filtro == 'todos' ? 'selected' : ''; ?>>Todos</option>
-                                        <option value="activo" <?php echo $estado_filtro == 'activo' ? 'selected' : ''; ?>>Activos</option>
-                                        <option value="inactivo" <?php echo $estado_filtro == 'inactivo' ? 'selected' : ''; ?>>Inactivos</option>
-                                    </select>
-                                </div>
-                            </div>
-                            <div class="col-md-2">
-                                <div class="form-group">
-                                    <label>&nbsp;</label>
-                                    <button class="btn btn-secondary btn-block" onclick="limpiarFiltros()">
-                                        <i class="fas fa-eraser"></i> Limpiar
-                                    </button>
-                                </div>
-                            </div>
+                        <div>
+                            <h3 class="card-title">
+                                <i class="fas fa-filter"></i> Filtros
+                            </h3>
+                            <p class="card-description">Busca por nombre, descripción, categoría o estado.</p>
                         </div>
                     </div>
-                </div>
 
-                <!-- Tabla de Productos -->
-                <div class="card">
-                    <div class="card-header">
-                        <h3 class="card-title">
-                            <i class="fas fa-boxes"></i> Lista de Productos
-                            <span class="badge badge-info ml-2">Total: <?php echo $total_registros; ?></span>
-                        </h3>
-                    </div>
-                    <div class="card-body p-0">
-                        <div class="table-responsive">
-                            <div id="tablaProductos">
-                                <?php include 'productos_table.php'; ?>
+                    <div class="card-body">
+                        <div class="filters-grid">
+                            <div class="form-group">
+                                <label for="searchInput"><i class="fas fa-search"></i> Buscar producto</label>
+                                <input
+                                    type="search"
+                                    id="searchInput"
+                                    class="form-control"
+                                    placeholder="Nombre o descripción..."
+                                    value="<?php echo htmlspecialchars($busqueda, ENT_QUOTES, 'UTF-8'); ?>"
+                                    autocomplete="off"
+                                    oninput="buscarProductos()"
+                                >
                             </div>
+
+                            <div class="form-group">
+                                <label for="categoriaFilter"><i class="fas fa-list"></i> Categoría</label>
+                                <select id="categoriaFilter" class="form-control" onchange="buscarProductos(true)">
+                                    <option value="0">Todas las categorías</option>
+                                    <?php foreach ($categorias as $cat): ?>
+                                        <option
+                                            value="<?php echo (int) $cat['id']; ?>"
+                                            <?php echo $categoria_filtro === (int) $cat['id'] ? 'selected' : ''; ?>
+                                        >
+                                            <?php echo htmlspecialchars((string) $cat['nombre'], ENT_QUOTES, 'UTF-8'); ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="estadoFilter"><i class="fas fa-circle"></i> Estado</label>
+                                <select id="estadoFilter" class="form-control" onchange="buscarProductos(true)">
+                                    <option value="todos" <?php echo $estado_filtro === 'todos' ? 'selected' : ''; ?>>Todos</option>
+                                    <option value="activo" <?php echo $estado_filtro === 'activo' ? 'selected' : ''; ?>>Activos</option>
+                                    <option value="inactivo" <?php echo $estado_filtro === 'inactivo' ? 'selected' : ''; ?>>Inactivos</option>
+                                </select>
+                            </div>
+
+                            <button type="button" class="btn btn-secondary filter-clear" onclick="limpiarFiltros()">
+                                <i class="fas fa-eraser"></i> Limpiar
+                            </button>
                         </div>
                     </div>
+                </section>
+
+                <!-- Lista de productos -->
+                <section class="card module-card product-list-card" id="lista-productos">
+                    <div class="card-header">
+                        <div class="list-heading-group">
+                            <div class="list-title-row">
+                                <h3 class="card-title">
+                                    <i class="fas fa-boxes"></i> Lista de productos
+                                </h3>
+                                <span class="section-chip">
+                                    <?php echo number_format($total_registros); ?>
+                                    <?php echo $total_registros === 1 ? 'registro' : 'registros'; ?>
+                                </span>
+                            </div>
+                            <p class="card-description">Resultados de acuerdo con los filtros seleccionados.</p>
+                        </div>
+                    </div>
+
+                    <div class="card-body">
+                        <?php if (!empty($productos)): ?>
+                            <div class="products-table-wrap" id="tablaProductos">
+                                <table class="table products-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Producto</th>
+                                            <th>Categoría</th>
+                                            <th>Proveedor</th>
+                                            <th>Compra</th>
+                                            <th>Venta</th>
+                                            <th>Existencia</th>
+                                            <th>Estado</th>
+                                            <th>Acciones</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <?php foreach ($productos as $producto): ?>
+                                            <?php
+                                            $stock_actual = (int) $producto['stock'];
+                                            $stock_minimo_actual = (int) $producto['stock_minimo'];
+                                            $stock_bajo = $stock_actual <= $stock_minimo_actual;
+                                            $producto_activo = $producto['estado'] === 'activo';
+                                            ?>
+                                            <tr>
+                                                <td data-label="Producto">
+                                                    <div class="product-cell">
+                                                        <div class="producto-imagen">
+                                                            <?php if (!empty($producto['foto']) && file_exists($producto['foto'])): ?>
+                                                                <img
+                                                                    src="<?php echo htmlspecialchars((string) $producto['foto'], ENT_QUOTES, 'UTF-8'); ?>"
+                                                                    alt="<?php echo htmlspecialchars((string) $producto['nombre'], ENT_QUOTES, 'UTF-8'); ?>"
+                                                                    loading="lazy"
+                                                                >
+                                                            <?php else: ?>
+                                                                <i class="fas fa-box-open" aria-hidden="true"></i>
+                                                            <?php endif; ?>
+                                                        </div>
+
+                                                        <div class="product-info">
+                                                            <span class="product-name">
+                                                                <?php echo htmlspecialchars((string) $producto['nombre'], ENT_QUOTES, 'UTF-8'); ?>
+                                                            </span>
+                                                            <span class="product-description">
+                                                                <?php echo htmlspecialchars((string) ($producto['descripcion'] ?: 'Sin descripción'), ENT_QUOTES, 'UTF-8'); ?>
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                </td>
+
+                                                <td data-label="Categoría">
+                                                    <?php echo htmlspecialchars((string) ($producto['categoria_nombre'] ?: 'Sin categoría'), ENT_QUOTES, 'UTF-8'); ?>
+                                                </td>
+
+                                                <td data-label="Proveedor">
+                                                    <?php echo htmlspecialchars((string) ($producto['proveedor_nombre'] ?: 'Sin proveedor'), ENT_QUOTES, 'UTF-8'); ?>
+                                                </td>
+
+                                                <td data-label="Compra">
+                                                    <span class="money">$<?php echo number_format((float) $producto['precio_compra'], 2); ?></span>
+                                                </td>
+
+                                                <td data-label="Venta">
+                                                    <span class="money">$<?php echo number_format((float) $producto['precio_venta'], 2); ?></span>
+                                                </td>
+
+                                                <td data-label="Existencia">
+                                                    <span class="stock-box <?php echo $stock_bajo ? 'low' : ''; ?>">
+                                                        <i class="fas <?php echo $stock_bajo ? 'fa-triangle-exclamation' : 'fa-cube'; ?>"></i>
+                                                        <?php echo $stock_actual; ?> / mín. <?php echo $stock_minimo_actual; ?>
+                                                    </span>
+                                                </td>
+
+                                                <td data-label="Estado">
+                                                    <span class="status-badge <?php echo $producto_activo ? 'active' : 'inactive'; ?>">
+                                                        <?php echo $producto_activo ? 'Activo' : 'Inactivo'; ?>
+                                                    </span>
+                                                </td>
+
+                                                <td data-label="Acciones">
+                                                    <div class="product-actions">
+                                                        <button
+                                                            type="button"
+                                                            class="product-action edit"
+                                                            onclick="editProducto(<?php echo (int) $producto['id']; ?>)"
+                                                            title="Editar producto"
+                                                        >
+                                                            <i class="fas fa-pen"></i><span></span>
+                                                        </button>
+
+                                                        <button
+                                                            type="button"
+                                                            class="product-action stock"
+                                                            onclick='openStockModal(
+                                                                <?php echo (int) $producto['id']; ?>,
+                                                                <?php echo json_encode((string) $producto['nombre'], JSON_UNESCAPED_UNICODE | JSON_HEX_APOS | JSON_HEX_QUOT); ?>,
+                                                                <?php echo $stock_actual; ?>
+                                                            )'
+                                                            title="Agregar stock"
+                                                        >
+                                                            <i class="fas fa-plus"></i><span></span>
+                                                        </button>
+
+                                                        <button
+                                                            type="button"
+                                                            class="product-action adjust"
+                                                            onclick='openAjusteModal(
+                                                                <?php echo (int) $producto['id']; ?>,
+                                                                <?php echo json_encode((string) $producto['nombre'], JSON_UNESCAPED_UNICODE | JSON_HEX_APOS | JSON_HEX_QUOT); ?>,
+                                                                <?php echo $stock_actual; ?>,
+                                                                <?php echo $stock_minimo_actual; ?>
+                                                            )'
+                                                            title="Ajustar inventario"
+                                                        >
+                                                            <i class="fas fa-sliders"></i><span></span>
+                                                        </button>
+
+                                                        <button
+                                                            type="button"
+                                                            class="product-action <?php echo $producto_activo ? 'disable' : 'enable'; ?>"
+                                                            onclick="toggleStatus(
+                                                                <?php echo (int) $producto['id']; ?>,
+                                                                '<?php echo $producto_activo ? 'inactivo' : 'activo'; ?>'
+                                                            )"
+                                                            title="<?php echo $producto_activo ? 'Desactivar producto' : 'Activar producto'; ?>"
+                                                        >
+                                                            <i class="fas <?php echo $producto_activo ? 'fa-ban' : 'fa-check'; ?>"></i>
+                                                            <span><?php echo $producto_activo ? '' : ''; ?></span>
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        <?php endforeach; ?>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <?php
+                            $registro_desde = $total_registros > 0 ? $offset + 1 : 0;
+                            $registro_hasta = min($offset + count($productos), $total_registros);
+                            ?>
+                            <footer class="table-footer">
+                                <div class="table-footer-left">
+                                    <label class="limit-control" for="registrosPorPagina">
+                                        <span>Mostrar</span>
+                                        <select id="registrosPorPagina" onchange="cambiarLimite()">
+                                            <?php foreach ($limites_permitidos as $limite): ?>
+                                                <option value="<?php echo $limite; ?>" <?php echo $registros_por_pagina === $limite ? 'selected' : ''; ?>>
+                                                    <?php echo $limite; ?>
+                                                </option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                        <span>registros</span>
+                                    </label>
+
+                                    <span class="table-info">
+                                        <span>Mostrando</span>
+                                        <strong><?php echo $registro_desde; ?>–<?php echo $registro_hasta; ?></strong>
+                                        <span>de</span>
+                                        <strong><?php echo number_format($total_registros); ?></strong>
+                                    </span>
+                                </div>
+
+                                <?php if ($total_paginas > 1): ?>
+                                    <nav aria-label="Paginación de productos">
+                                        <ul class="pagination">
+                                            <li class="page-item <?php echo $pagina_actual <= 1 ? 'disabled' : ''; ?>">
+                                                <a
+                                                    class="page-link"
+                                                    href="<?php echo htmlspecialchars(construirUrlProductos($query_base, ['pagina' => max(1, $pagina_actual - 1)]), ENT_QUOTES, 'UTF-8'); ?>"
+                                                    aria-label="Página anterior"
+                                                >
+                                                    <i class="fas fa-chevron-left"></i>
+                                                </a>
+                                            </li>
+
+                                            <?php
+                                            $inicio_paginacion = max(1, $pagina_actual - 2);
+                                            $fin_paginacion = min($total_paginas, $pagina_actual + 2);
+                                            for ($pagina = $inicio_paginacion; $pagina <= $fin_paginacion; $pagina++):
+                                            ?>
+                                                <li class="page-item <?php echo $pagina === $pagina_actual ? 'active' : ''; ?>">
+                                                    <a
+                                                        class="page-link"
+                                                        href="<?php echo htmlspecialchars(construirUrlProductos($query_base, ['pagina' => $pagina]), ENT_QUOTES, 'UTF-8'); ?>"
+                                                        <?php echo $pagina === $pagina_actual ? 'aria-current="page"' : ''; ?>
+                                                    >
+                                                        <?php echo $pagina; ?>
+                                                    </a>
+                                                </li>
+                                            <?php endfor; ?>
+
+                                            <li class="page-item <?php echo $pagina_actual >= $total_paginas ? 'disabled' : ''; ?>">
+                                                <a
+                                                    class="page-link"
+                                                    href="<?php echo htmlspecialchars(construirUrlProductos($query_base, ['pagina' => min($total_paginas, $pagina_actual + 1)]), ENT_QUOTES, 'UTF-8'); ?>"
+                                                    aria-label="Página siguiente"
+                                                >
+                                                    <i class="fas fa-chevron-right"></i>
+                                                </a>
+                                            </li>
+                                        </ul>
+                                    </nav>
+                                <?php endif; ?>
+                            </footer>
+                        <?php else: ?>
+                            <div class="empty-products">
+                                <i class="fas fa-box-open" aria-hidden="true"></i>
+                                <strong>No se encontraron productos</strong>
+                                <span>Prueba cambiando o limpiando los filtros.</span>
+                            </div>
+                        <?php endif; ?>
+                    </div>
+                </section>
                 </div>
             </div>
         </main>
@@ -1224,33 +1383,67 @@ $stmt->close();
     <script>
         let ajusteData = {};
                 
-        function buscarProductos() {
+        if ('scrollRestoration' in history) {
+            history.scrollRestoration = 'manual';
+        }
+
+        function desplazarAlAnclaActual() {
+            if (!window.location.hash) {
+                return;
+            }
+
+            const destino = document.querySelector(window.location.hash);
+            if (!destino) {
+                return;
+            }
+
+            destino.scrollIntoView({
+                behavior: 'auto',
+                block: 'start'
+            });
+        }
+
+        function construirUrlProductos(pagina = 1) {
+            const params = new URLSearchParams();
+            const busqueda = document.getElementById('searchInput').value.trim();
+            const categoria = document.getElementById('categoriaFilter').value;
+            const estado = document.getElementById('estadoFilter').value;
+            const limiteSelect = document.getElementById('registrosPorPagina');
+            const limite = limiteSelect ? limiteSelect.value : '<?php echo $registros_por_pagina; ?>';
+
+            if (busqueda) params.set('busqueda', busqueda);
+            if (categoria && categoria !== '0') params.set('categoria', categoria);
+            if (estado && estado !== 'todos') params.set('estado', estado);
+            if (limite) params.set('limite', limite);
+            params.set('pagina', pagina);
+
+            return '?' + params.toString() + '#filtros-productos';
+        }
+
+        function buscarProductos(inmediato = false) {
             clearTimeout(window.searchTimeout);
-            window.searchTimeout = setTimeout(() => {
-                const busqueda = document.getElementById('searchInput').value;
-                const categoria = document.getElementById('categoriaFilter').value;
-                const estado = document.getElementById('estadoFilter').value;
-                const limite = document.getElementById('registrosPorPagina') ? document.getElementById('registrosPorPagina').value : 10;
-                const pagina = 1;
-                
-                fetch(`productos_ajax.php?action=list&busqueda=${encodeURIComponent(busqueda)}&categoria=${categoria}&estado=${estado}&pagina=${pagina}&limite=${limite}`)
-                    .then(response => response.text())
-                    .then(data => {
-                        document.getElementById('tablaProductos').innerHTML = data;
-                    })
-                    .catch(error => {
-                        Swal.fire('Error', 'Error al cargar los productos', 'error');
-                    });
-            }, 300);
+
+            const ejecutar = function() {
+                window.location.assign(construirUrlProductos(1));
+            };
+
+            if (inmediato) {
+                ejecutar();
+                return;
+            }
+
+            window.searchTimeout = setTimeout(ejecutar, 450);
         }
-        
+
+        function cambiarLimite() {
+            const url = construirUrlProductos(1).replace('#filtros-productos', '#lista-productos');
+            window.location.assign(url);
+        }
+
         function limpiarFiltros() {
-            document.getElementById('searchInput').value = '';
-            document.getElementById('categoriaFilter').value = '0';
-            document.getElementById('estadoFilter').value = 'todos';
-            buscarProductos();
+            window.location.assign('?pagina=1&limite=<?php echo $registros_por_pagina; ?>#filtros-productos');
         }
-        
+
         function previewImage(input, previewId) {
             if (input.files && input.files[0]) {
                 var reader = new FileReader();
@@ -1333,7 +1526,7 @@ $stmt->close();
             $('#cantidad_stock').val('');
             $('#nuevo_stock_preview').text('0 unidades');
             
-            $('#cantidad_stock').off('keyup').on('keyup', function() {
+            $('#cantidad_stock').off('input').on('input', function() {
                 const cantidad = parseInt($(this).val()) || 0;
                 const nuevoStock = parseInt(stockActual) + cantidad;
                 $('#nuevo_stock_preview').text(nuevoStock + ' unidades');
@@ -1373,7 +1566,7 @@ $stmt->close();
             if (tipo === 'stock_correccion') {
                 $('#campo_correccion_stock').show();
                 
-                $('#stock_fisico').off('keyup').on('keyup', function() {
+                $('#stock_fisico').off('input').on('input', function() {
                     const stockFisico = parseInt($(this).val()) || 0;
                     const diferencia = stockFisico - ajusteData.stock;
                     
@@ -1392,7 +1585,7 @@ $stmt->close();
             } else if (tipo === 'stock_minimo') {
                 $('#campo_stock_minimo').show();
                 
-                $('#nuevo_stock_minimo').off('keyup').on('keyup', function() {
+                $('#nuevo_stock_minimo').off('input').on('input', function() {
                     const nuevoMinimo = parseInt($(this).val()) || 0;
                     if (nuevoMinimo !== ajusteData.stockMinimo) {
                         if (nuevoMinimo > ajusteData.stockMinimo) {
@@ -1720,6 +1913,13 @@ $stmt->close();
         
         $(document).ready(function() {
             $('[title]').tooltip();
+        });
+
+        window.addEventListener('load', function() {
+            requestAnimationFrame(function() {
+                desplazarAlAnclaActual();
+                setTimeout(desplazarAlAnclaActual, 120);
+            });
         });
     </script>
 </body>

@@ -771,10 +771,695 @@ body.sidebar-collapsed .main-content {
         display: none;
     }
 }
+
+/* =========================================================
+   REDISEÑO PROFESIONAL DEL SIDEBAR
+   Mantiene roles, permisos, colapsado, resize y modo móvil
+========================================================= */
+:root {
+    --sidebar-width: 280px;
+    --sidebar-collapsed-width: 78px;
+    --sidebar-bg: #101f3d;
+    --sidebar-bg-deep: #0b1730;
+    --sidebar-surface: rgba(255, 255, 255, .065);
+    --sidebar-surface-hover: rgba(255, 255, 255, .105);
+    --sidebar-active: #2563eb;
+    --sidebar-active-soft: rgba(37, 99, 235, .18);
+    --sidebar-text: #f8fafc;
+    --sidebar-muted: #aebbd0;
+    --sidebar-border: rgba(255, 255, 255, .09);
+    --sidebar-danger: #fb7185;
+    --sidebar-shadow: 8px 0 28px rgba(15, 23, 42, .16);
+}
+
+/* Contenedor */
+.sidebar {
+    width: var(--sidebar-width);
+    background:
+        linear-gradient(180deg, rgba(255,255,255,.025), transparent 28%),
+        linear-gradient(180deg, var(--sidebar-bg) 0%, var(--sidebar-bg-deep) 100%);
+    box-shadow: var(--sidebar-shadow);
+    border-right: 1px solid rgba(255,255,255,.055);
+    transition:
+        width .28s cubic-bezier(.4, 0, .2, 1),
+        transform .28s cubic-bezier(.4, 0, .2, 1);
+    scrollbar-color: rgba(174,187,208,.48) transparent !important;
+}
+
+.sidebar::-webkit-scrollbar {
+    width: 5px !important;
+}
+
+.sidebar::-webkit-scrollbar-track {
+    background: transparent !important;
+}
+
+.sidebar::-webkit-scrollbar-thumb {
+    background: rgba(174,187,208,.42) !important;
+    border-radius: 999px !important;
+}
+
+.sidebar::-webkit-scrollbar-thumb:hover {
+    background: rgba(226,232,240,.65) !important;
+}
+
+/* Marca */
+.sidebar-header {
+    min-height: 82px;
+    display: flex;
+    align-items: center;
+    padding: 16px 62px 16px 17px;
+    border-bottom: 1px solid var(--sidebar-border);
+    background: rgba(255,255,255,.018);
+}
+
+.logo {
+    min-width: 0;
+    gap: 11px;
+}
+
+.logo-img,
+.logo > i {
+    width: 42px;
+    height: 42px;
+    display: grid;
+    place-items: center;
+    flex: 0 0 42px;
+    border: 1px solid rgba(255,255,255,.12);
+    border-radius: 12px;
+    background: rgba(255,255,255,.075);
+    object-fit: contain;
+}
+
+.logo > i {
+    color: #60a5fa;
+    font-size: 1.15rem;
+}
+
+.logo-text {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--sidebar-text);
+    font-size: .98rem;
+    font-weight: 800;
+    letter-spacing: -.01em;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.logo-text small {
+    margin-top: 3px;
+    color: var(--sidebar-muted);
+    font-size: .65rem;
+    font-weight: 600;
+    letter-spacing: .025em;
+    text-transform: uppercase;
+}
+
+/* Botón colapsar */
+.sidebar-collapse-btn {
+    top: 21px;
+    right: 14px;
+    width: 34px;
+    height: 34px;
+    border: 1px solid rgba(255,255,255,.11);
+    border-radius: 10px;
+    background: rgba(255,255,255,.075);
+    color: #dbeafe;
+    font-size: .75rem;
+    box-shadow: none;
+}
+
+.sidebar-collapse-btn:hover,
+.sidebar-collapse-btn:focus {
+    background: rgba(37,99,235,.82);
+    color: #fff;
+    transform: none;
+    outline: none;
+}
+
+/* Perfil */
+.user-profile {
+    margin: 14px 12px 6px;
+    padding: 13px;
+    border: 1px solid var(--sidebar-border);
+    border-radius: 14px;
+    background: var(--sidebar-surface);
+    gap: 11px;
+}
+
+.user-avatar {
+    width: 44px;
+    height: 44px;
+    display: grid;
+    place-items: center;
+    flex: 0 0 44px;
+    overflow: hidden;
+    border: 2px solid rgba(96,165,250,.38);
+    border-radius: 12px;
+    background: rgba(37,99,235,.14);
+}
+
+.user-avatar img {
+    width: 100% !important;
+    height: 100% !important;
+    border-radius: 10px !important;
+}
+
+.user-avatar i {
+    color: #93c5fd;
+    font-size: 1.75rem;
+}
+
+.user-info h4 {
+    margin: 0 0 4px;
+    color: #fff;
+    font-size: .86rem;
+    font-weight: 800;
+}
+
+.user-info p {
+    margin: 0 0 7px;
+    color: var(--sidebar-muted);
+    font-size: .65rem;
+}
+
+.rol-badge {
+    min-height: 23px;
+    padding: 4px 8px;
+    border: 1px solid rgba(96,165,250,.24);
+    border-radius: 7px;
+    background: rgba(37,99,235,.14);
+    color: #bfdbfe;
+    font-size: .61rem;
+    font-weight: 800;
+}
+
+/* Navegación */
+.sidebar-nav {
+    padding: 12px 10px 16px;
+}
+
+.sidebar-nav ul {
+    display: grid;
+    gap: 3px;
+}
+
+.nav-item {
+    margin: 0;
+}
+
+.nav-link {
+    position: relative;
+    min-height: 43px;
+    gap: 11px;
+    padding: 10px 12px;
+    border: 1px solid transparent;
+    border-left: 0;
+    border-radius: 10px;
+    color: var(--sidebar-muted);
+    font-size: .82rem;
+    font-weight: 650;
+    animation: none;
+}
+
+.nav-link i {
+    width: 22px;
+    flex: 0 0 22px;
+    color: #91a2bc;
+    font-size: .98rem;
+    text-align: center;
+    transition: color .18s ease, transform .18s ease;
+}
+
+.nav-link:hover {
+    border-color: rgba(255,255,255,.065);
+    background: var(--sidebar-surface-hover);
+    color: #fff;
+    transform: none;
+}
+
+.nav-link:hover i {
+    color: #bfdbfe;
+    transform: translateX(1px);
+}
+
+.nav-link.active {
+    border-color: rgba(96,165,250,.23);
+    background:
+        linear-gradient(90deg, rgba(37,99,235,.30), rgba(37,99,235,.13));
+    color: #fff;
+    box-shadow: inset 3px 0 0 #60a5fa;
+}
+
+.nav-link.active::after {
+    position: absolute;
+    right: 12px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #60a5fa;
+    box-shadow: 0 0 0 4px rgba(96,165,250,.12);
+    content: "";
+}
+
+.nav-link.active i {
+    color: #93c5fd;
+}
+
+.nav-text {
+    min-width: 0;
+    overflow: hidden;
+    font-weight: 650;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.nav-divider {
+    height: 1px;
+    margin: 10px 5px;
+    background: var(--sidebar-border);
+}
+
+/* Footer */
+.sidebar-footer {
+    padding: 11px 10px 14px;
+    border-top: 1px solid var(--sidebar-border);
+    background: rgba(0,0,0,.07);
+}
+
+.logout-btn {
+    min-height: 42px;
+    padding: 10px 12px;
+    border: 1px solid rgba(251,113,133,.12);
+    border-radius: 10px;
+    color: #fda4af;
+    font-size: .8rem;
+    font-weight: 750;
+}
+
+.logout-btn i {
+    color: #fb7185;
+}
+
+.logout-btn:hover {
+    border-color: rgba(251,113,133,.25);
+    background: rgba(225,29,72,.12);
+    color: #fecdd3;
+}
+
+/* Colapsado */
+.sidebar.collapsed {
+    width: var(--sidebar-collapsed-width) !important;
+}
+
+.sidebar.collapsed .sidebar-header {
+    padding: 15px 12px;
+    justify-content: center;
+}
+
+.sidebar.collapsed .logo {
+    width: 100%;
+    justify-content: center;
+}
+
+.sidebar.collapsed .logo-img,
+.sidebar.collapsed .logo > i {
+    width: 40px;
+    height: 40px;
+    flex-basis: 40px;
+}
+
+.sidebar.collapsed .sidebar-collapse-btn {
+    top: 68px;
+    right: -13px;
+    width: 27px;
+    height: 27px;
+    border-color: #dbe4f0;
+    border-radius: 50%;
+    background: #fff;
+    color: #1e3a8a;
+    box-shadow: 0 4px 12px rgba(15,23,42,.16);
+}
+
+.sidebar.collapsed .user-profile {
+    margin: 38px 10px 7px;
+    padding: 10px;
+    justify-content: center;
+    border-radius: 12px;
+}
+
+.sidebar.collapsed .user-avatar {
+    width: 40px;
+    height: 40px;
+    flex-basis: 40px;
+}
+
+.sidebar.collapsed .sidebar-nav {
+    padding-right: 9px;
+    padding-left: 9px;
+}
+
+.sidebar.collapsed .nav-link {
+    min-height: 44px;
+    justify-content: center;
+    padding: 10px;
+}
+
+.sidebar.collapsed .nav-link i {
+    margin: 0;
+    font-size: 1.05rem;
+}
+
+.sidebar.collapsed .nav-link.active {
+    box-shadow: inset 3px 0 0 #60a5fa;
+}
+
+.sidebar.collapsed .nav-link.active::after {
+    display: none;
+}
+
+.sidebar.collapsed .sidebar-footer {
+    padding-right: 9px;
+    padding-left: 9px;
+}
+
+.sidebar.collapsed .logout-btn {
+    justify-content: center;
+    padding: 10px;
+}
+
+/* Layout principal sincronizado con el ancho real */
+.main-content {
+    margin-left: var(--sidebar-width);
+    transition: margin-left .28s cubic-bezier(.4, 0, .2, 1);
+}
+
+.sidebar.collapsed ~ .main-content,
+body.sidebar-collapsed .main-content {
+    margin-left: var(--sidebar-collapsed-width);
+}
+
+/* Móvil */
+.hamburger-mobile {
+    top: 13px;
+    left: 13px;
+    width: 42px;
+    height: 42px;
+    border: 1px solid rgba(255,255,255,.10);
+    border-radius: 11px;
+    background: #13264a;
+    box-shadow: 0 7px 18px rgba(15,23,42,.22);
+}
+
+.mobile-overlay {
+    background: rgba(15,23,42,.56);
+    backdrop-filter: blur(2px);
+}
+
+@media (max-width: 768px) {
+    .sidebar {
+        width: min(286px, calc(100vw - 34px)) !important;
+        border-radius: 0 18px 18px 0;
+        box-shadow: 18px 0 45px rgba(15,23,42,.30);
+    }
+
+    .sidebar-header {
+        min-height: 78px;
+        padding-right: 18px;
+    }
+
+    .main-content {
+        margin-left: 0 !important;
+        padding-top: 70px;
+    }
+
+    .hamburger-mobile {
+        display: flex;
+    }
+
+    body.sidebar-open {
+        overflow: hidden;
+    }
+
+    body.sidebar-open .main-content {
+        filter: none;
+        pointer-events: auto;
+    }
+}
+
+/* Tooltips nativos más útiles en modo colapsado */
+.sidebar.collapsed .nav-link {
+    overflow: visible;
+}
+
+/* Arrastre más discreto */
+.drag-handle {
+    right: -2px;
+    width: 4px;
+}
+
+.drag-handle:hover {
+    background: rgba(96,165,250,.70);
+}
+
+/* Reduce movimiento si el usuario lo solicita */
+@media (prefers-reduced-motion: reduce) {
+    .sidebar,
+    .main-content,
+    .nav-link,
+    .nav-link i,
+    .sidebar-collapse-btn {
+        transition: none !important;
+    }
+}
+
+
+/* =========================================================
+   MENÚ ACORDEÓN Y SCROLL INVISIBLE
+========================================================= */
+
+/* El contenedor completo no genera una segunda barra */
+.sidebar {
+    overflow: hidden !important;
+}
+
+/* Solo navega esta zona, pero sin mostrar barra */
+.sidebar-nav {
+    min-height: 0;
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+    overscroll-behavior: contain;
+    scrollbar-width: none !important;
+    -ms-overflow-style: none !important;
+}
+
+.sidebar-nav::-webkit-scrollbar,
+.sidebar-nav *::-webkit-scrollbar {
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
+    background: transparent !important;
+}
+
+.sidebar-menu,
+.nav-submenu {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.sidebar-menu {
+    display: grid;
+    gap: 4px;
+}
+
+.nav-group {
+    overflow: hidden;
+    border: 1px solid transparent;
+    border-radius: 11px;
+    transition: border-color .18s ease, background .18s ease;
+}
+
+.nav-group.open {
+    border-color: rgba(96, 165, 250, .12);
+    background: rgba(255, 255, 255, .028);
+}
+
+.nav-group-toggle {
+    width: 100%;
+    min-height: 43px;
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    padding: 10px 12px;
+    border: 0;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--sidebar-muted);
+    font: inherit;
+    font-size: .82rem;
+    font-weight: 700;
+    text-align: left;
+    cursor: pointer;
+    transition: background .18s ease, color .18s ease;
+}
+
+.nav-group-toggle:hover,
+.nav-group-toggle:focus {
+    background: var(--sidebar-surface-hover);
+    color: #ffffff;
+    outline: none;
+}
+
+.nav-group-toggle > i:first-child {
+    width: 22px;
+    flex: 0 0 22px;
+    color: #91a2bc;
+    font-size: .98rem;
+    text-align: center;
+}
+
+.nav-group.open > .nav-group-toggle {
+    color: #ffffff;
+}
+
+.nav-group.open > .nav-group-toggle > i:first-child {
+    color: #93c5fd;
+}
+
+.nav-group-label {
+    min-width: 0;
+    flex: 1;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.group-chevron {
+    flex: 0 0 auto;
+    color: #73849f;
+    font-size: .66rem;
+    transition: transform .22s ease, color .18s ease;
+}
+
+.nav-group.open > .nav-group-toggle .group-chevron {
+    color: #93c5fd;
+    transform: rotate(180deg);
+}
+
+.nav-submenu {
+    max-height: 0;
+    overflow: hidden;
+    opacity: 0;
+    transition: max-height .25s ease, opacity .18s ease, padding .25s ease;
+}
+
+.nav-group.open > .nav-submenu {
+    max-height: 310px;
+    padding: 2px 6px 7px 13px;
+    opacity: 1;
+}
+
+.nav-submenu .nav-link {
+    min-height: 39px;
+    padding: 8px 10px;
+    border-radius: 9px;
+    font-size: .77rem;
+}
+
+.nav-submenu .nav-link i {
+    width: 20px;
+    flex-basis: 20px;
+    font-size: .86rem;
+}
+
+.nav-submenu .nav-link.active {
+    background: rgba(37, 99, 235, .22);
+    box-shadow: inset 3px 0 0 #60a5fa;
+}
+
+.nav-submenu .nav-link.active::after {
+    right: 10px;
+}
+
+/* Perfil y cabecera un poco más compactos */
+.sidebar-header {
+    min-height: 74px;
+    padding-top: 12px;
+    padding-bottom: 12px;
+}
+
+.user-profile {
+    margin-top: 10px;
+    padding: 11px;
+}
+
+.sidebar-nav {
+    padding-top: 9px;
+}
+
+/* Vista colapsada */
+.sidebar.collapsed .nav-group {
+    overflow: visible;
+}
+
+.sidebar.collapsed .nav-group-toggle {
+    min-height: 44px;
+    justify-content: center;
+    padding: 10px;
+}
+
+.sidebar.collapsed .nav-group-toggle > i:first-child {
+    margin: 0;
+    font-size: 1.05rem;
+}
+
+.sidebar.collapsed .nav-group-label,
+.sidebar.collapsed .group-chevron {
+    display: none;
+}
+
+.sidebar.collapsed .nav-group.open > .nav-submenu {
+    max-height: 250px;
+    padding: 3px 0 6px;
+}
+
+.sidebar.collapsed .nav-submenu .nav-link {
+    min-height: 40px;
+    justify-content: center;
+    padding: 9px;
+}
+
+.sidebar.collapsed .nav-submenu .nav-link i {
+    margin: 0;
+    font-size: .95rem;
+}
+
+.sidebar.collapsed .nav-submenu .nav-link.active::after {
+    display: none;
+}
+
+/* Móvil */
+@media (max-width: 768px) {
+    .sidebar-nav {
+        padding-bottom: 20px;
+    }
+
+    .nav-group.open > .nav-submenu {
+        max-height: 340px;
+    }
+
+    .nav-group-toggle,
+    .nav-link {
+        min-height: 46px;
+    }
+}
+
 </style>
 
 <!-- Botón Hamburguesa para móvil (solo visible en móvil) -->
-<button class="hamburger-mobile" id="hamburgerMobile">
+<button class="hamburger-mobile" id="hamburgerMobile" type="button" aria-label="Abrir menú lateral" aria-controls="sidebar" aria-expanded="false">
     <i class="fas fa-bars"></i>
 </button>
 
@@ -782,7 +1467,7 @@ body.sidebar-collapsed .main-content {
 <div class="mobile-overlay" id="mobileOverlay"></div>
 
 <!-- Sidebar -->
-<aside class="sidebar" id="sidebar">
+<aside class="sidebar" id="sidebar" aria-label="Navegación principal">
     <div class="drag-handle" id="dragHandle"></div>
     
     <div class="sidebar-header">
@@ -799,7 +1484,7 @@ body.sidebar-collapsed .main-content {
             </div>
         </a>
         <!-- Botón de colapsar DENTRO del sidebar (visible solo en PC) -->
-        <button class="sidebar-collapse-btn" id="sidebarCollapseBtn">
+        <button class="sidebar-collapse-btn" id="sidebarCollapseBtn" type="button" aria-label="Contraer menú lateral" title="Contraer menú">
             <i class="fas fa-chevron-left"></i>
         </button>
     </div>
@@ -838,176 +1523,274 @@ body.sidebar-collapsed .main-content {
         </div>
     </div>
 
-    <nav class="sidebar-nav">
-        <ul>
-            <!-- Módulos según el rol -->
-            
-            <?php if ($user_rol == 'admin'): ?>
-                <!-- ADMIN: Acceso a todos los módulos -->
-                <li class="nav-item">
-                    <a href="dashboard.php" class="nav-link <?php echo $active_module == 'dashboard' ? 'active' : ''; ?>">
-                        <i class="fas fa-chart-line"></i>
-                        <span class="nav-text">Dashboard</span>
-                    </a>
-                </li>
-                <li class="nav-item">
-                    <a href="productos.php" class="nav-link <?php echo $active_module == 'products' ? 'active' : ''; ?>">
-                        <i class="fas fa-box"></i>
-                        <span class="nav-text">Productos</span>
-                    </a>
-                </li>
-                <li class="nav-item">
-                    <a href="historial_stock.php" class="nav-link <?php echo $active_module == 'historial' ? 'active' : ''; ?>">
-                        <i class="fas fa-history"></i>
-                        <span class="nav-text">Historial Stock</span>
-                    </a>
-                </li>
-                <!-- Dentro del bloque de admin y recepcionista, después de Dashboard -->
-                <li class="nav-item">
-                    <a href="ventas.php" class="nav-link <?php echo $active_module == 'ventas' ? 'active' : ''; ?>">
-                        <i class="fas fa-shopping-cart"></i>
-                        <span class="nav-text">Venta de Productos</span>
-                    </a>
-                </li>
-                <?php if ($user_rol == 'admin' || $user_rol == 'recepcionista'): ?>
-                    <li class="nav-item">
-                        <a href="historial_ventas.php" class="nav-link <?php echo $active_module == 'historial_ventas' ? 'active' : ''; ?>">
-                            <i class="fas fa-history"></i>
-                            <span class="nav-text">Historial Ventas</span>
-                        </a>
-                    </li>
-                <?php endif; ?>
-                <li class="nav-item">
-                    <a href="corte_caja.php" class="nav-link <?php echo $active_module == 'corte_caja' ? 'active' : ''; ?>">
-                        <i class="fas fa-cash-register"></i>
-                        <span class="nav-text">Corte de Caja</span>
-                    </a>
-                </li>
-                <li class="nav-item">
-                    <a href="inscripciones.php" class="nav-link <?php echo $active_module == 'inscriptions' ? 'active' : ''; ?>">
+    <?php
+    $grupo_inventario_activo = in_array($active_module, ['products', 'historial'], true);
+    $grupo_ventas_activo = in_array($active_module, ['ventas', 'historial_ventas', 'corte_caja'], true);
+    $grupo_socios_activo = in_array($active_module, ['inscriptions', 'assistance'], true);
+    $grupo_clases_activo = in_array($active_module, ['classes', 'clases_inscriptions'], true);
+    $grupo_admin_activo = in_array($active_module, ['reports', 'notificaciones', 'settings'], true);
+    ?>
+
+    <nav class="sidebar-nav" aria-label="Módulos del sistema">
+        <ul class="sidebar-menu">
+            <li class="nav-item nav-dashboard">
+                <a href="dashboard.php" class="nav-link <?php echo $active_module === 'dashboard' ? 'active' : ''; ?>">
+                    <i class="fas fa-gauge-high"></i>
+                    <span class="nav-text">Panel principal</span>
+                </a>
+            </li>
+
+            <?php if ($user_rol === 'admin'): ?>
+                <li class="nav-group <?php echo $grupo_socios_activo ? 'open' : ''; ?>" data-group="socios">
+                    <button
+                        type="button"
+                        class="nav-group-toggle"
+                        aria-expanded="<?php echo $grupo_socios_activo ? 'true' : 'false'; ?>"
+                    >
                         <i class="fas fa-users"></i>
-                        <span class="nav-text">Inscripciones</span>
-                    </a>
+                        <span class="nav-group-label">Socios</span>
+                        <i class="fas fa-chevron-down group-chevron"></i>
+                    </button>
+
+                    <ul class="nav-submenu">
+                        <li>
+                            <a href="inscripciones.php" class="nav-link <?php echo $active_module === 'inscriptions' ? 'active' : ''; ?>">
+                                <i class="fas fa-id-card"></i>
+                                <span class="nav-text">Inscripciones</span>
+                            </a>
+                        </li>
+                        <li>
+                            <a href="asistencias.php" class="nav-link <?php echo $active_module === 'assistance' ? 'active' : ''; ?>">
+                                <i class="fas fa-fingerprint"></i>
+                                <span class="nav-text">Asistencias</span>
+                            </a>
+                        </li>
+                    </ul>
                 </li>
-                <li class="nav-item">
-                    <a href="asistencias.php" class="nav-link <?php echo $active_module == 'assistance' ? 'active' : ''; ?>">
-                        <i class="fas fa-fingerprint"></i>
-                        <span class="nav-text">Asistencias</span>
-                    </a>
+
+                <li class="nav-group <?php echo $grupo_ventas_activo ? 'open' : ''; ?>" data-group="ventas">
+                    <button
+                        type="button"
+                        class="nav-group-toggle"
+                        aria-expanded="<?php echo $grupo_ventas_activo ? 'true' : 'false'; ?>"
+                    >
+                        <i class="fas fa-cash-register"></i>
+                        <span class="nav-group-label">Ventas y caja</span>
+                        <i class="fas fa-chevron-down group-chevron"></i>
+                    </button>
+
+                    <ul class="nav-submenu">
+                        <li>
+                            <a href="ventas.php" class="nav-link <?php echo $active_module === 'ventas' ? 'active' : ''; ?>">
+                                <i class="fas fa-cart-shopping"></i>
+                                <span class="nav-text">Venta de productos</span>
+                            </a>
+                        </li>
+                        <li>
+                            <a href="historial_ventas.php" class="nav-link <?php echo $active_module === 'historial_ventas' ? 'active' : ''; ?>">
+                                <i class="fas fa-receipt"></i>
+                                <span class="nav-text">Historial de ventas</span>
+                            </a>
+                        </li>
+                        <li>
+                            <a href="corte_caja.php" class="nav-link <?php echo $active_module === 'corte_caja' ? 'active' : ''; ?>">
+                                <i class="fas fa-coins"></i>
+                                <span class="nav-text">Corte de caja</span>
+                            </a>
+                        </li>
+                    </ul>
                 </li>
-                <li class="nav-item">
-                    <a href="clases.php" class="nav-link <?php echo $active_module == 'classes' ? 'active' : ''; ?>">
-                        <i class="fas fa-calendar-alt"></i>
-                        <span class="nav-text">Clases</span>
-                    </a>
+
+                <li class="nav-group <?php echo $grupo_inventario_activo ? 'open' : ''; ?>" data-group="inventario">
+                    <button
+                        type="button"
+                        class="nav-group-toggle"
+                        aria-expanded="<?php echo $grupo_inventario_activo ? 'true' : 'false'; ?>"
+                    >
+                        <i class="fas fa-boxes-stacked"></i>
+                        <span class="nav-group-label">Inventario</span>
+                        <i class="fas fa-chevron-down group-chevron"></i>
+                    </button>
+
+                    <ul class="nav-submenu">
+                        <li>
+                            <a href="productos.php" class="nav-link <?php echo $active_module === 'products' ? 'active' : ''; ?>">
+                                <i class="fas fa-box"></i>
+                                <span class="nav-text">Productos</span>
+                            </a>
+                        </li>
+                        <li>
+                            <a href="historial_stock.php" class="nav-link <?php echo $active_module === 'historial' ? 'active' : ''; ?>">
+                                <i class="fas fa-clock-rotate-left"></i>
+                                <span class="nav-text">Historial de stock</span>
+                            </a>
+                        </li>
+                    </ul>
                 </li>
-                <li class="nav-item">
-                    <a href="inscripciones_clases.php" class="nav-link <?php echo $active_module == 'clases_inscriptions' ? 'active' : ''; ?>">
-                        <i class="fas fa-user-check"></i>
-                        <span class="nav-text">Inscripciones a Clases</span>
-                    </a>
+
+                <li class="nav-group <?php echo $grupo_clases_activo ? 'open' : ''; ?>" data-group="clases">
+                    <button
+                        type="button"
+                        class="nav-group-toggle"
+                        aria-expanded="<?php echo $grupo_clases_activo ? 'true' : 'false'; ?>"
+                    >
+                        <i class="fas fa-calendar-days"></i>
+                        <span class="nav-group-label">Clases</span>
+                        <i class="fas fa-chevron-down group-chevron"></i>
+                    </button>
+
+                    <ul class="nav-submenu">
+                        <li>
+                            <a href="clases.php" class="nav-link <?php echo $active_module === 'classes' ? 'active' : ''; ?>">
+                                <i class="fas fa-dumbbell"></i>
+                                <span class="nav-text">Administrar clases</span>
+                            </a>
+                        </li>
+                        <li>
+                            <a href="inscripciones_clases.php" class="nav-link <?php echo $active_module === 'clases_inscriptions' ? 'active' : ''; ?>">
+                                <i class="fas fa-user-check"></i>
+                                <span class="nav-text">Socios por clase</span>
+                            </a>
+                        </li>
+                    </ul>
                 </li>
+
+                <li class="nav-group <?php echo $grupo_admin_activo ? 'open' : ''; ?>" data-group="administracion">
+                    <button
+                        type="button"
+                        class="nav-group-toggle"
+                        aria-expanded="<?php echo $grupo_admin_activo ? 'true' : 'false'; ?>"
+                    >
+                        <i class="fas fa-sliders"></i>
+                        <span class="nav-group-label">Administración</span>
+                        <i class="fas fa-chevron-down group-chevron"></i>
+                    </button>
+
+                    <ul class="nav-submenu">
+                        <li>
+                            <a href="reportes.php" class="nav-link <?php echo $active_module === 'reports' ? 'active' : ''; ?>">
+                                <i class="fas fa-chart-column"></i>
+                                <span class="nav-text">Reportes</span>
+                            </a>
+                        </li>
+                        <li>
+                            <a href="notificaciones.php" class="nav-link <?php echo $active_module === 'notificaciones' ? 'active' : ''; ?>">
+                                <i class="fas fa-bell"></i>
+                                <span class="nav-text">Notificaciones</span>
+                            </a>
+                        </li>
+                        <li>
+                            <a href="configuracion.php" class="nav-link <?php echo $active_module === 'settings' ? 'active' : ''; ?>">
+                                <i class="fas fa-gear"></i>
+                                <span class="nav-text">Configuración</span>
+                            </a>
+                        </li>
+                    </ul>
+                </li>
+
+            <?php elseif ($user_rol === 'recepcionista'): ?>
+                <li class="nav-group <?php echo $grupo_socios_activo ? 'open' : ''; ?>" data-group="socios">
+                    <button
+                        type="button"
+                        class="nav-group-toggle"
+                        aria-expanded="<?php echo $grupo_socios_activo ? 'true' : 'false'; ?>"
+                    >
+                        <i class="fas fa-users"></i>
+                        <span class="nav-group-label">Socios</span>
+                        <i class="fas fa-chevron-down group-chevron"></i>
+                    </button>
+
+                    <ul class="nav-submenu">
+                        <li>
+                            <a href="inscripciones.php" class="nav-link <?php echo $active_module === 'inscriptions' ? 'active' : ''; ?>">
+                                <i class="fas fa-id-card"></i>
+                                <span class="nav-text">Inscripciones</span>
+                            </a>
+                        </li>
+                        <li>
+                            <a href="asistencias.php" class="nav-link <?php echo $active_module === 'assistance' ? 'active' : ''; ?>">
+                                <i class="fas fa-fingerprint"></i>
+                                <span class="nav-text">Asistencias</span>
+                            </a>
+                        </li>
+                    </ul>
+                </li>
+
+                <li class="nav-group <?php echo $grupo_ventas_activo ? 'open' : ''; ?>" data-group="ventas">
+                    <button
+                        type="button"
+                        class="nav-group-toggle"
+                        aria-expanded="<?php echo $grupo_ventas_activo ? 'true' : 'false'; ?>"
+                    >
+                        <i class="fas fa-cash-register"></i>
+                        <span class="nav-group-label">Ventas y caja</span>
+                        <i class="fas fa-chevron-down group-chevron"></i>
+                    </button>
+
+                    <ul class="nav-submenu">
+                        <li>
+                            <a href="ventas.php" class="nav-link <?php echo $active_module === 'ventas' ? 'active' : ''; ?>">
+                                <i class="fas fa-cart-shopping"></i>
+                                <span class="nav-text">Venta de productos</span>
+                            </a>
+                        </li>
+                        <li>
+                            <a href="historial_ventas.php" class="nav-link <?php echo $active_module === 'historial_ventas' ? 'active' : ''; ?>">
+                                <i class="fas fa-receipt"></i>
+                                <span class="nav-text">Historial de ventas</span>
+                            </a>
+                        </li>
+                    </ul>
+                </li>
+
                 <li class="nav-item">
-                    <a href="reportes.php" class="nav-link <?php echo $active_module == 'reports' ? 'active' : ''; ?>">
-                        <i class="fas fa-chart-bar"></i>
+                    <a href="reportes.php" class="nav-link <?php echo $active_module === 'reports' ? 'active' : ''; ?>">
+                        <i class="fas fa-chart-column"></i>
                         <span class="nav-text">Reportes</span>
                     </a>
                 </li>
-                <li class="nav-item">
-                    <a href="notificaciones.php" class="nav-link <?php echo $active_module == 'notificaciones' ? 'active' : ''; ?>">
-                        <i class="fas fa-bell"></i>
-                        <span class="nav-text">Notificaciones</span>
-                    </a>
-                </li>
-                <li class="nav-divider"></li>
-                <li class="nav-item">
-                    <a href="configuracion.php" class="nav-link <?php echo $active_module == 'settings' ? 'active' : ''; ?>">
-                        <i class="fas fa-cog"></i>
-                        <span class="nav-text">Configuración</span>
-                    </a>
-                </li>
-                
-            <?php elseif ($user_rol == 'recepcionista'): ?>
-                <!-- RECEPCIONISTA: Sin productos, historial stock, ni configuración -->
-                <li class="nav-item">
-                    <a href="dashboard.php" class="nav-link <?php echo $active_module == 'dashboard' ? 'active' : ''; ?>">
-                        <i class="fas fa-chart-line"></i>
-                        <span class="nav-text">Dashboard</span>
-                    </a>
-                </li>
-                <li class="nav-item">
-                    <a href="inscripciones.php" class="nav-link <?php echo $active_module == 'inscriptions' ? 'active' : ''; ?>">
-                        <i class="fas fa-users"></i>
-                        <span class="nav-text">Inscripciones</span>
-                    </a>
-                </li>
-                <li class="nav-item">
-                    <a href="asistencias.php" class="nav-link <?php echo $active_module == 'assistance' ? 'active' : ''; ?>">
-                        <i class="fas fa-fingerprint"></i>
-                        <span class="nav-text">Asistencias</span>
-                    </a>
-                </li>
-                <li class="nav-item">
-                    <a href="reportes.php" class="nav-link <?php echo $active_module == 'reports' ? 'active' : ''; ?>">
-                        <i class="fas fa-chart-bar"></i>
-                        <span class="nav-text">Reportes</span>
-                    </a>
-                </li>
-                <li class="nav-item">
-                    <a href="ventas.php" class="nav-link <?php echo $active_module == 'ventas' ? 'active' : ''; ?>">
-                        <i class="fas fa-shopping-cart"></i>
-                        <span class="nav-text">Venta de Productos</span>
-                    </a>
-                </li>
-                <?php if ($user_rol == 'admin' || $user_rol == 'recepcionista'): ?>
-                <li class="nav-item">
-                    <a href="historial_ventas.php" class="nav-link <?php echo $active_module == 'historial_ventas' ? 'active' : ''; ?>">
-                        <i class="fas fa-history"></i>
-                        <span class="nav-text">Historial Ventas</span>
-                    </a>
-                </li>
-                <?php endif; ?>
-                <li class="nav-item">
-                    <a href="corte_caja.php" class="nav-link <?php echo $active_module == 'corte_caja' ? 'active' : ''; ?>">
-                        <i class="fas fa-cash-register"></i>
-                        <span class="nav-text">Corte de Caja</span>
-                    </a>
-                </li>
-                
-            <?php elseif ($user_rol == 'entrenador'): ?>
-                <!-- ENTRENADOR: Solo clases, inscripciones a clases y asistencias -->
-                <li class="nav-item">
-                    <a href="dashboard.php" class="nav-link <?php echo $active_module == 'dashboard' ? 'active' : ''; ?>">
-                        <i class="fas fa-chart-line"></i>
-                        <span class="nav-text">Dashboard</span>
-                    </a>
-                </li>
-                <li class="nav-item">
-                    <a href="clases.php" class="nav-link <?php echo $active_module == 'classes' ? 'active' : ''; ?>">
-                        <i class="fas fa-calendar-alt"></i>
-                        <span class="nav-text">Clases</span>
-                    </a>
-                </li>
-                <li class="nav-item">
-                    <a href="inscripciones_clases.php" class="nav-link <?php echo $active_module == 'clases_inscriptions' ? 'active' : ''; ?>">
-                        <i class="fas fa-user-check"></i>
-                        <span class="nav-text">Inscripciones a Clases</span>
-                    </a>
-                </li>
-                <li class="nav-item">
-                    <a href="asistencias.php" class="nav-link <?php echo $active_module == 'assistance' ? 'active' : ''; ?>">
-                        <i class="fas fa-fingerprint"></i>
-                        <span class="nav-text">Asistencias</span>
-                    </a>
+
+            <?php elseif ($user_rol === 'entrenador'): ?>
+                <li class="nav-group <?php echo ($grupo_clases_activo || $active_module === 'assistance') ? 'open' : ''; ?>" data-group="clases">
+                    <button
+                        type="button"
+                        class="nav-group-toggle"
+                        aria-expanded="<?php echo ($grupo_clases_activo || $active_module === 'assistance') ? 'true' : 'false'; ?>"
+                    >
+                        <i class="fas fa-dumbbell"></i>
+                        <span class="nav-group-label">Clases y alumnos</span>
+                        <i class="fas fa-chevron-down group-chevron"></i>
+                    </button>
+
+                    <ul class="nav-submenu">
+                        <li>
+                            <a href="clases.php" class="nav-link <?php echo $active_module === 'classes' ? 'active' : ''; ?>">
+                                <i class="fas fa-calendar-days"></i>
+                                <span class="nav-text">Mis clases</span>
+                            </a>
+                        </li>
+                        <li>
+                            <a href="inscripciones_clases.php" class="nav-link <?php echo $active_module === 'clases_inscriptions' ? 'active' : ''; ?>">
+                                <i class="fas fa-user-check"></i>
+                                <span class="nav-text">Inscripciones</span>
+                            </a>
+                        </li>
+                        <li>
+                            <a href="asistencias.php" class="nav-link <?php echo $active_module === 'assistance' ? 'active' : ''; ?>">
+                                <i class="fas fa-fingerprint"></i>
+                                <span class="nav-text">Asistencias</span>
+                            </a>
+                        </li>
+                    </ul>
                 </li>
             <?php endif; ?>
-            
-            <!-- Mi Perfil - Visible para todos los roles -->
-            <li class="nav-divider"></li>
+
+            <li class="nav-divider" aria-hidden="true"></li>
+
             <li class="nav-item">
-                <a href="mi_perfil.php" class="nav-link <?php echo $active_module == 'perfil' ? 'active' : ''; ?>">
-                    <i class="fas fa-user-circle"></i>
-                    <span class="nav-text">Mi Perfil</span>
+                <a href="mi_perfil.php" class="nav-link <?php echo $active_module === 'perfil' ? 'active' : ''; ?>">
+                    <i class="fas fa-circle-user"></i>
+                    <span class="nav-text">Mi perfil</span>
                 </a>
             </li>
         </ul>
@@ -1085,6 +1868,33 @@ document.addEventListener('DOMContentLoaded', function () {
     const mobileOverlay = document.getElementById('mobileOverlay');
     const dragHandle = document.getElementById('dragHandle');
     
+
+    function syncSidebarWidth(width) {
+        const numericWidth = parseInt(width, 10);
+
+        if (!Number.isFinite(numericWidth) || numericWidth <= 0) {
+            return;
+        }
+
+        document.documentElement.style.setProperty('--sidebar-width', numericWidth + 'px');
+    }
+
+    function refreshCollapsedLinkTitles() {
+        document.querySelectorAll('.sidebar .nav-link').forEach(link => {
+            const text = link.querySelector('.nav-text');
+            if (!text) return;
+
+            const label = text.textContent.trim();
+            link.setAttribute('aria-label', label);
+
+            if (sidebar.classList.contains('collapsed')) {
+                link.setAttribute('title', label);
+            } else {
+                link.removeAttribute('title');
+            }
+        });
+    }
+
     let isCollapsed = false;
     let isDragging = false;
     let startX = 0;
@@ -1101,14 +1911,17 @@ document.addEventListener('DOMContentLoaded', function () {
             const storedWidth = localStorage.getItem('sidebarWidth');
             if (storedWidth && storedWidth > 70) {
                 sidebar.style.width = storedWidth + 'px';
+                syncSidebarWidth(storedWidth);
                 savedWidth = storedWidth;
             } else {
                 sidebar.style.width = '280px';
+                syncSidebarWidth(280);
                 savedWidth = 280;
             }
             
             isCollapsed = false;
             localStorage.setItem('sidebarCollapsed', 'false');
+            refreshCollapsedLinkTitles();
         } else {
             const currentWidth = sidebar.offsetWidth;
             if (currentWidth > 70) {
@@ -1118,10 +1931,12 @@ document.addEventListener('DOMContentLoaded', function () {
             
             sidebar.classList.add('collapsed');
             document.body.classList.add('sidebar-collapsed');
-            sidebar.style.width = '70px';
+            sidebar.style.width = '78px';
+            document.documentElement.style.setProperty('--sidebar-collapsed-width', '78px');
             
             isCollapsed = true;
             localStorage.setItem('sidebarCollapsed', 'true');
+            refreshCollapsedLinkTitles();
         }
     }
     
@@ -1147,6 +1962,7 @@ document.addEventListener('DOMContentLoaded', function () {
             let newWidth = startWidth + (e.clientX - startX);
             newWidth = Math.min(320, Math.max(200, newWidth));
             sidebar.style.width = newWidth + 'px';
+            syncSidebarWidth(newWidth);
         });
         
         document.addEventListener('mouseup', () => {
@@ -1171,6 +1987,7 @@ document.addEventListener('DOMContentLoaded', function () {
             sidebar.classList.toggle('mobile-open');
             mobileOverlay.classList.toggle('active');
             document.body.classList.toggle('sidebar-open');
+            hamburgerMobile.setAttribute('aria-expanded', sidebar.classList.contains('mobile-open') ? 'true' : 'false');
         }
     }
     
@@ -1178,6 +1995,7 @@ document.addEventListener('DOMContentLoaded', function () {
         sidebar.classList.remove('mobile-open');
         mobileOverlay.classList.remove('active');
         document.body.classList.remove('sidebar-open');
+        if (hamburgerMobile) hamburgerMobile.setAttribute('aria-expanded', 'false');
     }
     
     function handleResize() {
@@ -1202,7 +2020,8 @@ document.addEventListener('DOMContentLoaded', function () {
                 if (!sidebar.classList.contains('collapsed')) {
                     sidebar.classList.add('collapsed');
                     document.body.classList.add('sidebar-collapsed');
-                    sidebar.style.width = '70px';
+                    sidebar.style.width = '78px';
+            document.documentElement.style.setProperty('--sidebar-collapsed-width', '78px');
                     isCollapsed = true;
                 }
             } else {
@@ -1212,9 +2031,11 @@ document.addEventListener('DOMContentLoaded', function () {
                 }
                 if (storedWidthVal && storedWidthVal > 70) {
                     sidebar.style.width = storedWidthVal + 'px';
+                    syncSidebarWidth(storedWidthVal);
                     savedWidth = storedWidthVal;
                 } else {
                     sidebar.style.width = '280px';
+                    syncSidebarWidth(280);
                     savedWidth = 280;
                 }
                 isCollapsed = false;
@@ -1230,16 +2051,19 @@ document.addEventListener('DOMContentLoaded', function () {
             if (storedCollapsed === 'true') {
                 sidebar.classList.add('collapsed');
                 document.body.classList.add('sidebar-collapsed');
-                sidebar.style.width = '70px';
+                sidebar.style.width = '78px';
+            document.documentElement.style.setProperty('--sidebar-collapsed-width', '78px');
                 isCollapsed = true;
             } else {
                 sidebar.classList.remove('collapsed');
                 document.body.classList.remove('sidebar-collapsed');
                 if (storedWidthVal && storedWidthVal > 70) {
                     sidebar.style.width = storedWidthVal + 'px';
+                    syncSidebarWidth(storedWidthVal);
                     savedWidth = storedWidthVal;
                 } else {
                     sidebar.style.width = '280px';
+                    syncSidebarWidth(280);
                     savedWidth = 280;
                 }
                 isCollapsed = false;
@@ -1271,5 +2095,92 @@ document.addEventListener('DOMContentLoaded', function () {
     
     initDragResize();
     loadInitialState();
+    refreshCollapsedLinkTitles();
+})();
+</script>
+
+
+<script>
+(function () {
+    const sidebar = document.getElementById('sidebar');
+    if (!sidebar) return;
+
+    const groups = Array.from(sidebar.querySelectorAll('.nav-group'));
+    const toggles = Array.from(sidebar.querySelectorAll('.nav-group-toggle'));
+
+    function setGroupState(group, open) {
+        const toggle = group.querySelector(':scope > .nav-group-toggle');
+        group.classList.toggle('open', open);
+
+        if (toggle) {
+            toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+        }
+    }
+
+    function closeOtherGroups(currentGroup) {
+        groups.forEach(function (group) {
+            if (group !== currentGroup) {
+                setGroupState(group, false);
+            }
+        });
+    }
+
+    toggles.forEach(function (toggle) {
+        const group = toggle.closest('.nav-group');
+        const label = toggle.querySelector('.nav-group-label');
+
+        if (label) {
+            toggle.setAttribute('aria-label', label.textContent.trim());
+            toggle.setAttribute('title', label.textContent.trim());
+        }
+
+        toggle.addEventListener('click', function () {
+            const willOpen = !group.classList.contains('open');
+
+            if (willOpen) {
+                closeOtherGroups(group);
+            }
+
+            setGroupState(group, willOpen);
+
+            try {
+                if (willOpen) {
+                    localStorage.setItem('sidebarOpenGroup', group.dataset.group || '');
+                } else {
+                    localStorage.removeItem('sidebarOpenGroup');
+                }
+            } catch (error) {
+                // El menú funciona aunque localStorage esté bloqueado.
+            }
+        });
+    });
+
+    const activeGroup = sidebar.querySelector('.nav-group .nav-link.active')?.closest('.nav-group');
+
+    if (activeGroup) {
+        closeOtherGroups(activeGroup);
+        setGroupState(activeGroup, true);
+    } else {
+        try {
+            const savedGroup = localStorage.getItem('sidebarOpenGroup');
+            const savedElement = savedGroup
+                ? sidebar.querySelector('.nav-group[data-group="' + savedGroup + '"]')
+                : null;
+
+            if (savedElement) {
+                closeOtherGroups(savedElement);
+                setGroupState(savedElement, true);
+            }
+        } catch (error) {
+            // No se requiere persistencia para utilizar el acordeón.
+        }
+    }
+
+    sidebar.querySelectorAll('.nav-submenu .nav-link').forEach(function (link) {
+        const text = link.querySelector('.nav-text');
+        if (text) {
+            link.setAttribute('title', text.textContent.trim());
+        }
+    });
 })();
 </script>

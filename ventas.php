@@ -58,471 +58,101 @@ $result_clientes = $conn->query($query_clientes);
     <title>Venta de Productos - <?php echo htmlspecialchars($gym_nombre); ?></title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            background: #f5f7fa;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-        }
-
-        .ventas-container {
-            padding: 20px;
-        }
-
-        .ventas-header {
-            margin-bottom: 25px;
-        }
-
-        .ventas-header h1 {
-            font-size: 1.8rem;
-            color: #1e293b;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        .ventas-header h1 i {
-            color: #3b82f6;
-        }
-
-        .ventas-grid {
-            display: grid;
-            grid-template-columns: 1fr 380px;
-            gap: 25px;
-        }
-
-        .productos-section {
-            background: white;
-            border-radius: 16px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-            overflow: hidden;
-        }
-
-        .section-header {
-            padding: 20px;
-            background: #f8fafc;
-            border-bottom: 1px solid #e2e8f0;
-        }
-
-        .section-header h2 {
-            font-size: 1.2rem;
-            color: #1e293b;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .section-header h2 i {
-            color: #3b82f6;
-        }
-
-        .search-box {
-            margin-top: 15px;
-            position: relative;
-        }
-
-        .search-box i {
-            position: absolute;
-            left: 12px;
-            top: 50%;
-            transform: translateY(-50%);
-            color: #94a3b8;
-        }
-
-        .search-box input {
-            width: 100%;
-            padding: 10px 12px 10px 38px;
-            border: 1px solid #e2e8f0;
-            border-radius: 10px;
-            font-size: 0.9rem;
-            transition: all 0.3s;
-        }
-
-        .search-box input:focus {
-            outline: none;
-            border-color: #3b82f6;
-            box-shadow: 0 0 0 3px rgba(59,130,246,0.1);
-        }
-
-        .productos-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-            gap: 15px;
-            padding: 20px;
-            max-height: 600px;
-            overflow-y: auto;
-        }
-
-        .producto-card {
-            background: white;
-            border: 1px solid #e2e8f0;
-            border-radius: 12px;
-            padding: 15px;
-            cursor: pointer;
-            transition: all 0.3s;
-            text-align: center;
-        }
-
-        .producto-card:hover {
-            transform: translateY(-3px);
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-            border-color: #3b82f6;
-        }
-
-        .producto-imagen {
-            width: 100%;
-            height: 120px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin-bottom: 12px;
-            background: #f8fafc;
-            border-radius: 8px;
-            overflow: hidden;
-        }
-
-        .producto-imagen img {
-            max-width: 100%;
-            max-height: 100%;
-            object-fit: contain;
-        }
-
-        .producto-imagen i {
-            font-size: 3rem;
-            color: #94a3b8;
-        }
-
-        .producto-nombre {
-            font-weight: 600;
-            color: #1e293b;
-            margin-bottom: 5px;
-            font-size: 0.9rem;
-        }
-
-        .producto-precio {
-            color: #3b82f6;
-            font-weight: 700;
-            font-size: 1.1rem;
-            margin-bottom: 8px;
-        }
-
-        .producto-stock {
-            font-size: 0.75rem;
-            color: #64748b;
-        }
-
-        .producto-stock.bajo {
-            color: #ef4444;
-        }
-
-        .carrito-section {
-            background: white;
-            border-radius: 16px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-            height: fit-content;
-            position: sticky;
-            top: 20px;
-        }
-
-        .carrito-header {
-            padding: 20px;
-            background: #f8fafc;
-            border-bottom: 1px solid #e2e8f0;
-        }
-
-        .carrito-header h2 {
-            font-size: 1.2rem;
-            color: #1e293b;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .carrito-items {
-            max-height: 400px;
-            overflow-y: auto;
-            padding: 15px;
-        }
-
-        .carrito-vacio {
-            text-align: center;
-            padding: 40px 20px;
-            color: #94a3b8;
-        }
-
-        .carrito-vacio i {
-            font-size: 3rem;
-            margin-bottom: 10px;
-        }
-
-        .carrito-item {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            padding: 12px;
-            border-bottom: 1px solid #e2e8f0;
-            position: relative;
-        }
-
-        .carrito-item-imagen {
-            width: 50px;
-            height: 50px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: #f8fafc;
-            border-radius: 8px;
-            overflow: hidden;
-        }
-
-        .carrito-item-imagen img {
-            max-width: 100%;
-            max-height: 100%;
-            object-fit: contain;
-        }
-
-        .carrito-item-imagen i {
-            font-size: 1.5rem;
-            color: #94a3b8;
-        }
-
-        .carrito-item-info {
-            flex: 1;
-        }
-
-        .carrito-item-nombre {
-            font-weight: 600;
-            color: #1e293b;
-            font-size: 0.85rem;
-            margin-bottom: 4px;
-        }
-
-        .carrito-item-precio {
-            color: #3b82f6;
-            font-size: 0.8rem;
-            font-weight: 600;
-        }
-
-        .carrito-item-cantidad {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            margin-top: 5px;
-        }
-
-        .cantidad-btn {
-            width: 24px;
-            height: 24px;
-            border: 1px solid #e2e8f0;
-            background: white;
-            border-radius: 6px;
-            cursor: pointer;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 0.8rem;
-            transition: all 0.2s;
-        }
-
-        .cantidad-btn:hover {
-            background: #f1f5f9;
-            border-color: #3b82f6;
-        }
-
-        .carrito-item-cantidad span {
-            min-width: 30px;
-            text-align: center;
-            font-size: 0.9rem;
-            font-weight: 500;
-        }
-
-        .carrito-item-total {
-            font-weight: 700;
-            color: #1e293b;
-            font-size: 0.9rem;
-            min-width: 60px;
-            text-align: right;
-        }
-
-        .carrito-item-eliminar {
-            color: #ef4444;
-            cursor: pointer;
-            padding: 5px;
-            transition: all 0.2s;
-        }
-
-        .carrito-item-eliminar:hover {
-            color: #dc2626;
-            transform: scale(1.1);
-        }
-
-        .carrito-footer {
-            padding: 20px;
-            border-top: 1px solid #e2e8f0;
-            background: #f8fafc;
-            border-radius: 0 0 16px 16px;
-        }
-
-        .carrito-total {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 20px;
-            font-size: 1.2rem;
-            font-weight: 700;
-        }
-
-        .carrito-total span:last-child {
-            color: #3b82f6;
-            font-size: 1.4rem;
-        }
-
-        .cliente-select {
-            margin-bottom: 15px;
-        }
-
-        .cliente-select label {
-            display: block;
-            font-size: 0.8rem;
-            color: #64748b;
-            margin-bottom: 5px;
-        }
-
-        .cliente-select select {
-            width: 100%;
-            padding: 10px;
-            border: 1px solid #e2e8f0;
-            border-radius: 8px;
-            font-size: 0.9rem;
-        }
-
-        .btn-pagar {
-            width: 100%;
-            padding: 12px;
-            background: #3b82f6;
-            color: white;
-            border: none;
-            border-radius: 10px;
-            font-size: 1rem;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-        }
-
-        .btn-pagar:hover {
-            background: #2563eb;
-            transform: translateY(-2px);
-        }
-
-        .btn-pagar:disabled {
-            background: #94a3b8;
-            cursor: not-allowed;
-            transform: none;
-        }
-
-        @media (max-width: 968px) {
-            .ventas-grid {
-                grid-template-columns: 1fr;
-            }
-            
-            .carrito-section {
-                position: static;
-            }
-        }
-
-        /* Estilos para el modal personalizado */
-        .custom-modal-content {
-            border-radius: 20px;
-        }
-        
-        .modal-header-solid {
-            background: #1e293b;
-            color: white;
-            padding: 20px;
-            border-radius: 20px 20px 0 0;
-        }
-        
-        .modal-body-solid {
-            padding: 25px;
-            background: white;
-        }
-        
-        .modal-footer-solid {
-            padding: 15px 25px;
-            background: #f8fafc;
-            border-radius: 0 0 20px 20px;
-        }
-    </style>
+    <link rel="stylesheet" href="css/ventas.css">
 </head>
 <body>
     <div class="main-content">
         <div class="ventas-container">
-            <div class="ventas-header">
-                <h1>
-                    Venta de Productos
-                </h1>
-            </div>
+            <header class="ventas-header ventas-header-minimal">
+                <h1><i class="fas fa-cash-register" aria-hidden="true"></i> Venta de productos</h1>
+            </header>
 
             <div class="ventas-grid">
                 <div class="productos-section">
                     <div class="section-header">
-                        <h2>
-                            <i class="fas fa-box"></i>
-                            Productos Disponibles
-                        </h2>
+                        <div class="section-heading">
+                            <h2>Productos disponibles</h2>
+                            <div class="section-meta"><span id="productosVisibles"><?php echo count($productos); ?></span> productos</div>
+                        </div>
                         <div class="search-box">
                             <i class="fas fa-search"></i>
-                            <input type="text" id="searchProducto" placeholder="Buscar producto...">
+                            <input type="search" id="searchProducto" placeholder="Buscar por nombre o categoría..." autocomplete="off">
+                            <button type="button" class="clear-search" id="clearSearch" aria-label="Limpiar búsqueda">
+                                <i class="fas fa-xmark"></i>
+                            </button>
                         </div>
                     </div>
                     <div class="productos-grid" id="productosGrid">
                         <?php foreach ($productos as $producto): ?>
-                            <div class="producto-card" data-id="<?php echo $producto['id']; ?>" data-nombre="<?php echo htmlspecialchars($producto['nombre']); ?>" data-precio="<?php echo $producto['precio_venta']; ?>" data-stock="<?php echo $producto['stock']; ?>" data-imagen="<?php echo $producto['foto']; ?>">
+                            <div class="producto-card"
+                                 role="button"
+                                 tabindex="0"
+                                 aria-label="Agregar <?php echo htmlspecialchars($producto['nombre']); ?> al carrito"
+                                 data-id="<?php echo $producto['id']; ?>"
+                                 data-nombre="<?php echo htmlspecialchars($producto['nombre']); ?>"
+                                 data-categoria="<?php echo htmlspecialchars($producto['categoria_nombre'] ?? 'Sin categoría'); ?>"
+                                 data-precio="<?php echo $producto['precio_venta']; ?>"
+                                 data-stock="<?php echo $producto['stock']; ?>"
+                                 data-imagen="<?php echo htmlspecialchars($producto['foto'] ?? ''); ?>">
+                                <div class="producto-card-top">
+                                    <span class="producto-categoria"><?php echo htmlspecialchars($producto['categoria_nombre'] ?? 'Sin categoría'); ?></span>
+                                    <span class="producto-stock-badge <?php echo $producto['stock'] <= $producto['stock_minimo'] ? 'bajo' : ''; ?>">
+                                        <?php echo (int) $producto['stock']; ?> disp.
+                                    </span>
+                                </div>
                                 <div class="producto-imagen">
                                     <?php if (!empty($producto['foto']) && file_exists($producto['foto'])): ?>
-                                        <img src="<?php echo htmlspecialchars($producto['foto']); ?>" alt="<?php echo htmlspecialchars($producto['nombre']); ?>">
+                                        <img src="<?php echo htmlspecialchars($producto['foto']); ?>" alt="<?php echo htmlspecialchars($producto['nombre']); ?>" loading="lazy">
                                     <?php else: ?>
                                         <i class="fas fa-box-open"></i>
                                     <?php endif; ?>
                                 </div>
-                                <div class="producto-nombre"><?php echo htmlspecialchars($producto['nombre']); ?></div>
-                                <div class="producto-precio">$<?php echo number_format($producto['precio_venta'], 2); ?></div>
-                                <div class="producto-stock <?php echo $producto['stock'] <= $producto['stock_minimo'] ? 'bajo' : ''; ?>">
-                                    Stock: <?php echo $producto['stock']; ?> unidades
+                                <div class="producto-contenido">
+                                    <div class="producto-nombre"><?php echo htmlspecialchars($producto['nombre']); ?></div>
+                                    <div class="producto-footer">
+                                        <div>
+                                            <div class="producto-precio">$<?php echo number_format($producto['precio_venta'], 2); ?></div>
+                                            <div class="producto-stock <?php echo $producto['stock'] <= $producto['stock_minimo'] ? 'bajo' : ''; ?>">
+                                                <?php echo $producto['stock'] <= $producto['stock_minimo'] ? 'Stock bajo' : 'Disponible'; ?>
+                                            </div>
+                                        </div>
+                                        <span class="producto-add" aria-hidden="true"><i class="fas fa-plus"></i></span>
+                                    </div>
                                 </div>
                             </div>
                         <?php endforeach; ?>
                     </div>
+                    <div class="sin-resultados" id="sinResultados">
+                        <i class="fas fa-magnifying-glass"></i>
+                        <strong>No encontramos productos</strong>
+                        <span>Prueba con otro nombre o categoría.</span>
+                    </div>
                 </div>
 
-                <div class="carrito-section">
+                <aside class="carrito-section" aria-label="Carrito de compra">
                     <div class="carrito-header">
-                        <h2>
-                            <i class="fas fa-shopping-cart"></i>
-                            Carrito de Compras
-                        </h2>
+                        <div class="carrito-heading">
+                            <h2><i class="fas fa-cart-shopping"></i> Carrito</h2>
+                        </div>
+                        <div class="carrito-header-actions">
+                            <span class="carrito-badge" id="carritoCantidad">0</span>
+                            <button type="button" class="btn-vaciar" id="btnVaciarCarrito" aria-label="Vaciar carrito" title="Vaciar carrito">
+                                <i class="fas fa-trash-can"></i>
+                            </button>
+                        </div>
                     </div>
                     <div class="carrito-items" id="carritoItems">
                         <div class="carrito-vacio">
-                            <i class="fas fa-shopping-basket"></i>
-                            <p>No hay productos en el carrito</p>
-                            <small>Haz clic en un producto para agregarlo</small>
+                            <div class="empty-icon"><i class="fas fa-basket-shopping"></i></div>
+                            <p>Tu carrito está vacío</p>
+                            <small>Selecciona un producto del catálogo para comenzar la venta.</small>
                         </div>
                     </div>
                     <div class="carrito-footer">
                         <div class="cliente-select">
                             <label><i class="fas fa-user"></i> Cliente (Opcional)</label>
                             <select id="clienteId">
-                                <option value="">Venta al publico (sin cliente)</option>
+                                <option value="">Venta al público (sin cliente)</option>
                                 <?php while ($cliente = $result_clientes->fetch_assoc()): ?>
                                     <option value="<?php echo $cliente['id']; ?>">
                                         <?php echo htmlspecialchars($cliente['nombre'] . ' ' . $cliente['apellido']); ?>
@@ -531,15 +161,19 @@ $result_clientes = $conn->query($query_clientes);
                             </select>
                         </div>
                         <div class="carrito-total">
-                            <span>Total:</span>
-                            <span id="totalCarrito">$0.00</span>
+                            <div class="carrito-total-label">
+                                <span>Total de la venta</span>
+                                <small id="carritoResumenTexto">0 artículos</small>
+                            </div>
+                            <strong id="totalCarrito">$0.00</strong>
                         </div>
-                        <button class="btn-pagar" id="btnPagar">
-                            <i class="fas fa-credit-card"></i>
-                            Proceder al Pago
+                        <button class="btn-pagar" id="btnPagar" disabled>
+                            <i class="fas fa-arrow-right-to-bracket"></i>
+                            Cobrar venta
                         </button>
+                        <div class="pago-seguro"><i class="fas fa-shield-halved"></i> El cobro se valida antes de registrar la venta</div>
                     </div>
-                </div>
+                </aside>
             </div>
         </div>
     </div>
@@ -547,12 +181,37 @@ $result_clientes = $conn->query($query_clientes);
     <script>
     let carrito = [];
 
+    const moneyFormatter = new Intl.NumberFormat('es-MX', {
+        style: 'currency',
+        currency: 'MXN'
+    });
+
+    function formatMoney(value) {
+        return moneyFormatter.format(Number(value) || 0);
+    }
+
+    function escapeHtml(value) {
+        return String(value ?? '').replace(/[&<>'"]/g, character => ({
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            "'": '&#039;',
+            '"': '&quot;'
+        }[character]));
+    }
+
     function loadCart() {
         const savedCart = localStorage.getItem('carritoVentas');
         if (savedCart) {
-            carrito = JSON.parse(savedCart);
-            updateCartDisplay();
+            try {
+                const parsed = JSON.parse(savedCart);
+                carrito = Array.isArray(parsed) ? parsed : [];
+            } catch (error) {
+                localStorage.removeItem('carritoVentas');
+                carrito = [];
+            }
         }
+        updateCartDisplay();
     }
 
     function saveCart() {
@@ -650,475 +309,604 @@ $result_clientes = $conn->query($query_clientes);
     function updateCartDisplay() {
         const carritoContainer = document.getElementById('carritoItems');
         const totalSpan = document.getElementById('totalCarrito');
-        
+        const payButton = document.getElementById('btnPagar');
+        const cartBadge = document.getElementById('carritoCantidad');
+        const headerCartCount = document.getElementById('headerCartCount');
+        const summaryText = document.getElementById('carritoResumenTexto');
+        const clearButton = document.getElementById('btnVaciarCarrito');
+        const totalItems = carrito.reduce((sum, item) => sum + Number(item.cantidad || 0), 0);
+
+        cartBadge.textContent = totalItems;
+        if (headerCartCount) headerCartCount.textContent = totalItems;
+        summaryText.textContent = `${totalItems} ${totalItems === 1 ? 'artículo' : 'artículos'}`;
+        clearButton.classList.toggle('visible', totalItems > 0);
+
         if (carrito.length === 0) {
             carritoContainer.innerHTML = `
                 <div class="carrito-vacio">
-                    <i class="fas fa-shopping-basket"></i>
-                    <p>No hay productos en el carrito</p>
-                    <small>Haz clic en un producto para agregarlo</small>
+                    <div class="empty-icon"><i class="fas fa-basket-shopping"></i></div>
+                    <p>Tu carrito está vacío</p>
+                    <small>Selecciona un producto del catálogo para comenzar la venta.</small>
                 </div>
             `;
-            totalSpan.textContent = '$0.00';
-            document.getElementById('btnPagar').disabled = true;
+            totalSpan.textContent = formatMoney(0);
+            payButton.disabled = true;
             return;
         }
-        
+
         let total = 0;
         let html = '';
-        
+
         carrito.forEach(item => {
-            const subtotal = item.precio * item.cantidad;
+            const itemId = Number(item.id);
+            const itemPrice = Number(item.precio) || 0;
+            const itemQuantity = Number(item.cantidad) || 0;
+            const subtotal = itemPrice * itemQuantity;
+            const safeName = escapeHtml(item.nombre);
+            const safeImage = escapeHtml(item.imagen);
             total += subtotal;
-            
+
             html += `
                 <div class="carrito-item">
                     <div class="carrito-item-imagen">
-                        ${item.imagen && item.imagen !== 'null' ? 
-                            '<img src="' + item.imagen + '" alt="' + item.nombre + '">' : 
-                            '<i class="fas fa-box-open"></i>'
+                        ${safeImage && safeImage !== 'null'
+                            ? `<img src="${safeImage}" alt="${safeName}" loading="lazy">`
+                            : '<i class="fas fa-box-open"></i>'
                         }
                     </div>
                     <div class="carrito-item-info">
-                        <div class="carrito-item-nombre">${item.nombre}</div>
-                        <div class="carrito-item-precio">$${item.precio.toFixed(2)} c/u</div>
+                        <div class="carrito-item-nombre" title="${safeName}">${safeName}</div>
+                        <div class="carrito-item-precio">${formatMoney(itemPrice)} por unidad</div>
                         <div class="carrito-item-cantidad">
-                            <button class="cantidad-btn" onclick="updateQuantity(${item.id}, -1)">-</button>
-                            <span>${item.cantidad}</span>
-                            <button class="cantidad-btn" onclick="updateQuantity(${item.id}, 1)">+</button>
+                            <button type="button" class="cantidad-btn" onclick="updateQuantity(${itemId}, -1)" aria-label="Disminuir cantidad">
+                                <i class="fas fa-minus"></i>
+                            </button>
+                            <span>${itemQuantity}</span>
+                            <button type="button" class="cantidad-btn" onclick="updateQuantity(${itemId}, 1)" aria-label="Aumentar cantidad">
+                                <i class="fas fa-plus"></i>
+                            </button>
                         </div>
                     </div>
-                    <div class="carrito-item-total">
-                        $${subtotal.toFixed(2)}
-                    </div>
-                    <div class="carrito-item-eliminar" onclick="removeFromCart(${item.id})">
-                        <i class="fas fa-trash-alt"></i>
+                    <div class="carrito-item-side">
+                        <div class="carrito-item-total">${formatMoney(subtotal)}</div>
+                        <button type="button" class="carrito-item-eliminar" onclick="removeFromCart(${itemId})" aria-label="Eliminar ${safeName}">
+                            <i class="fas fa-trash-can"></i>
+                        </button>
                     </div>
                 </div>
             `;
         });
-        
+
         carritoContainer.innerHTML = html;
-        totalSpan.textContent = '$' + total.toFixed(2);
-        document.getElementById('btnPagar').disabled = false;
+        totalSpan.textContent = formatMoney(total);
+        payButton.disabled = false;
     }
 
-    async function procesarVenta() {
-        if (carrito.length === 0) {
-            Swal.fire({
-                icon: 'warning',
-                title: 'Carrito Vacio',
-                text: 'Agrega productos al carrito antes de pagar',
-                confirmButtonColor: '#3b82f6',
-                confirmButtonText: 'Aceptar'
-            });
-            return;
+    function sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    async function fetchJson(url, options = {}) {
+        const response = await fetch(url, options);
+        const text = await response.text();
+        let data;
+
+        try {
+            data = JSON.parse(text);
+        } catch (error) {
+            throw new Error('El servidor devolvió una respuesta no válida.');
         }
-        
-        const clienteId = document.getElementById('clienteId').value;
-        const clienteNombre = clienteId ? document.getElementById('clienteId').options[document.getElementById('clienteId').selectedIndex].text : 'Venta al publico';
-        const total = carrito.reduce((sum, item) => sum + (item.precio * item.cantidad), 0);
-        
-        // Modal de método de pago
-        const metodoPago = await Swal.fire({
-            title: 'Método de Pago',
-            width: '400px',
-            padding: '1rem',
+
+        if (!response.ok || !data.success) {
+            throw new Error(data.message || 'Ocurrió un error en el servidor.');
+        }
+
+        return data;
+    }
+
+    function nombreMetodoPago(metodo, installments = 1) {
+        if (metodo === 'tarjeta_debito') return 'Tarjeta de débito';
+        if (metodo === 'tarjeta_credito') {
+            return installments > 1
+                ? `Tarjeta de crédito · ${installments} mensualidades`
+                : 'Tarjeta de crédito · una exhibición';
+        }
+        if (metodo === 'transferencia') return 'Transferencia';
+        return 'Efectivo';
+    }
+
+    async function seleccionarMetodoPago(total) {
+        window.metodoSeleccionado = null;
+
+        const resultado = await Swal.fire({
+            title: 'Selecciona el método de pago',
             html: `
-                <div style="text-align: center;">
-                    <div style="background: #f0fdf4; padding: 12px; border-radius: 10px; margin-bottom: 15px;">
-                        <div style="font-size: 0.75rem; color: #166534;">Total a pagar</div>
-                        <div style="font-size: 1.6rem; font-weight: bold; color: #16a34a;">$${total.toFixed(2)}</div>
-                    </div>
-                    <div style="display: flex; flex-direction: column; gap: 10px;">
-                        <button id="btn-efectivo" style="padding: 12px; background: #3b82f6; color: white; border: none; border-radius: 10px; cursor: pointer; font-size: 0.95rem; font-weight: 600;">
-                            Efectivo
-                        </button>
-                        <button id="btn-tarjeta" style="padding: 12px; background: #8b5cf6; color: white; border: none; border-radius: 10px; cursor: pointer; font-size: 0.95rem; font-weight: 600;">
-                            Tarjeta
-                        </button>
-                        <button id="btn-transferencia" style="padding: 12px; background: #10b981; color: white; border: none; border-radius: 10px; cursor: pointer; font-size: 0.95rem; font-weight: 600;">
-                            Transferencia
-                        </button>
-                    </div>
+                <div class="payment-total-card">
+                    <span>Total a cobrar</span>
+                    <strong>${formatMoney(total)}</strong>
+                </div>
+                <div class="payment-options">
+                    <button type="button" id="btn-efectivo" class="payment-option cash">
+                        <span class="payment-icon"><i class="fas fa-money-bill-wave"></i></span>
+                        <strong>Efectivo</strong>
+                        <small>Calcula automáticamente el cambio.</small>
+                    </button>
+                    <button type="button" id="btn-debito" class="payment-option debit">
+                        <span class="payment-icon"><i class="fas fa-credit-card"></i></span>
+                        <strong>Tarjeta de débito</strong>
+                        <small>Envía el cobro a la terminal Point.</small>
+                    </button>
+                    <button type="button" id="btn-credito" class="payment-option credit">
+                        <span class="payment-icon"><i class="fas fa-layer-group"></i></span>
+                        <strong>Tarjeta de crédito</strong>
+                        <small>La terminal mostrará las opciones y MSI disponibles.</small>
+                    </button>
+                    <button type="button" id="btn-transferencia" class="payment-option transfer">
+                        <span class="payment-icon"><i class="fas fa-building-columns"></i></span>
+                        <strong>Transferencia</strong>
+                        <small>Registra el pago en el corte de caja.</small>
+                    </button>
                 </div>
             `,
             showConfirmButton: false,
             showCancelButton: true,
             cancelButtonText: 'Cancelar',
-            cancelButtonColor: '#ef4444',
-            background: 'white',
-            customClass: {
-                popup: 'metodo-pago-modal'
-            },
+            cancelButtonColor: '#dc2626',
+            customClass: { popup: 'swal-modern' },
             didOpen: () => {
-                const style = document.createElement('style');
-                style.textContent = `
-                    .metodo-pago-modal {
-                        max-height: 90vh !important;
-                        overflow-y: hidden !important;
-                    }
-                    .metodo-pago-modal .swal2-html-container {
-                        overflow: visible !important;
-                        padding: 0 !important;
-                    }
-                `;
-                document.head.appendChild(style);
-                
-                document.getElementById('btn-efectivo').onclick = () => { Swal.clickConfirm(); window.metodoSeleccionado = 'efectivo'; };
-                document.getElementById('btn-tarjeta').onclick = () => { Swal.clickConfirm(); window.metodoSeleccionado = 'tarjeta'; };
-                document.getElementById('btn-transferencia').onclick = () => { Swal.clickConfirm(); window.metodoSeleccionado = 'transferencia'; };
+                const elegir = metodo => {
+                    window.metodoSeleccionado = metodo;
+                    Swal.clickConfirm();
+                };
+
+                document.getElementById('btn-efectivo').onclick = () => elegir('efectivo');
+                document.getElementById('btn-debito').onclick = () => elegir('tarjeta_debito');
+                document.getElementById('btn-credito').onclick = () => elegir('tarjeta_credito');
+                document.getElementById('btn-transferencia').onclick = () => elegir('transferencia');
             },
             preConfirm: () => window.metodoSeleccionado
         });
-        
-        if (!metodoPago.value) return;
-        
-        let montoRecibido = total;
-        if (metodoPago.value === 'efectivo') {
-            const pago = await Swal.fire({
-                title: 'Pago en Efectivo',
-                width: '420px',
-                padding: '1rem',
-                showConfirmButton: true,
-                showCancelButton: true,
-                confirmButtonText: 'Aceptar',
-                cancelButtonText: 'Cancelar',
-                confirmButtonColor: '#3b82f6',
-                cancelButtonColor: '#ef4444',
+
+        return resultado.value || null;
+    }
+
+    async function solicitarMontoEfectivo(total) {
+        const resultado = await Swal.fire({
+            title: 'Pago en efectivo',
+            html: `
+                <div class="cash-summary">
+                    <span>Total a pagar</span>
+                    <strong>${formatMoney(total)}</strong>
+                </div>
+                <label class="swal-field-label" for="monto-recibido">Monto recibido</label>
+                <input type="number" id="monto-recibido" class="swal2-input swal-input-modern" value="${total.toFixed(2)}" min="${total.toFixed(2)}" step="0.01" inputmode="decimal">
+                <div id="cambio-preview" class="cash-change">Cambio: ${formatMoney(0)}</div>
+            `,
+            showCancelButton: true,
+            confirmButtonText: 'Aceptar',
+            cancelButtonText: 'Cancelar',
+            confirmButtonColor: '#2563eb',
+            customClass: { popup: 'swal-modern' },
+            didOpen: () => {
+                const input = document.getElementById('monto-recibido');
+                const preview = document.getElementById('cambio-preview');
+                const update = () => {
+                    const value = parseFloat(input.value) || 0;
+                    const change = value - total;
+                    preview.textContent = change >= 0
+                        ? `Cambio: ${formatMoney(change)}`
+                        : `Faltan: ${formatMoney(Math.abs(change))}`;
+                    preview.style.color = change >= 0 ? '#047857' : '#dc2626';
+                };
+                input.addEventListener('input', update);
+                input.focus();
+                input.select();
+                update();
+            },
+            preConfirm: () => {
+                const value = parseFloat(document.getElementById('monto-recibido').value);
+                if (!Number.isFinite(value) || value < total) {
+                    Swal.showValidationMessage('El monto debe ser mayor o igual al total.');
+                    return false;
+                }
+                return value;
+            }
+        });
+
+        return resultado.isConfirmed ? Number(resultado.value) : null;
+    }
+
+    async function crearOrdenPoint(total, paymentType) {
+        return fetchJson('api/mercadopago/crear_orden.php', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                items: carrito,
+                total,
+                payment_type: paymentType
+            })
+        });
+    }
+
+    async function consultarOrdenPoint(orderId) {
+        return fetchJson('api/mercadopago/consultar_orden.php', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ order_id: orderId })
+        });
+    }
+
+    async function cancelarOrdenPoint(orderId) {
+        return fetchJson('api/mercadopago/cancelar_orden.php', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ order_id: orderId })
+        });
+    }
+
+    async function esperarPagoPoint(order) {
+        let settled = false;
+        let polling = true;
+        let latest = null;
+        const startedAt = Date.now();
+        const maxWaitMs = 190000;
+
+        return new Promise((resolve, reject) => {
+            const finish = value => {
+                if (settled) return;
+                settled = true;
+                polling = false;
+                Swal.close();
+                resolve(value);
+            };
+
+            const fail = error => {
+                if (settled) return;
+                settled = true;
+                polling = false;
+                Swal.close();
+                reject(error);
+            };
+
+            Swal.fire({
+                title: 'Esperando pago en terminal',
                 html: `
-                    <div style="text-align: center;">
-                        <!-- Mostrar total -->
-                        <div style="background: #f8fafc; padding: 12px; border-radius: 8px; margin-bottom: 20px;">
-                            <div style="font-size: 0.75rem; color: #64748b; margin-bottom: 4px;">Total a pagar</div>
-                            <div style="font-size: 1.8rem; font-weight: bold; color: #1e293b;">$${total.toFixed(2)}</div>
-                        </div>
-                        
-                        <!-- Input para monto recibido -->
-                        <div style="margin-bottom: 20px;">
-                            <label style="display: block; font-size: 0.8rem; color: #1e293b; margin-bottom: 8px; font-weight: 500; text-align: left;">
-                                Monto recibido
-                            </label>
-                            <div style="position: relative;">
-                                <span style="position: absolute; left: 12px; top: 50%; transform: translateY(-50%); font-size: 1rem; font-weight: bold; color: #64748b;">$</span>
-                                <input type="number" id="monto-recibido" 
-                                    value="${total}" 
-                                    step="0.01" 
-                                    min="${total}"
-                                    style="width: 100%; padding: 12px 12px 12px 28px; border-radius: 8px; border: 1px solid #e2e8f0; font-size: 1.1rem; text-align: left; box-sizing: border-box; outline: none; transition: all 0.2s;"
-                                    onfocus="this.style.borderColor='#3b82f6'; this.style.boxShadow='0 0 0 2px rgba(59,130,246,0.1)';"
-                                    onblur="this.style.borderColor='#e2e8f0'; this.style.boxShadow='none';">
-                            </div>
-                        </div>
-                        
-                        <!-- Preview del cambio -->
-                        <div id="cambio-preview" style="background: #f1f5f9; padding: 12px; border-radius: 8px;">
-                            <span style="color: #64748b; font-size: 0.85rem;">Cambio para el cliente:</span>
-                            <div style="font-size: 1.4rem; font-weight: bold; color: #3b82f6; margin-top: 4px;">$0.00</div>
-                        </div>
-                    </div>
+                    <div class="point-wait-icon"><i class="fas fa-credit-card"></i></div>
+                    <div style="font-size:.84rem;color:#475569;line-height:1.55;text-align:center;">Completa el cobro en la terminal Point. No cierres esta ventana hasta recibir la confirmación.</div>
+                    <div class="point-order-card">Orden: ${escapeHtml(order.order_id)}</div>
+                    <div id="mp-status-live" class="point-status-live">Estado: creada</div>
                 `,
-                didOpen: () => {
-                    // Eliminar scroll del modal
-                    const modal = Swal.getPopup();
-                    if (modal) {
-                        modal.style.overflow = 'visible';
-                        modal.style.maxHeight = 'none';
-                        modal.style.height = 'auto';
-                    }
-                    
-                    const htmlContainer = Swal.getHtmlContainer();
-                    if (htmlContainer) {
-                        htmlContainer.style.overflow = 'visible';
-                        htmlContainer.style.padding = '0';
-                        htmlContainer.style.height = 'auto';
-                    }
-                    
-                    // Obtener elementos
-                    const input = document.getElementById('monto-recibido');
-                    const preview = document.getElementById('cambio-preview');
-                    
-                    if (!input || !preview) return;
-                    
-                    // Enfocar el input
-                    setTimeout(() => {
-                        input.focus();
-                        input.select();
-                    }, 100);
-                    
-                    // Función para actualizar el cambio
-                    const actualizarCambio = () => {
-                        let recibido = parseFloat(input.value) || 0;
-                        let cambio = recibido - total;
-                        
-                        if (cambio >= 0) {
-                            preview.innerHTML = `
-                                <span style="color: #64748b; font-size: 0.85rem;">Cambio para el cliente:</span>
-                                <div style="font-size: 1.4rem; font-weight: bold; color: #16a34a; margin-top: 4px;">$${cambio.toFixed(2)}</div>
-                            `;
-                        } else {
-                            preview.innerHTML = `
-                                <span style="color: #64748b; font-size: 0.85rem;">Cambio para el cliente:</span>
-                                <div style="font-size: 1.4rem; font-weight: bold; color: #ef4444; margin-top: 4px;">$0.00</div>
-                                <div style="color: #ef4444; font-size: 0.7rem; margin-top: 4px;">Faltan $${Math.abs(cambio).toFixed(2)}</div>
-                            `;
-                        }
-                    };
-                    
-                    // Eventos del input
-                    input.addEventListener('input', actualizarCambio);
-                    input.addEventListener('change', actualizarCambio);
-                    
-                    // Actualizar cambio inicial
-                    actualizarCambio();
-                    
-                    // Enter para confirmar
-                    input.addEventListener('keypress', (e) => {
-                        if (e.key === 'Enter') {
-                            e.preventDefault();
-                            const recibido = parseFloat(input.value);
-                            if (!isNaN(recibido) && recibido >= total) {
-                                Swal.clickConfirm();
-                            } else {
-                                Swal.showValidationMessage('El monto debe ser mayor o igual al total');
+                showConfirmButton: false,
+                showCancelButton: true,
+                cancelButtonText: 'Cancelar cobro',
+                cancelButtonColor: '#ef4444',
+                allowOutsideClick: false,
+                allowEscapeKey: false,
+                customClass: { popup: 'swal-modern' },
+                didOpen: async () => {
+                    while (polling && !settled) {
+                        try {
+                            latest = await consultarOrdenPoint(order.order_id);
+                            const statusNode = document.getElementById('mp-status-live');
+                            if (statusNode) {
+                                statusNode.textContent = `Orden: ${latest.order_status || '-'} · Pago: ${latest.payment_status || '-'}`;
                             }
+
+                            if (latest.paid) {
+                                finish(latest);
+                                return;
+                            }
+
+                            if (latest.final_failure) {
+                                fail(new Error(
+                                    `El pago terminó en estado ${latest.payment_status || latest.order_status}.`
+                                ));
+                                return;
+                            }
+                        } catch (error) {
+                            console.error('Consulta Point:', error);
                         }
-                    });
-                },
-                preConfirm: () => {
-                    const input = document.getElementById('monto-recibido');
-                    if (!input) return false;
-                    
-                    const recibido = parseFloat(input.value);
-                    if (isNaN(recibido)) {
-                        Swal.showValidationMessage('Ingrese un monto válido');
-                        return false;
+
+                        if (Date.now() - startedAt >= maxWaitMs) {
+                            fail(new Error('El tiempo para completar el pago terminó. La orden puede consultarse con su ID.'));
+                            return;
+                        }
+
+                        await sleep(2200);
                     }
-                    if (recibido < total) {
-                        Swal.showValidationMessage('El monto debe ser mayor o igual al total');
-                        return false;
+                }
+            }).then(async result => {
+                if (settled || result.isConfirmed) return;
+
+                polling = false;
+                try {
+                    const canceled = await cancelarOrdenPoint(order.order_id);
+                    if (canceled.requires_terminal) {
+                        await Swal.fire({
+                            icon: 'warning',
+                            title: 'Cancela en la terminal',
+                            text: canceled.message || 'La orden ya está en la Point y debe cancelarse desde allí.'
+                        });
                     }
-                    return recibido;
+                    finish(null);
+                } catch (error) {
+                    fail(error);
                 }
             });
-            
-            if (!pago.value) return;
-            montoRecibido = pago.value;
+        });
+    }
+
+    async function registrarVentaLocal(payload) {
+        return fetchJson('procesar_venta.php', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+    }
+
+    async function mostrarTicketVenta(result, contexto) {
+        const gymLogo = '<?php echo addslashes($gym_logo); ?>';
+        const gymNombre = '<?php echo addslashes($gym_nombre); ?>';
+        const { total, metodo, installments, montoRecibido, cambio, clienteId, clienteNombre } = contexto;
+        let logoHtml = gymLogo
+            ? `<img src="${gymLogo}" alt="${gymNombre}" style="max-width:60px;max-height:60px;margin-bottom:5px;">`
+            : '';
+        let ticketHtml = `
+            <div style="text-align:center;font-family:'Courier New',monospace;max-width:300px;margin:0 auto;">
+                ${logoHtml}
+                <div style="font-weight:bold;font-size:16px;">${gymNombre}</div>
+                <div style="font-size:11px;margin:3px 0;">Ticket de Venta #${result.venta_id}</div>
+                <div style="font-size:11px;margin:3px 0;">${new Date().toLocaleString()}</div>
+                <hr style="border:1px dashed #000;margin:8px 0;">
+        `;
+
+        carrito.forEach(item => {
+            ticketHtml += `
+                <div style="text-align:left;margin:5px 0;">
+                    <div style="font-weight:bold;">${item.nombre} x${item.cantidad}</div>
+                    <div style="text-align:right;">$${(item.precio * item.cantidad).toFixed(2)}</div>
+                </div>
+            `;
+        });
+
+        ticketHtml += `
+                <hr style="border:1px dashed #000;margin:8px 0;">
+                <div style="display:flex;justify-content:space-between;margin:5px 0;"><strong>TOTAL</strong><strong>$${total.toFixed(2)}</strong></div>
+                <div style="display:flex;justify-content:space-between;margin:3px 0;"><span>Método:</span><span>${nombreMetodoPago(metodo, installments)}</span></div>
+                ${metodo === 'efectivo' ? `
+                    <div style="display:flex;justify-content:space-between;margin:3px 0;"><span>Recibido:</span><span>$${montoRecibido.toFixed(2)}</span></div>
+                    <div style="display:flex;justify-content:space-between;margin:3px 0;"><span>Cambio:</span><span>$${cambio.toFixed(2)}</span></div>
+                ` : ''}
+                ${clienteId ? `<div style="display:flex;justify-content:space-between;margin:3px 0;"><span>Cliente:</span><span>${clienteNombre}</span></div>` : ''}
+                ${result.mp_order_id ? `<div style="margin-top:6px;font-size:8px;color:#666;overflow-wrap:anywhere;">MP Order: ${result.mp_order_id}</div>` : ''}
+                <hr style="border:1px dashed #000;margin:8px 0;">
+                <div style="margin-top:8px;"><div>Gracias por su compra</div><div style="font-size:9px;color:#666;">Este ticket es su comprobante de pago</div></div>
+            </div>
+        `;
+
+        const modal = await Swal.fire({
+            title: 'Venta completada',
+            html: ticketHtml,
+            icon: 'success',
+            width: '450px',
+            confirmButtonText: 'Descargar Ticket PDF',
+            showCancelButton: true,
+            cancelButtonText: 'Cerrar',
+            confirmButtonColor: '#3b82f6',
+            cancelButtonColor: '#94a3b8'
+        });
+
+        if (modal.isConfirmed && result.ticket_url) {
+            window.open(result.ticket_url, '_blank');
         }
-        
-        const cambio = metodoPago.value === 'efectivo' ? (montoRecibido - total) : 0;
-        
-        // Variable para controlar si ya se confirmó
-        let confirmButtonClicked = false;
-        
+    }
+
+    async function procesarVenta() {
+        if (carrito.length === 0) {
+            await Swal.fire('Carrito vacío', 'Agrega productos antes de pagar.', 'warning');
+            return;
+        }
+
+        const clienteSelect = document.getElementById('clienteId');
+        const clienteId = clienteSelect.value;
+        const clienteNombre = clienteId
+            ? clienteSelect.options[clienteSelect.selectedIndex].text
+            : 'Venta al público';
+        const total = carrito.reduce((sum, item) => sum + item.precio * item.cantidad, 0);
+        const metodo = await seleccionarMetodoPago(total);
+
+        if (!metodo) return;
+
+        let installments = 1;
+        let montoRecibido = total;
+        let mpPayment = null;
+
+        if (metodo === 'efectivo') {
+            const cash = await solicitarMontoEfectivo(total);
+            if (cash === null) return;
+            montoRecibido = cash;
+        }
+
+        const cambio = metodo === 'efectivo' ? montoRecibido - total : 0;
         const confirmacion = await Swal.fire({
-            title: 'Confirmar Venta',
+            title: 'Confirmar venta',
             html: `
-                <div style="text-align: left;">
-                    <div style="background: #1e293b; padding: 15px; border-radius: 12px; color: white; margin-bottom: 15px; text-align: center;">
-                        <div style="font-size: 0.8rem;">Total a pagar</div>
-                        <div style="font-size: 1.8rem; font-weight: bold;">$${total.toFixed(2)}</div>
-                    </div>
-                    <div style="display: grid; gap: 8px;">
-                        <div style="display: flex; justify-content: space-between; padding: 10px; background: #f8fafc; border-radius: 8px;">
-                            <span>Metodo de pago</span>
-                            <span style="font-weight: 600; text-transform: capitalize;">${metodoPago.value}</span>
-                        </div>
-                        ${metodoPago.value === 'efectivo' ? `
-                        <div style="display: flex; justify-content: space-between; padding: 10px; background: #f8fafc; border-radius: 8px;">
-                            <span>Recibido</span>
-                            <span style="font-weight: 600;">$${montoRecibido.toFixed(2)}</span>
-                        </div>
-                        <div style="display: flex; justify-content: space-between; padding: 10px; background: #f0fdf4; border-radius: 8px;">
-                            <span>Cambio</span>
-                            <span style="font-weight: 600;">$${cambio.toFixed(2)}</span>
-                        </div>
-                        ` : ''}
-                        ${clienteId ? `
-                        <div style="display: flex; justify-content: space-between; padding: 10px; background: #f8fafc; border-radius: 8px;">
-                            <span>Cliente</span>
-                            <span style="font-weight: 600;">${clienteNombre}</span>
-                        </div>
-                        ` : ''}
-                    </div>
+                <div class="confirm-total-card">
+                    <span>Total a cobrar</span>
+                    <strong>${formatMoney(total)}</strong>
+                </div>
+                <div class="confirm-list">
+                    <div class="confirm-row"><span>Método</span><strong>${nombreMetodoPago(metodo, installments)}</strong></div>
+                    <div class="confirm-row"><span>Productos</span><strong>${carrito.reduce((sum, item) => sum + Number(item.cantidad || 0), 0)} artículos</strong></div>
+                    ${clienteId ? `<div class="confirm-row"><span>Cliente</span><strong>${escapeHtml(clienteNombre)}</strong></div>` : ''}
+                    ${metodo === 'tarjeta_credito' ? `<div class="confirm-row"><span>Mensualidades</span><strong>Se seleccionan en la terminal</strong></div>` : ''}
                 </div>
             `,
             icon: 'question',
             showCancelButton: true,
-            confirmButtonText: 'Confirmar Venta',
+            confirmButtonText: metodo.startsWith('tarjeta_') ? 'Enviar a terminal' : 'Confirmar venta',
             cancelButtonText: 'Cancelar',
             confirmButtonColor: '#10b981',
-            cancelButtonColor: '#ef4444',
-            didOpen: () => {
-                // Obtener el botón de confirmar
-                const confirmButton = Swal.getConfirmButton();
-                
-                // Deshabilitar el botón después del primer click
-                confirmButton.addEventListener('click', (e) => {
-                    if (confirmButtonClicked) {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        return false;
-                    }
-                    confirmButtonClicked = true;
-                    confirmButton.disabled = true;
-                    confirmButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Procesando...';
-                });
-            }
+            cancelButtonColor: '#dc2626',
+            customClass: { popup: 'swal-modern' }
         });
-        
+
         if (!confirmacion.isConfirmed) return;
-        
-        // Mostrar loading
-        Swal.fire({
-            title: 'Procesando venta',
-            text: 'Por favor espere',
-            allowOutsideClick: false,
-            didOpen: () => {
-                Swal.showLoading();
-            }
-        });
-        
+
         try {
-            const response = await fetch('procesar_venta.php', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    cliente_id: clienteId || null,
-                    items: carrito,
-                    total: total,
-                    metodo_pago: metodoPago.value,
-                    monto_recibido: metodoPago.value === 'efectivo' ? montoRecibido : null,
-                    cliente_nombre: clienteNombre
-                })
-            });
-            
-            const result = await response.json();
-            
-            if (result.success) {
-                let logoHtml = '';
-                const gymLogo = '<?php echo addslashes($gym_logo); ?>';
-                const gymNombre = '<?php echo addslashes($gym_nombre); ?>';
-                
-                if (gymLogo && gymLogo !== '') {
-                    logoHtml = '<img src="' + gymLogo + '" alt="' + gymNombre + '" style="max-width: 60px; max-height: 60px; margin-bottom: 5px;">';
-                }
-                
-                let ticketHtml = `
-                    <div style="text-align: center; font-family: 'Courier New', monospace; max-width: 300px; margin: 0 auto;">
-                        ${logoHtml}
-                        <div style="font-weight: bold; font-size: 16px;">${gymNombre}</div>
-                        <div style="font-size: 11px; margin: 3px 0;">Ticket de Venta #${result.venta_id}</div>
-                        <div style="font-size: 11px; margin: 3px 0;">${new Date().toLocaleString()}</div>
-                        <hr style="border: 1px dashed #000; margin: 8px 0;">
-                `;
-                
-                carrito.forEach(item => {
-                    ticketHtml += `
-                        <div style="text-align: left; margin: 5px 0;">
-                            <div style="font-weight: bold;">${item.nombre} x${item.cantidad}</div>
-                            <div style="text-align: right;">$${(item.precio * item.cantidad).toFixed(2)}</div>
-                        </div>
-                    `;
+            if (metodo === 'tarjeta_debito' || metodo === 'tarjeta_credito') {
+                Swal.fire({
+                    title: 'Creando orden',
+                    text: 'Enviando el cobro a la terminal Point.',
+                    allowOutsideClick: false,
+                    didOpen: () => Swal.showLoading()
                 });
-                
-                ticketHtml += `
-                        <hr style="border: 1px dashed #000; margin: 8px 0;">
-                        <div style="display: flex; justify-content: space-between; margin: 5px 0;">
-                            <strong>TOTAL</strong>
-                            <strong>$${total.toFixed(2)}</strong>
-                        </div>
-                        <div style="display: flex; justify-content: space-between; margin: 3px 0;">
-                            <span>Metodo:</span>
-                            <span style="text-transform: capitalize;">${metodoPago.value}</span>
-                        </div>
-                        ${metodoPago.value === 'efectivo' ? `
-                        <div style="display: flex; justify-content: space-between; margin: 3px 0;">
-                            <span>Recibido:</span>
-                            <span>$${montoRecibido.toFixed(2)}</span>
-                        </div>
-                        <div style="display: flex; justify-content: space-between; margin: 3px 0;">
-                            <span>Cambio:</span>
-                            <span>$${cambio.toFixed(2)}</span>
-                        </div>
-                        ` : ''}
-                        ${clienteId ? `
-                        <div style="display: flex; justify-content: space-between; margin: 3px 0;">
-                            <span>Cliente:</span>
-                            <span>${clienteNombre}</span>
-                        </div>
-                        ` : ''}
-                        <hr style="border: 1px dashed #000; margin: 8px 0;">
-                        <div style="margin-top: 8px;">
-                            <div>Gracias por su compra</div>
-                            <div style="font-size: 9px; color: #666;">Este ticket es su comprobante de pago</div>
-                        </div>
-                    </div>
-                `;
-                
-                await Swal.fire({
-                    title: 'Venta Completada',
-                    html: ticketHtml,
-                    icon: 'success',
-                    width: '450px',
-                    confirmButtonText: 'Descargar Ticket PDF',
-                    showCancelButton: true,
-                    cancelButtonText: 'Cerrar',
-                    confirmButtonColor: '#3b82f6',
-                    cancelButtonColor: '#94a3b8'
-                }).then((resultModal) => {
-                    if (resultModal.isConfirmed && result.ticket_url) {
-                        window.open(result.ticket_url, '_blank');
-                    }
-                });
-                
-                carrito = [];
-                saveCart();
-                updateCartDisplay();
-                location.reload();
-            } else {
-                throw new Error(result.message || 'Error al procesar la venta');
+
+                const paymentType = metodo === 'tarjeta_credito'
+                    ? 'credit_card'
+                    : 'debit_card';
+                const order = await crearOrdenPoint(total, paymentType);
+                mpPayment = await esperarPagoPoint(order);
+
+                if (!mpPayment) return;
+                installments = Math.max(1, Number(mpPayment.installments || 1));
             }
-        } catch (error) {
+
             Swal.fire({
+                title: 'Registrando venta',
+                text: 'Actualizando inventario, ticket y corte de caja.',
+                allowOutsideClick: false,
+                didOpen: () => Swal.showLoading()
+            });
+
+            const payload = {
+                cliente_id: clienteId || null,
+                items: carrito,
+                total,
+                metodo_pago: metodo.startsWith('tarjeta_') ? 'tarjeta' : metodo,
+                monto_recibido: metodo === 'efectivo' ? montoRecibido : null,
+                cliente_nombre: clienteNombre,
+                tipo_tarjeta: metodo.startsWith('tarjeta_')
+                    ? (metodo === 'tarjeta_credito' ? 'credito' : 'debito')
+                    : null,
+                mp_order_id: mpPayment?.order_id || null,
+                mp_payment_id: mpPayment?.payment_id || null,
+                mp_external_reference: mpPayment?.external_reference || null,
+                mp_payment_reference_id: mpPayment?.payment_reference_id || null,
+                mp_payment_type: mpPayment?.payment_type || null,
+                mp_installments: mpPayment?.installments || installments,
+                mp_order_status: mpPayment?.order_status || null,
+                mp_payment_status: mpPayment?.payment_status || null
+            };
+
+            const result = await registrarVentaLocal(payload);
+            result.mp_order_id = payload.mp_order_id;
+
+            await mostrarTicketVenta(result, {
+                total,
+                metodo,
+                installments,
+                montoRecibido,
+                cambio,
+                clienteId,
+                clienteNombre
+            });
+
+            carrito = [];
+            saveCart();
+            updateCartDisplay();
+            location.reload();
+        } catch (error) {
+            const paidMessage = mpPayment?.paid
+                ? ` El pago sí fue aprobado. No vuelvas a cobrar. Conserva la orden ${mpPayment.order_id} y corrige el registro local.`
+                : '';
+
+            await Swal.fire({
                 icon: 'error',
-                title: 'Error',
-                text: error.message,
+                title: mpPayment?.paid ? 'Pago aprobado, venta no registrada' : 'No se completó la venta',
+                text: (error.message || 'Error desconocido.') + paidMessage,
                 confirmButtonColor: '#3b82f6'
             });
         }
     }
 
+    function agregarProductoDesdeTarjeta(card) {
+        const id = parseInt(card.dataset.id, 10);
+        const nombre = card.dataset.nombre;
+        const precio = parseFloat(card.dataset.precio);
+        const stock = parseInt(card.dataset.stock, 10);
+        const imagen = card.dataset.imagen;
+
+        addToCart(id, nombre, precio, stock, imagen);
+    }
+
     document.querySelectorAll('.producto-card').forEach(card => {
-        card.addEventListener('click', () => {
-            const id = parseInt(card.dataset.id);
-            const nombre = card.dataset.nombre;
-            const precio = parseFloat(card.dataset.precio);
-            const stock = parseInt(card.dataset.stock);
-            const imagen = card.dataset.imagen;
-            
-            addToCart(id, nombre, precio, stock, imagen);
-        });
-    });
-    
-    document.getElementById('btnPagar').addEventListener('click', procesarVenta);
-    
-    document.getElementById('searchProducto').addEventListener('input', (e) => {
-        const searchTerm = e.target.value.toLowerCase();
-        const cards = document.querySelectorAll('.producto-card');
-        
-        cards.forEach(card => {
-            const nombre = card.dataset.nombre.toLowerCase();
-            if (nombre.includes(searchTerm)) {
-                card.style.display = '';
-            } else {
-                card.style.display = 'none';
+        card.addEventListener('click', () => agregarProductoDesdeTarjeta(card));
+        card.addEventListener('keydown', event => {
+            if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                agregarProductoDesdeTarjeta(card);
             }
         });
     });
-    
+
+    document.getElementById('btnPagar').addEventListener('click', procesarVenta);
+
+    const searchInput = document.getElementById('searchProducto');
+    const clearSearchButton = document.getElementById('clearSearch');
+    const visibleProducts = document.getElementById('productosVisibles');
+    const noResults = document.getElementById('sinResultados');
+
+    function filtrarProductos() {
+        const searchTerm = searchInput.value.trim().toLocaleLowerCase('es-MX');
+        const cards = [...document.querySelectorAll('.producto-card')];
+        let visibleCount = 0;
+
+        cards.forEach(card => {
+            const hayCoincidencia = `${card.dataset.nombre} ${card.dataset.categoria || ''}`
+                .toLocaleLowerCase('es-MX')
+                .includes(searchTerm);
+
+            card.hidden = !hayCoincidencia;
+            if (hayCoincidencia) visibleCount++;
+        });
+
+        visibleProducts.textContent = visibleCount;
+        noResults.classList.toggle('visible', visibleCount === 0);
+        productsGrid.classList.toggle('is-empty', visibleCount === 0);
+        clearSearchButton.classList.toggle('visible', searchTerm.length > 0);
+    }
+
+    searchInput.addEventListener('input', filtrarProductos);
+    clearSearchButton.addEventListener('click', () => {
+        searchInput.value = '';
+        filtrarProductos();
+        searchInput.focus();
+    });
+
+    document.getElementById('btnVaciarCarrito').addEventListener('click', async () => {
+        if (carrito.length === 0) return;
+
+        const result = await Swal.fire({
+            icon: 'warning',
+            title: '¿Vaciar el carrito?',
+            text: 'Se eliminarán todos los productos agregados.',
+            showCancelButton: true,
+            confirmButtonText: 'Sí, vaciar',
+            cancelButtonText: 'Conservar',
+            confirmButtonColor: '#dc2626',
+            cancelButtonColor: '#64748b',
+            customClass: { popup: 'swal-modern' }
+        });
+
+        if (result.isConfirmed) {
+            carrito = [];
+            saveCart();
+            updateCartDisplay();
+        }
+    });
+
+    filtrarProductos();
     loadCart();
     </script>
 </body>

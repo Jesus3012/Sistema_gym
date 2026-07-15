@@ -127,7 +127,7 @@ if ($user_rol == 'admin') {
             $todos_clientes[] = $row;
         }
     }
-    $ultimos_clientes = array_slice($todos_clientes, 0, 5);
+    $ultimos_clientes = $todos_clientes;
 
     // Productos
     $query = "SELECT p.id, p.nombre, p.descripcion, p.stock, p.stock_minimo, p.precio_venta, c.nombre as categoria 
@@ -147,7 +147,7 @@ if ($user_rol == 'admin') {
               FROM productos p 
               LEFT JOIN categorias_productos c ON p.categoria_id = c.id 
               WHERE p.stock <= p.stock_minimo AND p.estado = 'activo' 
-              ORDER BY p.stock ASC LIMIT 5";
+              ORDER BY p.stock ASC";
     $result = $db->query($query);
     if ($result && $result->num_rows > 0) {
         while ($row = $result->fetch_assoc()) {
@@ -189,7 +189,7 @@ if ($user_rol == 'admin') {
             $todas_clases[] = $row;
         }
     }
-    $proximas_clases = array_slice($todas_clases, 0, 5);
+    $proximas_clases = $todas_clases;
 
     // Gráfico ingresos (últimos 6 meses)
     $query = "SELECT 
@@ -246,7 +246,7 @@ elseif ($user_rol == 'recepcionista') {
             $todos_clientes[] = $row;
         }
     }
-    $ultimos_clientes = array_slice($todos_clientes, 0, 5);
+    $ultimos_clientes = $todos_clientes;
 
     // Productos
     $query = "SELECT p.id, p.nombre, p.descripcion, p.stock, p.stock_minimo, p.precio_venta, c.nombre as categoria 
@@ -266,7 +266,7 @@ elseif ($user_rol == 'recepcionista') {
               FROM productos p 
               LEFT JOIN categorias_productos c ON p.categoria_id = c.id 
               WHERE p.stock <= p.stock_minimo AND p.estado = 'activo' 
-              ORDER BY p.stock ASC LIMIT 5";
+              ORDER BY p.stock ASC";
     $result = $db->query($query);
     if ($result && $result->num_rows > 0) {
         while ($row = $result->fetch_assoc()) {
@@ -308,7 +308,7 @@ elseif ($user_rol == 'recepcionista') {
             $todas_clases[] = $row;
         }
     }
-    $proximas_clases = array_slice($todas_clases, 0, 5);
+    $proximas_clases = $todas_clases;
 }
 
 // ========== ENTRENADOR: Dashboard de clases y alumnos ==========
@@ -335,7 +335,7 @@ elseif ($user_rol == 'entrenador') {
             $todos_clientes[] = $row;
         }
     }
-    $ultimos_clientes = array_slice($todos_clientes, 0, 5);
+    $ultimos_clientes = $todos_clientes;
 
     // SOLO LAS CLASES QUE IMPARTE ESTE ENTRENADOR
     $todas_clases = [];
@@ -354,11 +354,11 @@ elseif ($user_rol == 'entrenador') {
         }
     }
     $total_clases = count($todas_clases);
-    $proximas_clases = array_slice($todas_clases, 0, 5);
+    $proximas_clases = $todas_clases;
     
     // Alumnos para el entrenador
     $alumnos_entrenador = [];
-    $query = "SELECT id, nombre, apellido, telefono, email FROM clientes WHERE estado = 'activo' ORDER BY nombre ASC LIMIT 20";
+    $query = "SELECT id, nombre, apellido, telefono, email FROM clientes WHERE estado = 'activo' ORDER BY nombre ASC";
     $result = $db->query($query);
     if ($result && $result->num_rows > 0) {
         while ($row = $result->fetch_assoc()) {
@@ -385,705 +385,12 @@ include 'includes/sidebar.php';
     <!-- SweetAlert2 -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css">
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-    
-    <style>
-        /* ============================================
-           ESTILOS ORIGINALES DEL DASHBOARD (NO MODIFICAR)
-           ============================================ */
-        .small-box {
-            border-radius: 12px;
-            transition: transform 0.2s;
-        }
-        .small-box:hover {
-            transform: translateY(-5px);
-        }
-        .card {
-            border-radius: 12px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-        }
-        .card-header {
-            background: transparent;
-            border-bottom: 1px solid #e9ecef;
-            font-weight: 600;
-        }
-        .table th {
-            border-top: none;
-        }
-        .badge-warning {
-            background-color: #ffc107;
-            color: #212529;
-        }
-        .progress {
-            border-radius: 10px;
-            height: 8px;
-        }
-        .welcome-banner {
-            background: linear-gradient(135deg, #0a2540 0%, #1e3a5f 100%);
-            border-radius: 12px;
-            padding: 20px;
-            color: white;
-            margin-bottom: 25px;
-        }
-        .welcome-banner h3 {
-            margin-bottom: 5px;
-            font-weight: 600;
-        }
-        .welcome-banner p {
-            margin-bottom: 0;
-            opacity: 0.9;
-        }
-        .btn-app {
-            background: #f4f4f4;
-            border-radius: 12px;
-            padding: 15px 10px;
-            display: inline-block;
-            text-align: center;
-            min-width: 100px;
-            transition: all 0.2s;
-        }
-        .btn-app:hover {
-            background: #e9ecef;
-            transform: translateY(-2px);
-        }
-        .access-time {
-            font-size: 12px;
-            opacity: 0.8;
-            margin-top: 8px;
-        }
-        .session-timer {
-            background: rgba(255,255,255,0.2);
-            padding: 5px 10px;
-            border-radius: 20px;
-            font-size: 12px;
-            display: inline-block;
-        }
-        
-        /* ============================================
-           ESTILOS EXCLUSIVOS PARA LOS MODALES (CARDS)
-           ============================================ */
-        .modal-xl {
-            max-width: 1200px;
-        }
-        
-        .modal-content {
-            border-radius: 12px;
-            border: none;
-            overflow: hidden;
-        }
-        
-        .modal-header {
-            background: #003366;
-            border: none;
-            padding: 20px 25px;
-        }
-        
-        .modal-header .modal-title {
-            font-size: 1.2rem;
-            font-weight: 600;
-            color: white;
-        }
-        
-        .modal-header .modal-title i {
-            margin-right: 10px;
-        }
-        
-        .modal-header .close {
-            color: white;
-            opacity: 0.8;
-            font-size: 1.5rem;
-        }
-        
-        .modal-header .close:hover {
-            opacity: 1;
-        }
-        
-        .modal-body {
-            padding: 0;
-            background: #f8f9fc;
-        }
-        
-        .modal-footer {
-            border-top: 1px solid #e9ecef;
-            padding: 15px 25px;
-            background: white;
-        }
-        
-        .btn-close-modal {
-            background: #6c757d;
-            color: white;
-            border: none;
-            padding: 8px 25px;
-            border-radius: 8px;
-            transition: all 0.2s;
-        }
-        
-        .btn-close-modal:hover {
-            background: #5a6268;
-        }
-        
-        /* Stats bar dentro de modales */
-        .stats-bar {
-            display: flex;
-            gap: 20px;
-            padding: 20px 25px;
-            background: white;
-            border-bottom: 1px solid #e9ecef;
-            flex-wrap: wrap;
-        }
-        
-        .stat-box {
-            flex: 1;
-            text-align: center;
-            padding: 10px;
-            background: #f8f9fc;
-            border-radius: 8px;
-        }
-        
-        .stat-number {
-            font-size: 1.5rem;
-            font-weight: 700;
-            color: #003366;
-        }
-        
-        .stat-label {
-            font-size: 0.7rem;
-            color: #6c757d;
-            margin-top: 5px;
-        }
-        
-        /* Search input */
-        .modal-search {
-            padding: 15px 25px;
-            background: white;
-            border-bottom: 1px solid #e9ecef;
-        }
-        
-        .modal-search input {
-            width: 100%;
-            padding: 10px 15px;
-            border: 1px solid #dee2e6;
-            border-radius: 8px;
-            font-size: 0.9rem;
-        }
-        
-        .modal-search input:focus {
-            outline: none;
-            border-color: #003366;
-        }
-        
-        /* Grid de cards dentro del modal */
-        .modal-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-            gap: 20px;
-            padding: 25px;
-        }
-        
-        /* Card de cliente */
-        .client-card {
-            background: white;
-            border-radius: 12px;
-            padding: 20px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-            transition: all 0.3s ease;
-            border-left: 4px solid #17a2b8;
-        }
-        
-        .client-card:hover {
-            transform: translateY(-3px);
-            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-        }
-        
-        .client-header {
-            display: flex;
-            align-items: center;
-            margin-bottom: 15px;
-        }
-        
-        .client-avatar {
-            width: 50px;
-            height: 50px;
-            background: #17a2b8;
-            border-radius: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            font-weight: bold;
-            font-size: 20px;
-            margin-right: 15px;
-        }
-        
-        .client-name {
-            font-size: 1rem;
-            font-weight: 600;
-            color: #2c3e50;
-            margin-bottom: 5px;
-        }
-        
-        .client-date {
-            font-size: 0.75rem;
-            color: #6c757d;
-        }
-        
-        .client-info {
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-            margin-top: 10px;
-            padding-top: 10px;
-            border-top: 1px solid #e9ecef;
-        }
-        
-        .info-item {
-            display: flex;
-            align-items: center;
-            font-size: 0.85rem;
-            color: #495057;
-        }
-        
-        .info-item i {
-            width: 25px;
-            color: #17a2b8;
-        }
-        
-        /* Card de producto */
-        .product-card {
-            background: white;
-            border-radius: 12px;
-            padding: 20px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-            transition: all 0.3s ease;
-            border-left: 4px solid #ffc107;
-        }
-        
-        .product-card:hover {
-            transform: translateY(-3px);
-            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-        }
-        
-        .product-header {
-            margin-bottom: 15px;
-        }
-        
-        .product-name {
-            font-size: 1rem;
-            font-weight: 600;
-            color: #2c3e50;
-            margin-bottom: 5px;
-        }
-        
-        .product-category {
-            font-size: 0.75rem;
-            color: #ffc107;
-        }
-        
-        .product-stats {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 12px;
-        }
-        
-        .stock-info {
-            text-align: center;
-            flex: 1;
-        }
-        
-        .stock-number {
-            font-size: 1.5rem;
-            font-weight: 700;
-        }
-        
-        .stock-number.critical {
-            color: #dc3545;
-        }
-        
-        .stock-number.low {
-            color: #ffc107;
-        }
-        
-        .stock-number.normal {
-            color: #28a745;
-        }
-        
-        .stock-label {
-            font-size: 0.7rem;
-            color: #6c757d;
-        }
-        
-        .price-info {
-            text-align: center;
-            flex: 1;
-        }
-        
-        .price-number {
-            font-size: 1.3rem;
-            font-weight: 700;
-            color: #28a745;
-        }
-        
-        .stock-bar {
-            background: #e9ecef;
-            border-radius: 10px;
-            height: 6px;
-            overflow: hidden;
-            margin-top: 10px;
-        }
-        
-        .stock-fill {
-            height: 100%;
-            border-radius: 10px;
-            transition: width 0.3s ease;
-        }
-        
-        .stock-fill.critical { background: #dc3545; }
-        .stock-fill.low { background: #ffc107; }
-        .stock-fill.normal { background: #28a745; }
-        
-        /* Card de inscripción */
-        .inscripcion-card {
-            background: white;
-            border-radius: 12px;
-            padding: 20px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-            transition: all 0.3s ease;
-            border-left: 4px solid #28a745;
-        }
-        
-        .inscripcion-card.urgent {
-            border-left-color: #ffc107;
-            background: #fffef7;
-        }
-        
-        .inscripcion-card:hover {
-            transform: translateY(-3px);
-            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-        }
-        
-        .inscripcion-header {
-            margin-bottom: 15px;
-        }
-        
-        .cliente-name {
-            font-size: 1rem;
-            font-weight: 600;
-            color: #2c3e50;
-            margin-bottom: 5px;
-        }
-        
-        .plan-name {
-            font-size: 0.75rem;
-            color: #28a745;
-        }
-        
-        .fechas {
-            display: flex;
-            justify-content: space-between;
-            margin: 15px 0;
-            padding: 10px 0;
-            border-top: 1px solid #e9ecef;
-            border-bottom: 1px solid #e9ecef;
-        }
-        
-        .fecha-item {
-            text-align: center;
-            flex: 1;
-        }
-        
-        .fecha-label {
-            font-size: 0.7rem;
-            color: #6c757d;
-            display: block;
-        }
-        
-        .fecha-value {
-            font-size: 0.85rem;
-            font-weight: 600;
-            color: #2c3e50;
-        }
-        
-        .dias-restantes {
-            text-align: center;
-            margin-top: 10px;
-            padding: 8px;
-            border-radius: 8px;
-            font-size: 0.8rem;
-            font-weight: 600;
-        }
-        
-        .dias-restantes.urgent {
-            background: #fff3cd;
-            color: #856404;
-        }
-        
-        .dias-restantes.normal {
-            background: #d4edda;
-            color: #155724;
-        }
-        
-        /* Card de clase */
-        .clase-card {
-            background: white;
-            border-radius: 12px;
-            padding: 20px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-            transition: all 0.3s ease;
-            border-left: 4px solid #dc3545;
-        }
-        
-        .clase-card:hover {
-            transform: translateY(-3px);
-            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-        }
-        
-        .clase-header {
-            margin-bottom: 15px;
-        }
-        
-        .clase-name {
-            font-size: 1rem;
-            font-weight: 600;
-            color: #2c3e50;
-            margin-bottom: 5px;
-        }
-        
-        .instructor-name {
-            font-size: 0.75rem;
-            color: #dc3545;
-        }
-        
-        .horario {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 10px;
-            margin: 15px 0;
-            padding: 10px;
-            background: #f8f9fc;
-            border-radius: 8px;
-        }
-        
-        .horario i {
-            color: #dc3545;
-        }
-        
-        .horario-text {
-            font-size: 0.9rem;
-            font-weight: 600;
-            color: #2c3e50;
-        }
-        
-        .cupo-info {
-            margin-top: 10px;
-        }
-        
-        .cupo-numbers {
-            display: flex;
-            justify-content: space-between;
-            font-size: 0.8rem;
-            margin-bottom: 8px;
-        }
-        
-        .cupo-bar {
-            background: #e9ecef;
-            border-radius: 10px;
-            height: 6px;
-            overflow: hidden;
-        }
-        
-        .cupo-fill {
-            height: 100%;
-            border-radius: 10px;
-            transition: width 0.3s ease;
-        }
-        
-        .cupo-fill.danger { background: #dc3545; }
-        .cupo-fill.warning { background: #ffc107; }
-        .cupo-fill.success { background: #28a745; }
-        
-        /* Empty state */
-        .empty-state {
-            text-align: center;
-            padding: 60px 20px;
-            color: #6c757d;
-        }
-        
-        .empty-state i {
-            font-size: 3rem;
-            margin-bottom: 15px;
-            opacity: 0.5;
-        }
-        
-        /* Estilos para el modal de cambio de contraseña */
-        .modal-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0,0,0,0.7);
-            z-index: 9999;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            backdrop-filter: blur(5px);
-        }
-        
-        .change-password-modal {
-            background: white;
-            border-radius: 12px;
-            width: 90%;
-            max-width: 450px;
-            padding: 30px;
-            animation: modalSlideIn 0.3s ease;
-        }
-        
-        @keyframes modalSlideIn {
-            from {
-                transform: translateY(-50px);
-                opacity: 0;
-            }
-            to {
-                transform: translateY(0);
-                opacity: 1;
-            }
-        }
-        
-        .change-password-modal h2 {
-            color: #003366;
-            font-size: 24px;
-            margin-bottom: 10px;
-            text-align: center;
-        }
-        
-        .change-password-modal p {
-            color: #666;
-            text-align: center;
-            margin-bottom: 20px;
-            font-size: 14px;
-        }
-        
-        .change-password-modal .form-group {
-            margin-bottom: 20px;
-        }
-        
-        .change-password-modal label {
-            display: block;
-            margin-bottom: 8px;
-            color: #003366;
-            font-weight: 500;
-            font-size: 13px;
-        }
-        
-        .change-password-modal input {
-            width: 100%;
-            padding: 12px;
-            border: 1.5px solid #dde7f0;
-            border-radius: 8px;
-            font-size: 14px;
-            transition: all 0.2s;
-        }
-        
-        .change-password-modal input:focus {
-            outline: none;
-            border-color: #003366;
-            box-shadow: 0 0 0 3px rgba(0,51,102,0.1);
-        }
-        
-        .change-password-modal .btn-change {
-            width: 100%;
-            padding: 12px;
-            background: #003366;
-            color: white;
-            border: none;
-            border-radius: 8px;
-            font-size: 14px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-        
-        .change-password-modal .btn-change:hover {
-            background: #004080;
-        }
-        
-        .password-requirements {
-            font-size: 11px;
-            color: #888;
-            margin-top: 5px;
-        }
-        
-        .error-message {
-            color: #dc2626;
-            font-size: 12px;
-            margin-top: 5px;
-            display: none;
-        }
-        
-        /* Responsive para modales */
-        @media (max-width: 768px) {
-            .modal-grid {
-                grid-template-columns: 1fr;
-                padding: 15px;
-            }
-            
-            .stats-bar {
-                flex-direction: column;
-                gap: 10px;
-            }
-            
-            .stat-box {
-                flex: none;
-            }
-        }
-
-        
-        /* Para igualar la altura de las cards en la misma fila */
-        .row.equal-height-cards {
-            display: flex;
-            flex-wrap: wrap;
-        }
-
-        .row.equal-height-cards > [class*='col-'] {
-            display: flex;
-            flex-direction: column;
-        }
-
-        .row.equal-height-cards .card {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-        }
-
-        .row.equal-height-cards .card .card-body {
-            flex: 1;
-        }
-
-        /* Para la card de Ingresos Mensuales que tiene canvas */
-        .row.equal-height-cards .card .card-body canvas {
-            min-height: 250px;
-            height: 100%;
-            max-height: 100%;
-        }
-        
-        /* Badge para rol */
-        .rol-badge {
-            display: inline-block;
-            padding: 5px 12px;
-            border-radius: 20px;
-            font-size: 12px;
-            font-weight: 500;
-        }
-        .rol-badge.admin { background: #dc3545; color: white; }
-        .rol-badge.recepcionista { background: #17a2b8; color: white; }
-        .rol-badge.entrenador { background: #28a745; color: white; }
-    </style>
-    
-    <!-- AdminLTE CSS -->
+    <!-- AdminLTE / Bootstrap -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/admin-lte@3.2/dist/css/adminlte.min.css">
+    <link rel="stylesheet" href="css/dashboard.css">
 </head>
 <body>
-    <div class="main-content">
+    <div class="main-content dashboard-page">
         <!-- Welcome Banner -->
         <div class="welcome-banner">
             <div class="row">
@@ -1091,10 +398,6 @@ include 'includes/sidebar.php';
                     <h3>
                         <i class="fas fa-hand-wave"></i> ¡Bienvenido, <?php echo htmlspecialchars($user_name); ?>!
                     </h3>
-                    <p>
-                        <i class="fas fa-sign-in-alt"></i> Accediendo al sistema como 
-                        <strong><?php echo htmlspecialchars($user_rol); ?></strong>
-                    </p>
                     <p class="access-time">
                         <i class="fas fa-clock"></i> 
                         Último acceso: <?php echo date('d/m/Y H:i:s', $_SESSION['login_time']); ?>
@@ -1346,13 +649,13 @@ include 'includes/sidebar.php';
                     </div>
                     <div class="card-body p-0 d-flex flex-column">
                         <div class="table-responsive flex-grow-1">
-                            <table class="table table-striped">
+                            <table class="table table-striped dashboard-table">
                                 <thead>
                                     <tr>
                                         <th>Nombre</th>
                                         <th>Teléfono</th>
                                         <th>Fecha</th>
-                                    </td>
+                                    </tr>
                                 </thead>
                                 <tbody>
                                     <?php foreach ($ultimos_clientes as $cliente): ?>
@@ -1397,7 +700,7 @@ include 'includes/sidebar.php';
                     </div>
                     <div class="card-body p-0">
                         <div class="table-responsive">
-                            <table class="table table-striped">
+                            <table class="table table-striped dashboard-table">
                                 <thead>
                                     <tr>
                                         <th>Nombre</th>
@@ -1448,7 +751,7 @@ include 'includes/sidebar.php';
                     </div>
                     <div class="card-body p-0">
                         <div class="table-responsive">
-                            <table class="table table-striped">
+                            <table class="table table-striped dashboard-table">
                                 <thead>
                                     <tr>
                                         <th>Clase</th>
@@ -1498,7 +801,7 @@ include 'includes/sidebar.php';
                     </div>
                     <div class="card-body p-0">
                         <div class="table-responsive">
-                            <table class="table table-striped">
+                            <table class="table table-striped dashboard-table">
                                 <thead>
                                     <tr>
                                         <th>Producto</th>
@@ -1557,7 +860,7 @@ include 'includes/sidebar.php';
                     </div>
                     <div class="card-body p-0">
                         <div class="table-responsive">
-                            <table class="table table-striped">
+                            <table class="table table-striped dashboard-table">
                                 <thead>
                                     <tr>
                                         <th>Clase</th>
@@ -1607,7 +910,7 @@ include 'includes/sidebar.php';
                     </div>
                     <div class="card-body p-0">
                         <div class="table-responsive">
-                            <table class="table table-striped">
+                            <table class="table table-striped dashboard-table">
                                 <thead>
                                     <tr>
                                         <th>Producto</th>
@@ -1666,7 +969,7 @@ include 'includes/sidebar.php';
                     </div>
                     <div class="card-body p-0">
                         <div class="table-responsive">
-                            <table class="table table-striped">
+                            <table class="table table-striped dashboard-table">
                                 <thead>
                                     <tr>
                                         <th>Clase</th>
@@ -1724,7 +1027,7 @@ include 'includes/sidebar.php';
                     </div>
                     <div class="card-body p-0">
                         <div class="table-responsive">
-                            <table class="table table-striped">
+                            <table class="table table-striped dashboard-table">
                                 <thead>
                                     <tr>
                                         <th>Alumno</th>
@@ -2261,7 +1564,7 @@ include 'includes/sidebar.php';
                             <i class="fas fa-search"></i>
                         </span>
                         </div>
-                        <input type="text" id="searchClases" class="form-control"placeholder="Buscar clase, instructor o horario...">
+                        <input type="text" id="searchClases" class="form-control" placeholder="Buscar clase, instructor o horario...">
                     </div>
                 </div>
                 <div class="modal-body">
@@ -2346,6 +1649,210 @@ include 'includes/sidebar.php';
     <script src="https://cdn.jsdelivr.net/npm/admin-lte@3.2/dist/js/adminlte.min.js"></script>
 
     <script>
+
+    // Convierte automáticamente las tablas del dashboard en tarjetas legibles en móvil.
+    function prepararTablasResponsivas() {
+        document.querySelectorAll('.dashboard-table').forEach(function(table) {
+            const headers = Array.from(table.querySelectorAll('thead th')).map(function(th) {
+                return th.textContent.replace(/\s+/g, ' ').trim();
+            });
+
+            table.querySelectorAll('tbody tr').forEach(function(row) {
+                Array.from(row.children).forEach(function(cell, index) {
+                    if (cell.tagName === 'TD' && !cell.hasAttribute('colspan')) {
+                        cell.setAttribute('data-label', headers[index] || '');
+                    }
+                });
+            });
+        });
+    }
+
+
+    function inicializarPaginacionTablas() {
+        document.querySelectorAll('.dashboard-table').forEach(function(table, tableIndex) {
+            if (table.dataset.paginationReady === 'true') {
+                return;
+            }
+
+            const tbody = table.querySelector('tbody');
+            const tableWrap = table.closest('.table-responsive');
+
+            if (!tbody || !tableWrap || !tableWrap.parentNode) {
+                return;
+            }
+
+            table.dataset.paginationReady = 'true';
+
+            const allRows = Array.from(tbody.children).filter(function(element) {
+                return element.tagName === 'TR';
+            });
+
+            const dataRows = allRows.filter(function(row) {
+                return !row.querySelector('td[colspan]');
+            });
+
+            const emptyRows = allRows.filter(function(row) {
+                return Boolean(row.querySelector('td[colspan]'));
+            });
+
+            let currentPage = 1;
+            let pageSize = 5;
+
+            const pagination = document.createElement('div');
+            pagination.className = 'dashboard-table-pagination';
+            pagination.dataset.tableIndex = String(tableIndex);
+
+            pagination.innerHTML = `
+                <div class="dashboard-pagination-left">
+                    <label class="dashboard-page-size">
+                        <span>Mostrar</span>
+                        <select aria-label="Cantidad de registros por página">
+                            <option value="5">5</option>
+                            <option value="10">10</option>
+                            <option value="20">20</option>
+                        </select>
+                        <span>registros</span>
+                    </label>
+
+                    <span class="dashboard-pagination-info" aria-live="polite"></span>
+                </div>
+
+                <div class="dashboard-pagination-buttons" aria-label="Paginación de la tabla"></div>
+            `;
+
+            tableWrap.insertAdjacentElement('afterend', pagination);
+
+            const sizeSelect = pagination.querySelector('select');
+            const info = pagination.querySelector('.dashboard-pagination-info');
+            const buttons = pagination.querySelector('.dashboard-pagination-buttons');
+
+            function getTotalPages() {
+                return Math.max(1, Math.ceil(dataRows.length / pageSize));
+            }
+
+            function createButton(html, targetPage, options) {
+                const settings = options || {};
+                const button = document.createElement('button');
+
+                button.type = 'button';
+                button.className = 'dashboard-page-button';
+                button.innerHTML = html;
+                button.disabled = Boolean(settings.disabled);
+
+                if (settings.active) {
+                    button.classList.add('active');
+                    button.setAttribute('aria-current', 'page');
+                }
+
+                if (settings.ariaLabel) {
+                    button.setAttribute('aria-label', settings.ariaLabel);
+                }
+
+                button.addEventListener('click', function() {
+                    if (button.disabled) {
+                        return;
+                    }
+
+                    currentPage = targetPage;
+                    render();
+                });
+
+                return button;
+            }
+
+            function renderButtons() {
+                buttons.innerHTML = '';
+
+                const totalPages = getTotalPages();
+
+                buttons.appendChild(
+                    createButton(
+                        '<i class="fas fa-chevron-left"></i>',
+                        Math.max(1, currentPage - 1),
+                        {
+                            disabled: currentPage <= 1,
+                            ariaLabel: 'Página anterior'
+                        }
+                    )
+                );
+
+                let startPage = Math.max(1, currentPage - 2);
+                let endPage = Math.min(totalPages, currentPage + 2);
+
+                if ((endPage - startPage) < 4) {
+                    startPage = Math.max(1, endPage - 4);
+                    endPage = Math.min(totalPages, startPage + 4);
+                }
+
+                for (let page = startPage; page <= endPage; page += 1) {
+                    buttons.appendChild(
+                        createButton(
+                            String(page),
+                            page,
+                            {
+                                active: page === currentPage,
+                                ariaLabel: 'Página ' + page
+                            }
+                        )
+                    );
+                }
+
+                buttons.appendChild(
+                    createButton(
+                        '<i class="fas fa-chevron-right"></i>',
+                        Math.min(totalPages, currentPage + 1),
+                        {
+                            disabled: currentPage >= totalPages,
+                            ariaLabel: 'Página siguiente'
+                        }
+                    )
+                );
+            }
+
+            function render() {
+                const totalPages = getTotalPages();
+
+                if (currentPage > totalPages) {
+                    currentPage = totalPages;
+                }
+
+                const startIndex = (currentPage - 1) * pageSize;
+                const endIndex = Math.min(startIndex + pageSize, dataRows.length);
+
+                dataRows.forEach(function(row, index) {
+                    row.style.display =
+                        index >= startIndex && index < endIndex
+                            ? ''
+                            : 'none';
+                });
+
+                emptyRows.forEach(function(row) {
+                    row.style.display = dataRows.length === 0 ? '' : 'none';
+                });
+
+                if (dataRows.length === 0) {
+                    info.innerHTML = '<span>Sin registros</span>';
+                } else {
+                    info.innerHTML =
+                        '<span>Mostrando</span>' +
+                        '<strong>' + (startIndex + 1) + '–' + endIndex + '</strong>' +
+                        '<span>de</span>' +
+                        '<strong>' + dataRows.length + '</strong>';
+                }
+
+                renderButtons();
+            }
+
+            sizeSelect.addEventListener('change', function() {
+                pageSize = Math.max(1, parseInt(sizeSelect.value, 10) || 5);
+                currentPage = 1;
+                render();
+            });
+
+            render();
+        });
+    }
+
     let alertaMostrada = false;
     let tiempoRestanteInterval;
     
@@ -2451,6 +1958,9 @@ include 'includes/sidebar.php';
     
     // Event listeners para búsqueda
     document.addEventListener('DOMContentLoaded', function() {
+        prepararTablasResponsivas();
+        inicializarPaginacionTablas();
+
         const searchClientes = document.getElementById('searchClientes');
         if (searchClientes) searchClientes.addEventListener('keyup', filtrarClientes);
         
