@@ -6,6 +6,7 @@ session_start();
 require_once __DIR__ . '/config/database.php';
 require_once __DIR__ . '/includes/qr_helper.php'; // Incluir el helper de QR
 require_once __DIR__ . '/includes/correo_inscripciones.php'; // Correos de bienvenida y renovación
+require_once __DIR__ . '/includes/mercadopago_inscripciones.php'; // Validación y vínculo de pagos Point
 
 
 // ==================== FIN FUNCIÓN QR ====================
@@ -52,11 +53,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
             $apellido = trim($_POST['apellido']);
             $telefono = trim($_POST['telefono']);
             $email = trim($_POST['email']);
-            $plan_id = $_POST['plan_id'];
-            $fecha_inicio = $_POST['fecha_inicio'];
-            $precio_pagado = $_POST['precio_pagado'];
-            $metodo_pago = $_POST['metodo_pago'];
-            $referencia = $_POST['referencia'] ?? null;
+            $plan_id = (int) $_POST['plan_id'];
+            $fecha_inicio = trim((string) $_POST['fecha_inicio']);
+            $precio_pagado = round((float) $_POST['precio_pagado'], 2);
+            $metodo_pago_solicitado = trim((string) $_POST['metodo_pago']);
+            $metodo_pago = $metodo_pago_solicitado;
+            $metodo_pago_descripcion = mp_inscripcion_etiqueta_pago($metodo_pago_solicitado);
+            $referencia = isset($_POST['referencia']) && trim((string) $_POST['referencia']) !== ''
+                ? trim((string) $_POST['referencia'])
+                : null;
+            $mp_pago_data = null;
             
             if (empty($nombre) || empty($apellido) || empty($telefono) || empty($plan_id)) {
                 throw new Exception('Por favor complete todos los campos requeridos');
@@ -81,6 +87,36 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
             
             if (!$plan) {
                 throw new Exception('Plan no válido');
+            }
+
+            // El precio siempre se toma de la base de datos, nunca del navegador.
+            $precio_plan = round((float) $plan['precio'], 2);
+            if ($precio_plan <= 0 || abs($precio_plan - $precio_pagado) > 0.01) {
+                throw new Exception('El precio del plan cambió. Actualiza el formulario e intenta nuevamente.');
+            }
+            $precio_pagado = $precio_plan;
+
+            if (mp_inscripcion_es_tarjeta($metodo_pago_solicitado)) {
+                $mp_pago_data = mp_validar_pago_inscripcion(
+                    $conn,
+                    $_POST,
+                    $precio_pagado,
+                    $metodo_pago_solicitado,
+                    'inscripcion'
+                );
+
+                // Conserva "tarjeta" en la tabla local para no romper enums existentes.
+                $metodo_pago = 'tarjeta';
+                $mensualidades = max(1, (int) ($mp_pago_data['installments'] ?? 1));
+                $metodo_pago_descripcion = mp_inscripcion_etiqueta_pago(
+                    $metodo_pago_solicitado,
+                    $mensualidades
+                );
+                $referencia = $mp_pago_data['payment_reference_id']
+                    ?? $mp_pago_data['external_reference']
+                    ?? $mp_pago_data['order_id'];
+            } elseif (!in_array($metodo_pago_solicitado, ['efectivo', 'transferencia'], true)) {
+                throw new Exception('Método de pago no válido.');
             }
             
             // Calcular fecha fin
@@ -138,11 +174,22 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
             $stmt = $conn->prepare("INSERT INTO pagos (inscripcion_id, cliente_id, monto, fecha_pago, metodo_pago, referencia, estado) VALUES (?, ?, ?, ?, ?, ?, 'completado')");
             $stmt->bind_param("iidsss", $inscripcion_id, $cliente_id, $precio_pagado, $fecha_actual_db, $metodo_pago, $referencia);
             $stmt->execute();
+            $pago_id = (int) $conn->insert_id;
             
             // Registrar en historial_pagos
             $stmt = $conn->prepare("INSERT INTO historial_pagos (inscripcion_id, cliente_id, monto, fecha_pago, metodo_pago, referencia, periodo_inicio, periodo_fin, plan_nombre, usuario_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
             $stmt->bind_param("iidssssssi", $inscripcion_id, $cliente_id, $precio_pagado, $fecha_actual_db, $metodo_pago, $referencia, $fecha_inicio, $fecha_fin, $plan['plan_nombre'], $usuario_id);
             $stmt->execute();
+
+            if (is_array($mp_pago_data)) {
+                mp_vincular_pago_inscripcion(
+                    $conn,
+                    (string) $mp_pago_data['order_id'],
+                    (int) $inscripcion_id,
+                    (int) $pago_id,
+                    'inscripcion'
+                );
+            }
             
             $conn->commit();
 
@@ -160,7 +207,7 @@ if (!empty($email)) {
         $fecha_inicio,             // fecha inicio
         $fecha_fin,                // fecha fin
         $precio_pagado,            // monto
-        $metodo_pago,              // método de pago
+        $metodo_pago_descripcion,  // método de pago mostrado al socio
         $referencia,               // referencia
         $codigo_qr,                // ← código QR
         $ruta_qr_completa          // ← ruta del archivo QR
@@ -179,6 +226,11 @@ if ($qr_generado && file_exists($ruta_qr_completa)) {
     $mensaje_exito .= "El QR quedó disponible en el botón <strong>QR</strong> del listado.";
 } else {
     $mensaje_exito .= "<span class='text-warning'>No se pudo generar la imagen del código QR. El código es: {$codigo_qr}</span>";
+}
+
+if (is_array($mp_pago_data)) {
+    $mensaje_exito .= '<br><span class="text-success">✓ Pago confirmado en terminal: ' .
+        htmlspecialchars($metodo_pago_descripcion, ENT_QUOTES, 'UTF-8') . '</span>';
 }
 
 // Agregar información del correo al mensaje
@@ -215,16 +267,22 @@ if (!isset($_SESSION['csrf_token'])) {
 
 // Renovar inscripción
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['action'] == 'renovar_inscripcion') {
-    // ... (el código de renovación se mantiene igual, sin cambios relacionados con QR) ...
-    // Mantengo el código original de renovación ya que no necesita modificación
     try {
-        $inscripcion_id = $_POST['inscripcion_id'];
-        $cliente_id = $_POST['cliente_id'];
-        $plan_id = $_POST['plan_id'];
-        $fecha_inicio = $_POST['fecha_inicio'];
-        $precio_pagado = $_POST['precio_pagado'];
-        $metodo_pago = $_POST['metodo_pago'];
-        $referencia = $_POST['referencia'] ?? null;
+        if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], (string) $_POST['csrf_token'])) {
+            throw new Exception('Token de seguridad inválido. Actualiza la página e intenta nuevamente.');
+        }
+        $inscripcion_id = (int) $_POST['inscripcion_id'];
+        $cliente_id = (int) $_POST['cliente_id'];
+        $plan_id = (int) $_POST['plan_id'];
+        $fecha_inicio = trim((string) $_POST['fecha_inicio']);
+        $precio_pagado = round((float) $_POST['precio_pagado'], 2);
+        $metodo_pago_solicitado = trim((string) $_POST['metodo_pago']);
+        $metodo_pago = $metodo_pago_solicitado;
+        $metodo_pago_descripcion = mp_inscripcion_etiqueta_pago($metodo_pago_solicitado);
+        $referencia = isset($_POST['referencia']) && trim((string) $_POST['referencia']) !== ''
+            ? trim((string) $_POST['referencia'])
+            : null;
+        $mp_pago_data = null;
         
         // Verificar si ya se procesó esta renovación (prevenir doble clic)
         $clave_renovacion = 'last_renewal_' . $inscripcion_id;
@@ -248,6 +306,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
         if (!$plan) {
             throw new Exception('Plan no válido');
         }
+
+        $precio_plan = round((float) $plan['precio'], 2);
+        if ($precio_plan <= 0 || abs($precio_plan - $precio_pagado) > 0.01) {
+            throw new Exception('El precio del plan cambió. Actualiza el formulario e intenta nuevamente.');
+        }
+        $precio_pagado = $precio_plan;
         
         // Obtener la inscripción y el estado real del cliente.
         // Esta validación del servidor evita renovar aunque alguien manipule el botón o el formulario.
@@ -298,6 +362,28 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
             }
         }
         
+        if (mp_inscripcion_es_tarjeta($metodo_pago_solicitado)) {
+            $mp_pago_data = mp_validar_pago_inscripcion(
+                $conn,
+                $_POST,
+                $precio_pagado,
+                $metodo_pago_solicitado,
+                'renovacion'
+            );
+
+            $metodo_pago = 'tarjeta';
+            $mensualidades = max(1, (int) ($mp_pago_data['installments'] ?? 1));
+            $metodo_pago_descripcion = mp_inscripcion_etiqueta_pago(
+                $metodo_pago_solicitado,
+                $mensualidades
+            );
+            $referencia = $mp_pago_data['payment_reference_id']
+                ?? $mp_pago_data['external_reference']
+                ?? $mp_pago_data['order_id'];
+        } elseif (!in_array($metodo_pago_solicitado, ['efectivo', 'transferencia'], true)) {
+            throw new Exception('Método de pago no válido.');
+        }
+
         // Calcular fecha fin según el plan
         if ($plan['duracion_dias'] > 0) {
             // Para plan de 1 día, la fecha fin es la misma fecha de inicio
@@ -322,11 +408,22 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
         $stmt = $conn->prepare("INSERT INTO pagos (inscripcion_id, cliente_id, monto, fecha_pago, metodo_pago, referencia, estado) VALUES (?, ?, ?, ?, ?, ?, 'completado')");
         $stmt->bind_param("iidsss", $inscripcion_id, $cliente_id, $precio_pagado, $fecha_actual, $metodo_pago, $referencia);
         $stmt->execute();
+        $pago_id = (int) $conn->insert_id;
 
         // Registrar en historial_pagos
         $stmt = $conn->prepare("INSERT INTO historial_pagos (inscripcion_id, cliente_id, monto, fecha_pago, metodo_pago, referencia, periodo_inicio, periodo_fin, plan_nombre, usuario_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
         $stmt->bind_param("iidssssssi", $inscripcion_id, $cliente_id, $precio_pagado, $fecha_actual, $metodo_pago, $referencia, $fecha_inicio, $fecha_fin, $plan['plan_nombre'], $usuario_id);
         $stmt->execute();
+
+        if (is_array($mp_pago_data)) {
+            mp_vincular_pago_inscripcion(
+                $conn,
+                (string) $mp_pago_data['order_id'],
+                (int) $inscripcion_id,
+                (int) $pago_id,
+                'renovacion'
+            );
+        }
         
         $conn->commit();
 
@@ -368,7 +465,7 @@ if (!empty($email_cliente)) {
         $fecha_inicio,
         $fecha_fin,
         $precio_pagado,
-        $metodo_pago,
+        $metodo_pago_descripcion,
         $referencia,
         $codigo_qr_cliente,
         $ruta_qr_cliente
@@ -557,6 +654,42 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css">
     <link rel="stylesheet" href="css/inscripciones.css?v=<?php echo file_exists(__DIR__ . '/css/inscripciones.css') ? filemtime(__DIR__ . '/css/inscripciones.css') : time(); ?>">
+    <style>
+        .point-payment-help {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            margin-top: 8px;
+            padding: 9px 10px;
+            border: 1px solid #bfdbfe;
+            border-radius: 9px;
+            background: #eff6ff;
+            color: #1e40af;
+            font-size: .76rem;
+            line-height: 1.4;
+        }
+
+        .point-payment-help i {
+            margin-top: 2px;
+        }
+
+        .point-order-card {
+            margin: 14px 0 8px;
+            padding: 10px 12px;
+            border: 1px solid #dbeafe;
+            border-radius: 9px;
+            background: #f8fafc;
+            color: #1e3a8a;
+            font-size: .75rem;
+            font-weight: 700;
+            overflow-wrap: anywhere;
+        }
+
+        .point-status-live {
+            color: #64748b;
+            font-size: .82rem;
+        }
+    </style>
 </head>
 <body>
     <?php include 'includes/sidebar.php'; ?>
@@ -823,6 +956,11 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
                 <form id="formNuevoCliente" method="POST">
                     <input type="hidden" name="action" value="crear_cliente_inscripcion">
                     <input type="hidden" name="csrf_token" value="<?php echo $_SESSION['csrf_token']; ?>">
+                    <input type="hidden" name="mp_order_id" value="">
+                    <input type="hidden" name="mp_payment_id" value="">
+                    <input type="hidden" name="mp_external_reference" value="">
+                    <input type="hidden" name="mp_payment_reference_id" value="">
+                    <input type="hidden" name="mp_installments" value="1">
                     
                     <div class="modal-body">
                         <div class="row">
@@ -871,18 +1009,23 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
                                 <input type="number" class="form-control precio-disabled" name="precio_pagado" id="precio_pagado_nuevo" step="0.01" readonly required>
                             </div>
                             <div class="col-md-6 mb-3">
-                                <label class="form-label">Método Pago *</label>
-                                <select class="form-select" name="metodo_pago" required>
+                                <label class="form-label" for="metodo_pago_nuevo">Método Pago *</label>
+                                <select class="form-select" name="metodo_pago" id="metodo_pago_nuevo" required onchange="actualizarAyudaPago(this)">
                                     <option value="efectivo">Efectivo</option>
-                                    <option value="tarjeta">Tarjeta</option>
+                                    <option value="tarjeta_debito">Tarjeta de débito · Point</option>
+                                    <option value="tarjeta_credito">Tarjeta de crédito · Point</option>
                                     <option value="transferencia">Transferencia</option>
                                 </select>
+                                <div class="point-payment-help d-none" data-point-help>
+                                    <i class="fas fa-credit-card"></i>
+                                    <span>El cobro se enviará a la terminal Mercado Pago Point.</span>
+                                </div>
                             </div>
                         </div>
                         
                         <div class="mb-3">
                             <label class="form-label">Referencia</label>
-                            <input type="text" class="form-control" name="referencia" placeholder="Número de referencia (opcional)">
+                            <input type="text" class="form-control" name="referencia" id="referencia_nuevo" placeholder="Número de referencia (opcional)">
                         </div>
                         
                         <!-- Área de información de QR (reemplazo de huella) -->
@@ -912,8 +1055,14 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
                 </div>
                 <form id="formRenovar" method="POST">
                     <input type="hidden" name="action" value="renovar_inscripcion">
+                    <input type="hidden" name="csrf_token" value="<?php echo $_SESSION['csrf_token']; ?>">
                     <input type="hidden" name="inscripcion_id" id="renovar_inscripcion_id">
                     <input type="hidden" name="cliente_id" id="renovar_cliente_id">
+                    <input type="hidden" name="mp_order_id" value="">
+                    <input type="hidden" name="mp_payment_id" value="">
+                    <input type="hidden" name="mp_external_reference" value="">
+                    <input type="hidden" name="mp_payment_reference_id" value="">
+                    <input type="hidden" name="mp_installments" value="1">
                     
                     <div class="modal-body">
                         <div class="mb-3">
@@ -945,17 +1094,22 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
                         </div>
                         
                         <div class="mb-3">
-                            <label class="form-label">Método Pago *</label>
-                            <select class="form-select" name="metodo_pago" required>
+                            <label class="form-label" for="metodo_pago_renovar">Método Pago *</label>
+                            <select class="form-select" name="metodo_pago" id="metodo_pago_renovar" required onchange="actualizarAyudaPago(this)">
                                 <option value="efectivo">Efectivo</option>
-                                <option value="tarjeta">Tarjeta</option>
+                                <option value="tarjeta_debito">Tarjeta de débito · Point</option>
+                                <option value="tarjeta_credito">Tarjeta de crédito · Point</option>
                                 <option value="transferencia">Transferencia</option>
                             </select>
+                            <div class="point-payment-help d-none" data-point-help>
+                                <i class="fas fa-credit-card"></i>
+                                <span>En crédito, las mensualidades disponibles se eligen en la terminal.</span>
+                            </div>
                         </div>
                         
                         <div class="mb-3">
                             <label class="form-label">Referencia</label>
-                            <input type="text" class="form-control" name="referencia" placeholder="Número de referencia (opcional)">
+                            <input type="text" class="form-control" name="referencia" id="referencia_renovar" placeholder="Número de referencia (opcional)">
                         </div>
                     </div>
                     
@@ -1156,51 +1310,344 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
         
         // Eliminada la función capturarHuella() ya que no se usa más
         
+        function actualizarAyudaPago(select) {
+            const contenedor = select.closest('.mb-3') || select.parentElement;
+            const ayuda = contenedor ? contenedor.querySelector('[data-point-help]') : null;
+            if (!ayuda) return;
+
+            const esTarjeta = select.value === 'tarjeta_debito' || select.value === 'tarjeta_credito';
+            ayuda.classList.toggle('d-none', !esTarjeta);
+
+            if (select.value === 'tarjeta_credito') {
+                ayuda.querySelector('span').textContent =
+                    'La terminal mostrará las mensualidades y MSI disponibles para esa tarjeta y monto.';
+            } else if (select.value === 'tarjeta_debito') {
+                ayuda.querySelector('span').textContent =
+                    'El cobro se enviará como tarjeta de débito a la terminal Point.';
+            }
+        }
+
+        function esMetodoPoint(metodo) {
+            return metodo === 'tarjeta_debito' || metodo === 'tarjeta_credito';
+        }
+
+        function sleep(ms) {
+            return new Promise(function(resolve) {
+                setTimeout(resolve, ms);
+            });
+        }
+
+        async function fetchJsonPoint(url, options) {
+            const response = await fetch(url, options || {});
+            const text = await response.text();
+            let data;
+
+            try {
+                data = JSON.parse(text);
+            } catch (error) {
+                throw new Error('El servidor devolvió una respuesta no válida.');
+            }
+
+            if (!response.ok || !data.success) {
+                throw new Error(data.message || 'Ocurrió un error al comunicarse con Mercado Pago.');
+            }
+
+            return data;
+        }
+
+        async function crearOrdenInscripcionPoint(form, operation) {
+            const formData = new FormData(form);
+            const metodo = String(formData.get('metodo_pago') || '');
+            const paymentType = metodo === 'tarjeta_credito' ? 'credit_card' : 'debit_card';
+
+            return fetchJsonPoint('api/mercadopago/crear_orden_inscripcion.php', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    operation: operation,
+                    plan_id: Number(formData.get('plan_id') || 0),
+                    total: Number(formData.get('precio_pagado') || 0),
+                    payment_type: paymentType,
+                    inscripcion_id: Number(formData.get('inscripcion_id') || 0),
+                    fecha_inicio: String(formData.get('fecha_inicio') || ''),
+                    nombre: String(formData.get('nombre') || ''),
+                    apellido: String(formData.get('apellido') || ''),
+                    telefono: String(formData.get('telefono') || ''),
+                    email: String(formData.get('email') || '')
+                })
+            });
+        }
+
+        async function consultarOrdenPoint(orderId) {
+            return fetchJsonPoint('api/mercadopago/consultar_orden_inscripcion.php', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ order_id: orderId })
+            });
+        }
+
+        async function cancelarOrdenPoint(orderId) {
+            return fetchJsonPoint('api/mercadopago/cancelar_orden_inscripcion.php', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ order_id: orderId })
+            });
+        }
+
+        async function esperarPagoPoint(order) {
+            let settled = false;
+            let polling = true;
+            const startedAt = Date.now();
+            const maxWaitMs = 190000;
+
+            return new Promise(function(resolve, reject) {
+                function finish(value) {
+                    if (settled) return;
+                    settled = true;
+                    polling = false;
+                    Swal.close();
+                    resolve(value);
+                }
+
+                function fail(error) {
+                    if (settled) return;
+                    settled = true;
+                    polling = false;
+                    Swal.close();
+                    reject(error);
+                }
+
+                Swal.fire({
+                    title: 'Esperando pago en terminal',
+                    html: `
+                        <div>Completa el cobro en la terminal Point. No cierres esta ventana.</div>
+                        <div class="point-order-card">Orden: ${escaparHtml(order.order_id)}</div>
+                        <div id="mp-status-live" class="point-status-live">Estado: creada</div>
+                    `,
+                    showConfirmButton: false,
+                    showCancelButton: true,
+                    cancelButtonText: 'Cancelar cobro',
+                    cancelButtonColor: '#dc2626',
+                    allowOutsideClick: false,
+                    allowEscapeKey: false,
+                    didOpen: async function() {
+                        while (polling && !settled) {
+                            try {
+                                const latest = await consultarOrdenPoint(order.order_id);
+                                const statusNode = document.getElementById('mp-status-live');
+
+                                if (statusNode) {
+                                    statusNode.textContent =
+                                        'Orden: ' + (latest.order_status || '-') +
+                                        ' · Pago: ' + (latest.payment_status || '-');
+                                }
+
+                                if (latest.paid) {
+                                    finish(latest);
+                                    return;
+                                }
+
+                                if (latest.final_failure) {
+                                    fail(new Error(
+                                        'El pago terminó en estado ' +
+                                        (latest.payment_status || latest.order_status || 'desconocido') + '.'
+                                    ));
+                                    return;
+                                }
+                            } catch (error) {
+                                console.error('Consulta Point:', error);
+                            }
+
+                            if (Date.now() - startedAt >= maxWaitMs) {
+                                fail(new Error('Terminó el tiempo de espera para completar el pago.'));
+                                return;
+                            }
+
+                            await sleep(2200);
+                        }
+                    }
+                }).then(async function(result) {
+                    if (settled || result.isConfirmed) return;
+
+                    polling = false;
+                    try {
+                        const canceled = await cancelarOrdenPoint(order.order_id);
+                        if (canceled.requires_terminal) {
+                            await Swal.fire({
+                                icon: 'warning',
+                                title: 'Cancela en la terminal',
+                                text: canceled.message || 'La orden debe cancelarse desde la Point.'
+                            });
+                        }
+                        finish(null);
+                    } catch (error) {
+                        fail(error);
+                    }
+                });
+            });
+        }
+
+        function guardarDatosPointEnFormulario(form, payment) {
+            form.elements.mp_order_id.value = payment.order_id || '';
+            form.elements.mp_payment_id.value = payment.payment_id || '';
+            form.elements.mp_external_reference.value = payment.external_reference || '';
+            form.elements.mp_payment_reference_id.value = payment.payment_reference_id || '';
+            form.elements.mp_installments.value = Math.max(1, Number(payment.installments || 1));
+
+            const referencia = form.elements.referencia;
+            if (referencia) {
+                referencia.value = payment.payment_reference_id ||
+                    payment.external_reference ||
+                    payment.order_id || '';
+            }
+        }
+
+        function limpiarDatosPoint(form) {
+            ['mp_order_id', 'mp_payment_id', 'mp_external_reference', 'mp_payment_reference_id'].forEach(function(name) {
+                if (form.elements[name]) form.elements[name].value = '';
+            });
+            if (form.elements.mp_installments) form.elements.mp_installments.value = '1';
+        }
+
+        async function procesarFormularioInscripcion(event, form, operation, button, loadingText, normalText) {
+            event.preventDefault();
+
+            if (formularioEnviando) {
+                Swal.fire('Procesando', 'Ya se está procesando la solicitud.', 'warning');
+                return false;
+            }
+
+            if (!form.checkValidity()) {
+                form.reportValidity();
+                return false;
+            }
+
+            const metodo = String(form.elements.metodo_pago.value || '');
+            const total = Number(form.elements.precio_pagado.value || 0);
+
+            if (!Number.isFinite(total) || total <= 0) {
+                Swal.fire('Precio inválido', 'Selecciona un plan válido antes de continuar.', 'warning');
+                return false;
+            }
+
+            formularioEnviando = true;
+            button.disabled = true;
+            button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + loadingText;
+
+            try {
+                limpiarDatosPoint(form);
+
+                if (esMetodoPoint(metodo)) {
+                    const esCredito = metodo === 'tarjeta_credito';
+                    const confirmation = await Swal.fire({
+                        icon: 'question',
+                        title: 'Enviar cobro a terminal',
+                        html: `
+                            <div style="font-size:.95rem">Total a cobrar</div>
+                            <div style="font-size:1.75rem;font-weight:800;color:#1e3a8a;margin:4px 0 12px">$${total.toFixed(2)}</div>
+                            <div style="font-size:.84rem;color:#64748b">
+                                ${esCredito
+                                    ? 'La terminal mostrará las mensualidades y MSI disponibles.'
+                                    : 'El cobro se procesará como tarjeta de débito.'}
+                            </div>
+                        `,
+                        showCancelButton: true,
+                        confirmButtonText: 'Enviar a Point',
+                        cancelButtonText: 'Cancelar',
+                        confirmButtonColor: '#1e3a8a',
+                        cancelButtonColor: '#6b7280'
+                    });
+
+                    if (!confirmation.isConfirmed) {
+                        formularioEnviando = false;
+                        button.disabled = false;
+                        button.innerHTML = normalText;
+                        return false;
+                    }
+
+                    Swal.fire({
+                        title: 'Creando orden',
+                        text: 'Enviando el cobro a la terminal Point.',
+                        allowOutsideClick: false,
+                        didOpen: function() { Swal.showLoading(); }
+                    });
+
+                    const order = await crearOrdenInscripcionPoint(form, operation);
+                    const payment = await esperarPagoPoint(order);
+
+                    if (!payment) {
+                        formularioEnviando = false;
+                        button.disabled = false;
+                        button.innerHTML = normalText;
+                        return false;
+                    }
+
+                    guardarDatosPointEnFormulario(form, payment);
+
+                    const mensualidades = Math.max(1, Number(payment.installments || 1));
+                    const mensajePago = metodo === 'tarjeta_credito' && mensualidades > 1
+                        ? 'Pago aprobado en ' + mensualidades + ' mensualidades. Mercado Pago no informa aquí si fueron sin intereses.'
+                        : 'Pago aprobado correctamente en la terminal.';
+
+                    await Swal.fire({
+                        icon: 'success',
+                        title: 'Pago aprobado',
+                        text: mensajePago,
+                        timer: 1700,
+                        showConfirmButton: false
+                    });
+                }
+
+                // Envío nativo: evita ejecutar otra vez este mismo listener.
+                HTMLFormElement.prototype.submit.call(form);
+                return true;
+            } catch (error) {
+                formularioEnviando = false;
+                button.disabled = false;
+                button.innerHTML = normalText;
+
+                await Swal.fire({
+                    icon: 'error',
+                    title: 'No se pudo procesar el pago',
+                    text: error.message || 'Ocurrió un error inesperado.',
+                    confirmButtonColor: '#1e3a8a'
+                });
+
+                return false;
+            }
+        }
+
         $('#formNuevoCliente').on('submit', function(e) {
-            if (formularioEnviando) {
-                e.preventDefault();
-                Swal.fire('Procesando', 'Ya se está procesando la solicitud, por favor espere...', 'warning');
-                return false;
-            }
-            
-            formularioEnviando = true;
-            const $btn = $('#btnGuardarNuevo');
-            $btn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> Guardando...');
-            
-            setTimeout(function() {
-                if (formularioEnviando) {
-                    formularioEnviando = false;
-                    $btn.prop('disabled', false).html('Guardar');
-                }
-            }, 10000);
+            return procesarFormularioInscripcion(
+                e,
+                this,
+                'new',
+                document.getElementById('btnGuardarNuevo'),
+                'Guardando...',
+                'Guardar'
+            );
         });
-        
+
         $('#formRenovar').on('submit', function(e) {
-            if (formularioEnviando) {
-                e.preventDefault();
-                Swal.fire('Procesando', 'Ya se está procesando la solicitud, por favor espere...', 'warning');
-                return false;
-            }
-            
-            formularioEnviando = true;
-            const $btn = $('#btnRenovar');
-            $btn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> Renovando...');
-            
-            setTimeout(function() {
-                if (formularioEnviando) {
-                    formularioEnviando = false;
-                    $btn.prop('disabled', false).html('Renovar');
-                }
-            }, 10000);
+            return procesarFormularioInscripcion(
+                e,
+                this,
+                'renewal',
+                document.getElementById('btnRenovar'),
+                'Renovando...',
+                'Renovar'
+            );
         });
-        
+
         $('#modalNuevoCliente').on('hidden.bs.modal', function() {
             formularioEnviando = false;
+            limpiarDatosPoint(document.getElementById('formNuevoCliente'));
             $('#btnGuardarNuevo').prop('disabled', false).html('Guardar');
         });
         
         $('#modalRenovar').on('hidden.bs.modal', function() {
             formularioEnviando = false;
+            limpiarDatosPoint(document.getElementById('formRenovar'));
             $('#btnRenovar').prop('disabled', false).html('Renovar');
             $('#renovar_plan_id').val('');
             $('#renovar_precio_pagado').val('');
