@@ -559,53 +559,192 @@ function enviarTicketRenovacion($email, $nombre_cliente, $plan_nombre, $fecha_in
     return enviarCorreoSMTP($email, $nombre_cliente, $asunto, $cuerpo_html, $pdf_content);
 }
 
+
+// ========== OBTENER CONFIGURACIÓN SMTP DESDE LA BASE DE DATOS ==========
+function getConfiguracionCorreoSMTP() {
+    global $conn;
+
+    if (!isset($conn) || !($conn instanceof mysqli)) {
+        error_log('Correo SMTP: no existe una conexión mysqli válida en $conn.');
+        return null;
+    }
+
+    $query = "
+        SELECT
+            host,
+            puerto,
+            usuario,
+            password_smtp,
+            cifrado,
+            smtp_auth,
+            remitente_email,
+            remitente_nombre,
+            verificar_ssl,
+            activo
+        FROM configuracion_correo
+        WHERE id = 1
+        LIMIT 1
+    ";
+
+    $result = $conn->query($query);
+
+    if (!$result) {
+        error_log('Correo SMTP: error al consultar configuracion_correo: ' . $conn->error);
+        return null;
+    }
+
+    $config = $result->fetch_assoc();
+
+    if (!$config) {
+        error_log('Correo SMTP: no existe el registro id = 1 en configuracion_correo.');
+        return null;
+    }
+
+    if ((int) $config['activo'] !== 1) {
+        error_log('Correo SMTP: la configuración id = 1 está desactivada.');
+        return null;
+    }
+
+    $campos_requeridos = [
+        'host',
+        'puerto',
+        'remitente_email',
+        'remitente_nombre'
+    ];
+
+    if ((int) $config['smtp_auth'] === 1) {
+        $campos_requeridos[] = 'usuario';
+        $campos_requeridos[] = 'password_smtp';
+    }
+
+    foreach ($campos_requeridos as $campo) {
+        if (!isset($config[$campo]) || trim((string) $config[$campo]) === '') {
+            error_log('Correo SMTP: el campo ' . $campo . ' está vacío.');
+            return null;
+        }
+    }
+
+    $puerto = (int) $config['puerto'];
+
+    if ($puerto < 1 || $puerto > 65535) {
+        error_log('Correo SMTP: el puerto configurado no es válido.');
+        return null;
+    }
+
+    if (!filter_var($config['remitente_email'], FILTER_VALIDATE_EMAIL)) {
+        error_log('Correo SMTP: remitente_email no contiene un correo válido.');
+        return null;
+    }
+
+    return $config;
+}
+
 // ========== FUNCIÓN PRINCIPAL DE ENVÍO SMTP ==========
 function enviarCorreoSMTP($email, $nombre, $asunto, $cuerpo_html, $pdf_content = null, $qr_content = null, $qr_nombre = null) {
-    $config = getConfiguracionGimnasio();
+    $config_gimnasio = getConfiguracionGimnasio();
+    $config_correo = getConfiguracionCorreoSMTP();
+
+    if (!$config_correo) {
+        return false;
+    }
+
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        error_log('Correo SMTP: el destinatario no es válido.');
+        return false;
+    }
+
     $mail = new PHPMailer(true);
-    
+
     try {
         $mail->isSMTP();
-        $mail->Host = 'smtp.gmail.com';
-        $mail->SMTPAuth = true;
-        $mail->Username = 'jesusgabrielmtz78@gmail.com';
-        $mail->Password = 'iwdf uyqu erzq wvbm';
-        $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
-        $mail->Port = 587;
-        
-        $mail->SMTPOptions = array(
-            'ssl' => array(
-                'verify_peer' => false,
-                'verify_peer_name' => false,
-                'allow_self_signed' => true
-            )
-        );
-        
-        $nombre_gimnasio = !empty($config['nombre']) ? $config['nombre'] : 'Sistema Gimnasio';
-        $mail->setFrom('jesusgabrielmtz78@gmail.com', $nombre_gimnasio);
+        $mail->Host = trim((string) $config_correo['host']);
+        $mail->Port = (int) $config_correo['puerto'];
+        $mail->SMTPAuth = (int) $config_correo['smtp_auth'] === 1;
+        $mail->CharSet = 'UTF-8';
+        $mail->Timeout = 30;
+
+        if ($mail->SMTPAuth) {
+            $mail->Username = (string) $config_correo['usuario'];
+            $mail->Password = (string) $config_correo['password_smtp'];
+        }
+
+        $cifrado = strtolower(trim((string) $config_correo['cifrado']));
+
+        if (in_array($cifrado, ['ssl', 'smtps'], true)) {
+            $mail->SMTPSecure = PHPMailer::ENCRYPTION_SMTPS;
+        } elseif (in_array($cifrado, ['tls', 'starttls'], true)) {
+            $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
+        } else {
+            $mail->SMTPSecure = '';
+            $mail->SMTPAutoTLS = false;
+        }
+
+        $verificar_ssl = (int) $config_correo['verificar_ssl'] === 1;
+
+        $mail->SMTPOptions = [
+            'ssl' => [
+                'verify_peer' => $verificar_ssl,
+                'verify_peer_name' => $verificar_ssl,
+                'allow_self_signed' => !$verificar_ssl
+            ]
+        ];
+
+        $remitente_email = trim((string) $config_correo['remitente_email']);
+        $remitente_nombre = trim((string) $config_correo['remitente_nombre']);
+
+        if ($remitente_nombre === '') {
+            $remitente_nombre = !empty($config_gimnasio['nombre'])
+                ? $config_gimnasio['nombre']
+                : 'Sistema Gimnasio';
+        }
+
+        $mail->setFrom($remitente_email, $remitente_nombre);
         $mail->addAddress($email, $nombre);
-        
+
         // Adjuntar PDF del ticket
-        if ($pdf_content) {
-            $mail->addStringAttachment($pdf_content, 'ticket_gimnasio.pdf', 'base64', 'application/pdf');
+        if ($pdf_content !== null && $pdf_content !== '') {
+            $mail->addStringAttachment(
+                $pdf_content,
+                'ticket_gimnasio.pdf',
+                'base64',
+                'application/pdf'
+            );
         }
-        
-        // ========== ADJUNTAR CÓDIGO QR ==========
-        if ($qr_content && $qr_nombre) {
-            $mail->addStringAttachment($qr_content, $qr_nombre, 'base64', 'image/png');
+
+        // Adjuntar código QR cuando se reciba contenido y nombre
+        if ($qr_content !== null && $qr_content !== '' && !empty($qr_nombre)) {
+            $mail->addStringAttachment(
+                $qr_content,
+                $qr_nombre,
+                'base64',
+                'image/png'
+            );
         }
-        
+
         $mail->isHTML(true);
         $mail->Subject = $asunto;
         $mail->Body = $cuerpo_html;
-        $mail->AltBody = strip_tags($cuerpo_html);
-        
+        $mail->AltBody = html_entity_decode(
+            trim(strip_tags(str_replace(
+                ['<br>', '<br/>', '<br />', '</p>', '</div>'],
+                ["\n", "\n", "\n", "\n", "\n"],
+                $cuerpo_html
+            ))),
+            ENT_QUOTES,
+            'UTF-8'
+        );
+
         $mail->send();
         return true;
-        
     } catch (Exception $e) {
-        error_log("Error PHPMailer: " . $mail->ErrorInfo);
+        error_log('Error PHPMailer: ' . $mail->ErrorInfo);
         return false;
+    } finally {
+        try {
+            $mail->smtpClose();
+        } catch (Throwable $e) {
+            // No interrumpir el flujo por un error al cerrar la conexión SMTP.
+        }
     }
 }
 ?>

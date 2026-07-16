@@ -12,8 +12,99 @@ if (empty($_SESSION['user_id'])) {
     return;
 }
 
+$sidebar_project_root = dirname(__DIR__);
+
+if (!function_exists('sidebarArchivoExiste')) {
+    function sidebarArchivoExiste(string $ruta, string $projectRoot): bool
+    {
+        $ruta = trim($ruta);
+
+        if ($ruta === '' || preg_match('#^https?://#i', $ruta)) {
+            return false;
+        }
+
+        return is_file(
+            rtrim($projectRoot, '/\\')
+            . DIRECTORY_SEPARATOR
+            . ltrim($ruta, '/\\')
+        );
+    }
+}
+
 $user_rol = strtolower(trim((string) ($_SESSION['user_rol'] ?? 'recepcionista')));
 $current_page = basename((string) ($_SERVER['PHP_SELF'] ?? ''));
+
+$sidebar_legal_pendiente = false;
+$sidebar_legal_error = '';
+$sidebar_legal_documentos = [];
+$sidebar_legal_configuracion = [];
+$sidebar_legal_return = '';
+
+require_once __DIR__ . '/legal_guard.php';
+
+if ($current_page !== 'legal.php') {
+    try {
+        $sidebar_legal_db = legal_get_database();
+
+        legal_ensure_table($sidebar_legal_db);
+
+        $sidebar_legal_configuracion =
+            legal_get_gym_config($sidebar_legal_db);
+
+        $sidebar_legal_documentos =
+            legal_get_documents(
+                $sidebar_legal_configuracion
+            );
+
+        $sidebar_legal_aceptacion =
+            legal_get_acceptance(
+                $sidebar_legal_db,
+                (int) $_SESSION['user_id']
+            );
+
+        $sidebar_legal_pendiente =
+            !legal_acceptance_is_current(
+                $sidebar_legal_aceptacion,
+                $sidebar_legal_documentos
+            );
+
+        if ($sidebar_legal_pendiente) {
+            if (empty($_SESSION['legal_csrf'])) {
+                $_SESSION['legal_csrf'] =
+                    bin2hex(random_bytes(32));
+            }
+
+            $sidebar_legal_return =
+                legal_safe_return_url(
+                    (string) (
+                        $_SESSION['legal_return_after_accept']
+                        ?? legal_current_local_url()
+                    )
+                );
+        }
+    } catch (Throwable $sidebarLegalException) {
+        $sidebar_legal_pendiente = true;
+        $sidebar_legal_error =
+            $sidebarLegalException->getMessage();
+
+        if (empty($_SESSION['legal_csrf'])) {
+            $_SESSION['legal_csrf'] =
+                bin2hex(random_bytes(32));
+        }
+
+        $sidebar_legal_return =
+            legal_base_url() . '/dashboard.php';
+
+        error_log(
+            '[Sidebar legal] '
+            . $sidebarLegalException->getMessage()
+        );
+    }
+}
+
+$sidebar_legal_activo =
+    $current_page === 'legal.php'
+    || $sidebar_legal_pendiente;
 
 // Recuperar una alerta de acceso denegado únicamente en el dashboard.
 $alerta_acceso_denegado = null;
@@ -22,35 +113,68 @@ if ($current_page === 'dashboard.php' && isset($_SESSION['alerta_acceso_denegado
     unset($_SESSION['alerta_acceso_denegado']);
 }
 
-// Conectar a la base de datos para obtener configuración del gimnasio
+// Conectar a la base de datos para obtener configuración del gimnasio.
 require_once __DIR__ . '/../config/database.php';
+
 $database = new Database();
 $conn = $database->getConnection();
 
-// Obtener configuración del gimnasio
 $gym_nombre = 'Gimnasio';
 $gym_logo = '';
 $gym_logo_url = '';
 
-$query = "SELECT nombre, logo FROM configuracion_gimnasio WHERE id = 1";
-$result = $conn->query($query);
+if ($conn) {
+    $query = "
+        SELECT nombre, logo
+        FROM configuracion_gimnasio
+        WHERE id = 1
+        LIMIT 1
+    ";
 
-if ($result && $row = $result->fetch_assoc()) {
-    $gym_nombre = !empty($row['nombre']) ? $row['nombre'] : 'Gimnasio';
-    
-    // Verificar si el logo existe en la ruta guardada
-    if (!empty($row['logo']) && file_exists($row['logo'])) {
-        $gym_logo = $row['logo'];
-        $gym_logo_url = $row['logo'];
+    $result = $conn->query($query);
+
+    if ($result && $row = $result->fetch_assoc()) {
+        $nombreConfigurado = trim((string) ($row['nombre'] ?? ''));
+        $logoConfigurado = trim((string) ($row['logo'] ?? ''));
+
+        if ($nombreConfigurado !== '') {
+            $gym_nombre = $nombreConfigurado;
+        }
+
+        if (
+            $logoConfigurado !== ''
+            && sidebarArchivoExiste(
+                $logoConfigurado,
+                $sidebar_project_root
+            )
+        ) {
+            $gym_logo = $logoConfigurado;
+            $gym_logo_url = $logoConfigurado;
+        }
     }
 }
 
-// Si no hay logo en la BD, buscar en la carpeta img con cualquier extensión
-if (empty($gym_logo)) {
-    $extensiones = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'ico'];
+if ($gym_logo === '') {
+    $extensiones = [
+        'png',
+        'jpg',
+        'jpeg',
+        'gif',
+        'webp',
+        'bmp',
+        'svg',
+        'ico',
+    ];
+
     foreach ($extensiones as $ext) {
-        $ruta = "img/logo-gym." . $ext;
-        if (file_exists($ruta)) {
+        $ruta = 'img/logo-gym.' . $ext;
+
+        if (
+            sidebarArchivoExiste(
+                $ruta,
+                $sidebar_project_root
+            )
+        ) {
             $gym_logo = $ruta;
             $gym_logo_url = $ruta;
             break;
@@ -58,24 +182,45 @@ if (empty($gym_logo)) {
     }
 }
 
-// Determinar módulo activo basado en la página actual
-$current_page = basename($_SERVER['PHP_SELF']);
+// Determinar módulo activo basado en la página actual.
 $active_module = '';
 
-if ($current_page == 'dashboard.php') $active_module = 'dashboard';
-if ($current_page == 'productos.php') $active_module = 'products';
-if ($current_page == 'ventas.php') $active_module = 'ventas';
-if ($current_page == 'historial_stock.php') $active_module = 'historial';
-if ($current_page == 'historial_ventas.php') $active_module = 'historial_ventas';
-if ($current_page == 'inscripciones.php') $active_module = 'inscriptions';
-if ($current_page == 'asistencias.php') $active_module = 'assistance';
-if ($current_page == 'clases.php') $active_module = 'classes';
-if ($current_page == 'inscripciones_clases.php') $active_module = 'clases_inscriptions';
-if ($current_page == 'reportes.php') $active_module = 'reports';
-if ($current_page == 'notificaciones.php') $active_module = 'notificaciones';
-if ($current_page == 'configuracion.php') $active_module = 'settings';
-if ($current_page == 'mi_perfil.php') $active_module = 'perfil';
-if ($current_page == 'corte_caja.php' || $current_page == 'corte_caja_detalle.php') $active_module = 'corte_caja';
+if ($sidebar_legal_activo) {
+    $active_module = 'legal_acceptances';
+} elseif ($current_page === 'dashboard.php') {
+    $active_module = 'dashboard';
+} elseif ($current_page === 'productos.php') {
+    $active_module = 'products';
+} elseif ($current_page === 'ventas.php') {
+    $active_module = 'ventas';
+} elseif ($current_page === 'historial_stock.php') {
+    $active_module = 'historial';
+} elseif ($current_page === 'historial_ventas.php') {
+    $active_module = 'historial_ventas';
+} elseif ($current_page === 'inscripciones.php') {
+    $active_module = 'inscriptions';
+} elseif ($current_page === 'asistencias.php') {
+    $active_module = 'assistance';
+} elseif ($current_page === 'clases.php') {
+    $active_module = 'classes';
+} elseif ($current_page === 'inscripciones_clases.php') {
+    $active_module = 'clases_inscriptions';
+} elseif ($current_page === 'reportes.php') {
+    $active_module = 'reports';
+} elseif ($current_page === 'notificaciones.php') {
+    $active_module = 'notificaciones';
+} elseif ($current_page === 'configuracion.php') {
+    $active_module = 'settings';
+} elseif ($current_page === 'solicitudes_usuarios.php') {
+    $active_module = 'user_requests';
+} elseif ($current_page === 'mi_perfil.php') {
+    $active_module = 'perfil';
+} elseif (
+    $current_page === 'corte_caja.php'
+    || $current_page === 'corte_caja_detalle.php'
+) {
+    $active_module = 'corte_caja';
+}
 
 // Obtener datos del usuario desde la sesión
 $user_name = isset($_SESSION['user_name']) ? $_SESSION['user_name'] : 'Usuario';
@@ -85,1378 +230,44 @@ $user_rol = strtolower(trim((string) ($_SESSION['user_rol'] ?? 'recepcionista'))
 // Mostrar rol en español
 $rol_spanish = [
     'admin' => 'Administrador',
+    'administrador' => 'Administrador',
     'recepcionista' => 'Recepcionista',
     'entrenador' => 'Entrenador'
 ];
 $user_rol_display = isset($rol_spanish[$user_rol]) ? $rol_spanish[$user_rol] : ucfirst($user_rol);
+
+// Contador visible únicamente para administradores.
+$solicitudes_pendientes = 0;
+
+if (
+    $conn
+    && in_array(
+        $user_rol,
+        ['admin', 'administrador'],
+        true
+    )
+) {
+    $query_solicitudes = "
+        SELECT COUNT(*) AS total
+        FROM usuarios
+        WHERE estado = 'pendiente'
+          AND rol IN ('recepcionista', 'entrenador')
+    ";
+
+    $result_solicitudes = $conn->query($query_solicitudes);
+
+    if (
+        $result_solicitudes
+        && $row_solicitudes = $result_solicitudes->fetch_assoc()
+    ) {
+        $solicitudes_pendientes = (int) (
+            $row_solicitudes['total'] ?? 0
+        );
+    }
+}
 ?>
 
-<style>
-/* ============================================
-   SIDEBAR STYLES - Azul Profesional
-   SCROLLBAR: Track azul como sidebar + Thumb gris
-============================================ */
-:root {
-    --sidebar-bg: #0a2540;
-    --sidebar-dark: #0a1f32;
-    --sidebar-hover: #1e3a5f;
-    --sidebar-active: #2c4c7c;
-    --sidebar-text: #ffffff;
-    --sidebar-text-light: rgba(255, 255, 255, 0.8);
-    --sidebar-border: rgba(255, 255, 255, 0.1);
-    --sidebar-accent: #3b82f6;
-}
-
-* {
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
-}
-
-html, body {
-    height: 100%;
-    margin: 0;
-    padding: 0;
-}
-
-body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-    background: #f5f7fa;
-    overflow-x: hidden;
-}
-
-/* ============================================
-   SCROLLBAR DEL SIDEBAR
-   Track: AZUL como el fondo del sidebar
-   Thumb: GRIS
-   ============================================ */
-
-/* Forzar estilos en sidebar y todos sus elementos */
-.sidebar,
-#sidebar,
-aside.sidebar {
-    scrollbar-width: thin !important;
-    scrollbar-color: #8c959d #0a2540 !important; /* thumb gris, track azul */
-}
-
-/* WebKit (Chrome, Safari, Edge) */
-.sidebar::-webkit-scrollbar,
-#sidebar::-webkit-scrollbar,
-aside.sidebar::-webkit-scrollbar {
-    width: 6px !important;
-    height: 6px !important;
-}
-
-/* Track (fondo) - AZUL como el sidebar */
-.sidebar::-webkit-scrollbar-track,
-#sidebar::-webkit-scrollbar-track,
-aside.sidebar::-webkit-scrollbar-track {
-    background: #0a2540 !important; /* Mismo color que el sidebar */
-    border-radius: 0px !important;
-}
-
-/* Thumb (barra deslizante) - GRIS */
-.sidebar::-webkit-scrollbar-thumb,
-#sidebar::-webkit-scrollbar-thumb,
-aside.sidebar::-webkit-scrollbar-thumb {
-    background: #6c757d !important; /* Gris */
-    border-radius: 10px !important;
-}
-
-/* Thumb al hacer hover - Gris más claro */
-.sidebar::-webkit-scrollbar-thumb:hover,
-#sidebar::-webkit-scrollbar-thumb:hover,
-aside.sidebar::-webkit-scrollbar-thumb:hover {
-    background: #8c959d !important;
-}
-
-/* Esquina del scrollbar */
-.sidebar::-webkit-scrollbar-corner,
-#sidebar::-webkit-scrollbar-corner,
-aside.sidebar::-webkit-scrollbar-corner {
-    background: #0a2540 !important;
-}
-
-/* Para elementos dentro del sidebar que puedan tener scroll */
-.sidebar *::-webkit-scrollbar,
-#sidebar *::-webkit-scrollbar {
-    width: 6px !important;
-    height: 6px !important;
-}
-
-.sidebar *::-webkit-scrollbar-track,
-#sidebar *::-webkit-scrollbar-track {
-    background: #0a2540 !important;
-}
-
-.sidebar *::-webkit-scrollbar-thumb,
-#sidebar *::-webkit-scrollbar-thumb {
-    background: #6c757d !important;
-    border-radius: 10px !important;
-}
-
-.sidebar *::-webkit-scrollbar-thumb:hover,
-#sidebar *::-webkit-scrollbar-thumb:hover {
-    background: #8c959d !important;
-}
-
-/* Firefox - Track azul, thumb gris */
-@-moz-document url-prefix() {
-    .sidebar,
-    #sidebar,
-    aside.sidebar {
-        scrollbar-width: thin !important;
-        scrollbar-color: #8c959d #0a2540 !important;
-    }
-}
-
-/* Sidebar - Ocupa toda la altura */
-.sidebar {
-    position: fixed;
-    left: 0;
-    top: 0;
-    width: 280px;
-    height: 100%;
-    min-height: 100vh;
-    background: var(--sidebar-bg);
-    display: flex;
-    flex-direction: column;
-    transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    z-index: 1000;
-    overflow-y: auto;
-    overflow-x: hidden;
-    box-shadow: 2px 0 12px rgba(0, 0, 0, 0.1);
-    /* Firefox */
-    scrollbar-width: thin !important;
-    scrollbar-color: #8c959d #0a2540 !important;
-}
-
-/* Aislar el sidebar para evitar conflictos */
-.sidebar {
-    isolation: isolate;
-}
-
-/* Botón de colapsar DENTRO del sidebar */
-.sidebar-collapse-btn {
-    position: absolute;
-    right: 12px;
-    top: 20px;
-    width: 40px;
-    height: 40px;
-    background: var(--sidebar-accent);
-    border: none;
-    border-radius: 10px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: white;
-    font-size: 0.9rem;
-    transition: all 0.3s ease;
-    z-index: 10;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
-}
-
-.sidebar-collapse-btn:hover {
-    background: #2563eb;
-    transform: scale(1.05);
-}
-
-/* Estado Colapsado */
-.sidebar.collapsed {
-    width: 85px !important;
-}
-
-.sidebar.collapsed .logo-text,
-.sidebar.collapsed .user-info,
-.sidebar.collapsed .nav-text,
-.sidebar.collapsed .logout-text {
-    display: none;
-}
-
-.sidebar.collapsed .logo {
-    justify-content: center;
-}
-
-.sidebar.collapsed .logo-img {
-    margin: 0 auto;
-}
-
-.sidebar.collapsed .user-profile {
-    justify-content: center;
-    padding: 20px 0;
-}
-
-.sidebar.collapsed .user-avatar i {
-    font-size: 2rem;
-}
-
-.sidebar.collapsed .nav-link {
-    justify-content: center;
-    padding: 14px;
-}
-
-.sidebar.collapsed .nav-link i {
-    margin: 0;
-    font-size: 1.3rem;
-}
-
-.sidebar.collapsed .logout-btn {
-    justify-content: center;
-    padding: 14px;
-}
-
-.sidebar.collapsed .sidebar-collapse-btn {
-    right: 19px;
-}
-
-.sidebar.collapsed .sidebar-collapse-btn i {
-    transform: rotate(180deg);
-}
-
-/* Botón Hamburguesa para móvil - Solo visible en móvil */
-.hamburger-mobile {
-    position: fixed;
-    top: 15px;
-    left: 15px;
-    z-index: 1001;
-    background: var(--sidebar-bg);
-    border: none;
-    cursor: pointer;
-    width: 45px;
-    height: 45px;
-    border-radius: 12px;
-    color: white;
-    font-size: 1.2rem;
-    display: none;
-    align-items: center;
-    justify-content: center;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-    transition: all 0.3s ease;
-}
-
-.hamburger-mobile:hover {
-    background: var(--sidebar-hover);
-    transform: scale(1.02);
-}
-
-/* Estado Móvil */
-@media (max-width: 768px) {
-    .hamburger-mobile {
-        display: flex;
-    }
-    
-    .sidebar {
-        transform: translateX(-100%);
-        width: 280px;
-        transition: transform 0.3s ease;
-    }
-    
-    .sidebar.mobile-open {
-        transform: translateX(0);
-    }
-    
-    .sidebar-collapse-btn {
-        display: none;
-    }
-}
-
-/* Sidebar Header */
-.sidebar-header {
-    padding: 24px 20px;
-    border-bottom: 1px solid var(--sidebar-border);
-    position: relative;
-}
-
-.logo {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    text-decoration: none;
-}
-
-.logo-img {
-    width: 35px;
-    height: 35px;
-    object-fit: contain;
-    border-radius: 10px;
-}
-
-.logo i {
-    font-size: 1.8rem;
-    color: var(--sidebar-accent);
-}
-
-.logo-text {
-    font-size: 1rem;
-    font-weight: 600;
-    color: white;
-    line-height: 1.3;
-}
-
-.logo-text small {
-    display: block;
-    font-size: 0.65rem;
-    font-weight: 400;
-    color: var(--sidebar-text-light);
-    margin-top: 2px;
-}
-
-/* Perfil de Usuario */
-.user-profile {
-    padding: 20px;
-    border-bottom: 1px solid var(--sidebar-border);
-    display: flex;
-    align-items: center;
-    gap: 12px;
-}
-
-.user-avatar i {
-    font-size: 2.5rem;
-    color: var(--sidebar-accent);
-}
-
-.user-info {
-    flex: 1;
-    overflow: hidden;
-}
-
-.user-info h4 {
-    font-size: 0.9rem;
-    font-weight: 600;
-    color: white;
-    margin-bottom: 5px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.user-info p {
-    font-size: 0.7rem;
-    color: var(--sidebar-text-light);
-    margin-bottom: 5px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.user-info p i {
-    font-size: 0.65rem;
-    margin-right: 3px;
-}
-
-/* Estilo para la imagen de perfil en el sidebar */
-.user-avatar img {
-    width: 45px;
-    height: 45px;
-    border-radius: 50%;
-    object-fit: cover;
-}
-
-/* Ajuste para el ícono cuando no hay imagen */
-.user-avatar i {
-    font-size: 2.5rem;
-    color: var(--sidebar-accent);
-}
-
-.rol-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    background: rgba(59, 130, 246, 0.2);
-    padding: 3px 10px;
-    border-radius: 20px;
-    font-size: 0.65rem;
-    color: var(--sidebar-accent);
-}
-
-.rol-badge i {
-    font-size: 0.6rem;
-}
-
-/* Navegación */
-.sidebar-nav {
-    flex: 1;
-    overflow-y: auto;
-    padding: 16px 0;
-}
-
-.sidebar-nav ul {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-}
-
-.nav-item {
-    margin-bottom: 6px;
-}
-
-.nav-link {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 12px 20px;
-    color: var(--sidebar-text-light);
-    text-decoration: none;
-    transition: all 0.2s ease;
-    border-left: 3px solid transparent;
-    font-size: 0.9rem;
-    font-weight: 500;
-}
-
-.nav-link i {
-    width: 24px;
-    font-size: 1.1rem;
-    color: var(--sidebar-text-light);
-}
-
-.nav-link:hover {
-    background: var(--sidebar-hover);
-    color: white;
-}
-
-.nav-link:hover i {
-    color: white;
-}
-
-.nav-link.active {
-    background: var(--sidebar-active);
-    color: white;
-    border-left-color: var(--sidebar-accent);
-}
-
-.nav-link.active i {
-    color: var(--sidebar-accent);
-}
-
-.nav-text {
-    font-weight: 500;
-}
-
-.nav-divider {
-    height: 1px;
-    background: var(--sidebar-border);
-    margin: 12px 20px;
-}
-
-/* Footer Sidebar */
-.sidebar-footer {
-    padding: 16px 20px;
-    border-top: 1px solid var(--sidebar-border);
-    margin-top: auto;
-}
-
-.logout-btn {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 10px;
-    color: #f87171;
-    text-decoration: none;
-    border-radius: 8px;
-    transition: all 0.2s ease;
-    font-size: 0.9rem;
-}
-
-.logout-btn i {
-    width: 24px;
-    font-size: 1rem;
-    color: #f87171;
-}
-
-.logout-btn:hover {
-    background: rgba(248, 113, 113, 0.1);
-    color: #ffa2a2;
-}
-
-/* Drag Handle */
-.drag-handle {
-    position: absolute;
-    right: -4px;
-    top: 0;
-    width: 6px;
-    height: 100%;
-    cursor: ew-resize;
-    background: transparent;
-    transition: background 0.2s;
-    z-index: 10;
-}
-
-.drag-handle:hover {
-    background: var(--sidebar-accent);
-}
-
-@media (max-width: 768px) {
-    .drag-handle {
-        display: none;
-    }
-}
-
-/* Overlay para móvil */
-.mobile-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.5);
-    z-index: 999;
-    display: none;
-}
-
-.mobile-overlay.active {
-    display: block;
-}
-
-/* Contenido principal - Se desplaza según el sidebar */
-.main-content {
-    margin-left: 280px;
-    transition: margin-left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    min-height: 100vh;
-    padding: 20px;
-    background: #f5f7fa;
-}
-
-.sidebar.collapsed ~ .main-content,
-body.sidebar-collapsed .main-content {
-    margin-left: 70px;
-}
-
-@media (max-width: 768px) {
-    .main-content {
-        margin-left: 0 !important;
-        padding: 80px 15px 15px 15px;
-    }
-    
-    body.sidebar-open .main-content {
-        filter: blur(2px);
-        pointer-events: none;
-    }
-}
-
-/* Animación suave */
-@keyframes fadeIn {
-    from {
-        opacity: 0;
-        transform: translateX(-10px);
-    }
-    to {
-        opacity: 1;
-        transform: translateX(0);
-    }
-}
-
-.nav-link {
-    animation: fadeIn 0.2s ease forwards;
-}
-
-/* ============================================
-   GARANTIZAR SCROLLBAR EN TODAS LAS SITUACIONES
-   ============================================ */
-@media screen {
-    /* Track azul, thumb gris */
-    .sidebar,
-    #sidebar,
-    aside.sidebar {
-        scrollbar-color: #8c959d #0a2540 !important;
-        scrollbar-width: thin !important;
-    }
-    
-    .sidebar::-webkit-scrollbar,
-    #sidebar::-webkit-scrollbar,
-    aside.sidebar::-webkit-scrollbar {
-        width: 6px !important;
-        background: #0a2540 !important;
-    }
-    
-    .sidebar::-webkit-scrollbar-track,
-    #sidebar::-webkit-scrollbar-track,
-    aside.sidebar::-webkit-scrollbar-track {
-        background: #0a2540 !important;
-    }
-    
-    .sidebar::-webkit-scrollbar-thumb,
-    #sidebar::-webkit-scrollbar-thumb,
-    aside.sidebar::-webkit-scrollbar-thumb {
-        background: #6c757d !important;
-        border-radius: 10px !important;
-    }
-    
-    .sidebar::-webkit-scrollbar-thumb:hover,
-    #sidebar::-webkit-scrollbar-thumb:hover,
-    aside.sidebar::-webkit-scrollbar-thumb:hover {
-        background: #8c959d !important;
-    }
-}
-
-/* SweetAlert de acceso restringido */
-.swal-gym-popup {
-    width: min(470px, calc(100vw - 32px)) !important;
-    border-radius: 22px !important;
-    padding: 12px 10px 20px !important;
-    box-shadow: 0 24px 65px rgba(15, 37, 64, 0.24) !important;
-}
-
-.swal-gym-title {
-    color: #0a2540 !important;
-    font-size: 1.55rem !important;
-    font-weight: 800 !important;
-}
-
-.swal-gym-confirm {
-    min-width: 145px !important;
-    border: none !important;
-    border-radius: 11px !important;
-    padding: 11px 24px !important;
-    font-weight: 700 !important;
-    box-shadow: 0 8px 20px rgba(37, 99, 235, 0.24) !important;
-}
-
-.swal-gym-access-content {
-    padding: 2px 8px 0;
-    color: #475569;
-}
-
-.swal-gym-access-content > p {
-    margin: 0 0 16px;
-    font-size: 0.96rem;
-    line-height: 1.6;
-}
-
-.swal-gym-access-data {
-    display: grid;
-    gap: 9px;
-    padding: 13px;
-    margin: 0 0 15px;
-    border: 1px solid #dbeafe;
-    border-radius: 14px;
-    background: #f8fbff;
-    text-align: left;
-}
-
-.swal-gym-access-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 14px;
-    font-size: 0.88rem;
-}
-
-.swal-gym-access-row span {
-    color: #64748b;
-}
-
-.swal-gym-access-row span i {
-    width: 19px;
-    color: #3b82f6;
-}
-
-.swal-gym-access-row strong {
-    max-width: 58%;
-    color: #0f172a;
-    text-align: right;
-}
-
-.swal-gym-access-help {
-    margin: 0 !important;
-    padding-top: 12px;
-    border-top: 1px solid #e2e8f0;
-    color: #64748b;
-    font-size: 0.82rem !important;
-}
-
-/* Impresión */
-@media print {
-    .sidebar {
-        display: none;
-    }
-}
-
-/* =========================================================
-   REDISEÑO PROFESIONAL DEL SIDEBAR
-   Mantiene roles, permisos, colapsado, resize y modo móvil
-========================================================= */
-:root {
-    --sidebar-width: 280px;
-    --sidebar-collapsed-width: 78px;
-    --sidebar-bg: #101f3d;
-    --sidebar-bg-deep: #0b1730;
-    --sidebar-surface: rgba(255, 255, 255, .065);
-    --sidebar-surface-hover: rgba(255, 255, 255, .105);
-    --sidebar-active: #2563eb;
-    --sidebar-active-soft: rgba(37, 99, 235, .18);
-    --sidebar-text: #f8fafc;
-    --sidebar-muted: #aebbd0;
-    --sidebar-border: rgba(255, 255, 255, .09);
-    --sidebar-danger: #fb7185;
-    --sidebar-shadow: 8px 0 28px rgba(15, 23, 42, .16);
-}
-
-/* Contenedor */
-.sidebar {
-    width: var(--sidebar-width);
-    background:
-        linear-gradient(180deg, rgba(255,255,255,.025), transparent 28%),
-        linear-gradient(180deg, var(--sidebar-bg) 0%, var(--sidebar-bg-deep) 100%);
-    box-shadow: var(--sidebar-shadow);
-    border-right: 1px solid rgba(255,255,255,.055);
-    transition:
-        width .28s cubic-bezier(.4, 0, .2, 1),
-        transform .28s cubic-bezier(.4, 0, .2, 1);
-    scrollbar-color: rgba(174,187,208,.48) transparent !important;
-}
-
-.sidebar::-webkit-scrollbar {
-    width: 5px !important;
-}
-
-.sidebar::-webkit-scrollbar-track {
-    background: transparent !important;
-}
-
-.sidebar::-webkit-scrollbar-thumb {
-    background: rgba(174,187,208,.42) !important;
-    border-radius: 999px !important;
-}
-
-.sidebar::-webkit-scrollbar-thumb:hover {
-    background: rgba(226,232,240,.65) !important;
-}
-
-/* Marca */
-.sidebar-header {
-    min-height: 82px;
-    display: flex;
-    align-items: center;
-    padding: 16px 62px 16px 17px;
-    border-bottom: 1px solid var(--sidebar-border);
-    background: rgba(255,255,255,.018);
-}
-
-.logo {
-    min-width: 0;
-    gap: 11px;
-}
-
-.logo-img,
-.logo > i {
-    width: 42px;
-    height: 42px;
-    display: grid;
-    place-items: center;
-    flex: 0 0 42px;
-    border: 1px solid rgba(255,255,255,.12);
-    border-radius: 12px;
-    background: rgba(255,255,255,.075);
-    object-fit: contain;
-}
-
-.logo > i {
-    color: #60a5fa;
-    font-size: 1.15rem;
-}
-
-.logo-text {
-    min-width: 0;
-    overflow: hidden;
-    color: var(--sidebar-text);
-    font-size: .98rem;
-    font-weight: 800;
-    letter-spacing: -.01em;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-}
-
-.logo-text small {
-    margin-top: 3px;
-    color: var(--sidebar-muted);
-    font-size: .65rem;
-    font-weight: 600;
-    letter-spacing: .025em;
-    text-transform: uppercase;
-}
-
-/* Botón colapsar */
-.sidebar-collapse-btn {
-    top: 21px;
-    right: 14px;
-    width: 34px;
-    height: 34px;
-    border: 1px solid rgba(255,255,255,.11);
-    border-radius: 10px;
-    background: rgba(255,255,255,.075);
-    color: #dbeafe;
-    font-size: .75rem;
-    box-shadow: none;
-}
-
-.sidebar-collapse-btn:hover,
-.sidebar-collapse-btn:focus {
-    background: rgba(37,99,235,.82);
-    color: #fff;
-    transform: none;
-    outline: none;
-}
-
-/* Perfil */
-.user-profile {
-    margin: 14px 12px 6px;
-    padding: 13px;
-    border: 1px solid var(--sidebar-border);
-    border-radius: 14px;
-    background: var(--sidebar-surface);
-    gap: 11px;
-}
-
-.user-avatar {
-    width: 44px;
-    height: 44px;
-    display: grid;
-    place-items: center;
-    flex: 0 0 44px;
-    overflow: hidden;
-    border: 2px solid rgba(96,165,250,.38);
-    border-radius: 12px;
-    background: rgba(37,99,235,.14);
-}
-
-.user-avatar img {
-    width: 100% !important;
-    height: 100% !important;
-    border-radius: 10px !important;
-}
-
-.user-avatar i {
-    color: #93c5fd;
-    font-size: 1.75rem;
-}
-
-.user-info h4 {
-    margin: 0 0 4px;
-    color: #fff;
-    font-size: .86rem;
-    font-weight: 800;
-}
-
-.user-info p {
-    margin: 0 0 7px;
-    color: var(--sidebar-muted);
-    font-size: .65rem;
-}
-
-.rol-badge {
-    min-height: 23px;
-    padding: 4px 8px;
-    border: 1px solid rgba(96,165,250,.24);
-    border-radius: 7px;
-    background: rgba(37,99,235,.14);
-    color: #bfdbfe;
-    font-size: .61rem;
-    font-weight: 800;
-}
-
-/* Navegación */
-.sidebar-nav {
-    padding: 12px 10px 16px;
-}
-
-.sidebar-nav ul {
-    display: grid;
-    gap: 3px;
-}
-
-.nav-item {
-    margin: 0;
-}
-
-.nav-link {
-    position: relative;
-    min-height: 43px;
-    gap: 11px;
-    padding: 10px 12px;
-    border: 1px solid transparent;
-    border-left: 0;
-    border-radius: 10px;
-    color: var(--sidebar-muted);
-    font-size: .82rem;
-    font-weight: 650;
-    animation: none;
-}
-
-.nav-link i {
-    width: 22px;
-    flex: 0 0 22px;
-    color: #91a2bc;
-    font-size: .98rem;
-    text-align: center;
-    transition: color .18s ease, transform .18s ease;
-}
-
-.nav-link:hover {
-    border-color: rgba(255,255,255,.065);
-    background: var(--sidebar-surface-hover);
-    color: #fff;
-    transform: none;
-}
-
-.nav-link:hover i {
-    color: #bfdbfe;
-    transform: translateX(1px);
-}
-
-.nav-link.active {
-    border-color: rgba(96,165,250,.23);
-    background:
-        linear-gradient(90deg, rgba(37,99,235,.30), rgba(37,99,235,.13));
-    color: #fff;
-    box-shadow: inset 3px 0 0 #60a5fa;
-}
-
-.nav-link.active::after {
-    position: absolute;
-    right: 12px;
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: #60a5fa;
-    box-shadow: 0 0 0 4px rgba(96,165,250,.12);
-    content: "";
-}
-
-.nav-link.active i {
-    color: #93c5fd;
-}
-
-.nav-text {
-    min-width: 0;
-    overflow: hidden;
-    font-weight: 650;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-}
-
-.nav-divider {
-    height: 1px;
-    margin: 10px 5px;
-    background: var(--sidebar-border);
-}
-
-/* Footer */
-.sidebar-footer {
-    padding: 11px 10px 14px;
-    border-top: 1px solid var(--sidebar-border);
-    background: rgba(0,0,0,.07);
-}
-
-.logout-btn {
-    min-height: 42px;
-    padding: 10px 12px;
-    border: 1px solid rgba(251,113,133,.12);
-    border-radius: 10px;
-    color: #fda4af;
-    font-size: .8rem;
-    font-weight: 750;
-}
-
-.logout-btn i {
-    color: #fb7185;
-}
-
-.logout-btn:hover {
-    border-color: rgba(251,113,133,.25);
-    background: rgba(225,29,72,.12);
-    color: #fecdd3;
-}
-
-/* Colapsado */
-.sidebar.collapsed {
-    width: var(--sidebar-collapsed-width) !important;
-}
-
-.sidebar.collapsed .sidebar-header {
-    padding: 15px 12px;
-    justify-content: center;
-}
-
-.sidebar.collapsed .logo {
-    width: 100%;
-    justify-content: center;
-}
-
-.sidebar.collapsed .logo-img,
-.sidebar.collapsed .logo > i {
-    width: 40px;
-    height: 40px;
-    flex-basis: 40px;
-}
-
-.sidebar.collapsed .sidebar-collapse-btn {
-    top: 68px;
-    right: -13px;
-    width: 27px;
-    height: 27px;
-    border-color: #dbe4f0;
-    border-radius: 50%;
-    background: #fff;
-    color: #1e3a8a;
-    box-shadow: 0 4px 12px rgba(15,23,42,.16);
-}
-
-.sidebar.collapsed .user-profile {
-    margin: 38px 10px 7px;
-    padding: 10px;
-    justify-content: center;
-    border-radius: 12px;
-}
-
-.sidebar.collapsed .user-avatar {
-    width: 40px;
-    height: 40px;
-    flex-basis: 40px;
-}
-
-.sidebar.collapsed .sidebar-nav {
-    padding-right: 9px;
-    padding-left: 9px;
-}
-
-.sidebar.collapsed .nav-link {
-    min-height: 44px;
-    justify-content: center;
-    padding: 10px;
-}
-
-.sidebar.collapsed .nav-link i {
-    margin: 0;
-    font-size: 1.05rem;
-}
-
-.sidebar.collapsed .nav-link.active {
-    box-shadow: inset 3px 0 0 #60a5fa;
-}
-
-.sidebar.collapsed .nav-link.active::after {
-    display: none;
-}
-
-.sidebar.collapsed .sidebar-footer {
-    padding-right: 9px;
-    padding-left: 9px;
-}
-
-.sidebar.collapsed .logout-btn {
-    justify-content: center;
-    padding: 10px;
-}
-
-/* Layout principal sincronizado con el ancho real */
-.main-content {
-    margin-left: var(--sidebar-width);
-    transition: margin-left .28s cubic-bezier(.4, 0, .2, 1);
-}
-
-.sidebar.collapsed ~ .main-content,
-body.sidebar-collapsed .main-content {
-    margin-left: var(--sidebar-collapsed-width);
-}
-
-/* Móvil */
-.hamburger-mobile {
-    top: 13px;
-    left: 13px;
-    width: 42px;
-    height: 42px;
-    border: 1px solid rgba(255,255,255,.10);
-    border-radius: 11px;
-    background: #13264a;
-    box-shadow: 0 7px 18px rgba(15,23,42,.22);
-}
-
-.mobile-overlay {
-    background: rgba(15,23,42,.56);
-    backdrop-filter: blur(2px);
-}
-
-@media (max-width: 768px) {
-    .sidebar {
-        width: min(286px, calc(100vw - 34px)) !important;
-        border-radius: 0 18px 18px 0;
-        box-shadow: 18px 0 45px rgba(15,23,42,.30);
-    }
-
-    .sidebar-header {
-        min-height: 78px;
-        padding-right: 18px;
-    }
-
-    .main-content {
-        margin-left: 0 !important;
-        padding-top: 70px;
-    }
-
-    .hamburger-mobile {
-        display: flex;
-    }
-
-    body.sidebar-open {
-        overflow: hidden;
-    }
-
-    body.sidebar-open .main-content {
-        filter: none;
-        pointer-events: auto;
-    }
-}
-
-/* Tooltips nativos más útiles en modo colapsado */
-.sidebar.collapsed .nav-link {
-    overflow: visible;
-}
-
-/* Arrastre más discreto */
-.drag-handle {
-    right: -2px;
-    width: 4px;
-}
-
-.drag-handle:hover {
-    background: rgba(96,165,250,.70);
-}
-
-/* Reduce movimiento si el usuario lo solicita */
-@media (prefers-reduced-motion: reduce) {
-    .sidebar,
-    .main-content,
-    .nav-link,
-    .nav-link i,
-    .sidebar-collapse-btn {
-        transition: none !important;
-    }
-}
-
-
-/* =========================================================
-   MENÚ ACORDEÓN Y SCROLL INVISIBLE
-========================================================= */
-
-/* El contenedor completo no genera una segunda barra */
-.sidebar {
-    overflow: hidden !important;
-}
-
-/* Solo navega esta zona, pero sin mostrar barra */
-.sidebar-nav {
-    min-height: 0;
-    overflow-x: hidden !important;
-    overflow-y: auto !important;
-    overscroll-behavior: contain;
-    scrollbar-width: none !important;
-    -ms-overflow-style: none !important;
-}
-
-.sidebar-nav::-webkit-scrollbar,
-.sidebar-nav *::-webkit-scrollbar {
-    display: none !important;
-    width: 0 !important;
-    height: 0 !important;
-    background: transparent !important;
-}
-
-.sidebar-menu,
-.nav-submenu {
-    margin: 0;
-    padding: 0;
-    list-style: none;
-}
-
-.sidebar-menu {
-    display: grid;
-    gap: 4px;
-}
-
-.nav-group {
-    overflow: hidden;
-    border: 1px solid transparent;
-    border-radius: 11px;
-    transition: border-color .18s ease, background .18s ease;
-}
-
-.nav-group.open {
-    border-color: rgba(96, 165, 250, .12);
-    background: rgba(255, 255, 255, .028);
-}
-
-.nav-group-toggle {
-    width: 100%;
-    min-height: 43px;
-    display: flex;
-    align-items: center;
-    gap: 11px;
-    padding: 10px 12px;
-    border: 0;
-    border-radius: 10px;
-    background: transparent;
-    color: var(--sidebar-muted);
-    font: inherit;
-    font-size: .82rem;
-    font-weight: 700;
-    text-align: left;
-    cursor: pointer;
-    transition: background .18s ease, color .18s ease;
-}
-
-.nav-group-toggle:hover,
-.nav-group-toggle:focus {
-    background: var(--sidebar-surface-hover);
-    color: #ffffff;
-    outline: none;
-}
-
-.nav-group-toggle > i:first-child {
-    width: 22px;
-    flex: 0 0 22px;
-    color: #91a2bc;
-    font-size: .98rem;
-    text-align: center;
-}
-
-.nav-group.open > .nav-group-toggle {
-    color: #ffffff;
-}
-
-.nav-group.open > .nav-group-toggle > i:first-child {
-    color: #93c5fd;
-}
-
-.nav-group-label {
-    min-width: 0;
-    flex: 1;
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-}
-
-.group-chevron {
-    flex: 0 0 auto;
-    color: #73849f;
-    font-size: .66rem;
-    transition: transform .22s ease, color .18s ease;
-}
-
-.nav-group.open > .nav-group-toggle .group-chevron {
-    color: #93c5fd;
-    transform: rotate(180deg);
-}
-
-.nav-submenu {
-    max-height: 0;
-    overflow: hidden;
-    opacity: 0;
-    transition: max-height .25s ease, opacity .18s ease, padding .25s ease;
-}
-
-.nav-group.open > .nav-submenu {
-    max-height: 310px;
-    padding: 2px 6px 7px 13px;
-    opacity: 1;
-}
-
-.nav-submenu .nav-link {
-    min-height: 39px;
-    padding: 8px 10px;
-    border-radius: 9px;
-    font-size: .77rem;
-}
-
-.nav-submenu .nav-link i {
-    width: 20px;
-    flex-basis: 20px;
-    font-size: .86rem;
-}
-
-.nav-submenu .nav-link.active {
-    background: rgba(37, 99, 235, .22);
-    box-shadow: inset 3px 0 0 #60a5fa;
-}
-
-.nav-submenu .nav-link.active::after {
-    right: 10px;
-}
-
-/* Perfil y cabecera un poco más compactos */
-.sidebar-header {
-    min-height: 74px;
-    padding-top: 12px;
-    padding-bottom: 12px;
-}
-
-.user-profile {
-    margin-top: 10px;
-    padding: 11px;
-}
-
-.sidebar-nav {
-    padding-top: 9px;
-}
-
-/* Vista colapsada */
-.sidebar.collapsed .nav-group {
-    overflow: visible;
-}
-
-.sidebar.collapsed .nav-group-toggle {
-    min-height: 44px;
-    justify-content: center;
-    padding: 10px;
-}
-
-.sidebar.collapsed .nav-group-toggle > i:first-child {
-    margin: 0;
-    font-size: 1.05rem;
-}
-
-.sidebar.collapsed .nav-group-label,
-.sidebar.collapsed .group-chevron {
-    display: none;
-}
-
-.sidebar.collapsed .nav-group.open > .nav-submenu {
-    max-height: 250px;
-    padding: 3px 0 6px;
-}
-
-.sidebar.collapsed .nav-submenu .nav-link {
-    min-height: 40px;
-    justify-content: center;
-    padding: 9px;
-}
-
-.sidebar.collapsed .nav-submenu .nav-link i {
-    margin: 0;
-    font-size: .95rem;
-}
-
-.sidebar.collapsed .nav-submenu .nav-link.active::after {
-    display: none;
-}
-
-/* Móvil */
-@media (max-width: 768px) {
-    .sidebar-nav {
-        padding-bottom: 20px;
-    }
-
-    .nav-group.open > .nav-submenu {
-        max-height: 340px;
-    }
-
-    .nav-group-toggle,
-    .nav-link {
-        min-height: 46px;
-    }
-}
-
-</style>
+<link rel="stylesheet" href="css/navbar.css">
 
 <!-- Botón Hamburguesa para móvil (solo visible en móvil) -->
 <button class="hamburger-mobile" id="hamburgerMobile" type="button" aria-label="Abrir menú lateral" aria-controls="sidebar" aria-expanded="false">
@@ -1472,14 +283,20 @@ body.sidebar-collapsed .main-content {
     
     <div class="sidebar-header">
         <a href="dashboard.php" class="logo">
-            <?php if (!empty($gym_logo_url) && file_exists($gym_logo_url)): ?>
-                <img src="<?php echo htmlspecialchars($gym_logo_url); ?>" alt="Logo" class="logo-img" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+            <?php if (
+                $gym_logo_url !== ''
+                && sidebarArchivoExiste(
+                    $gym_logo_url,
+                    $sidebar_project_root
+                )
+            ): ?>
+                <img src="<?php echo htmlspecialchars($gym_logo_url, ENT_QUOTES, 'UTF-8'); ?>" alt="Logo" class="logo-img" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
                 <i class="fas fa-dumbbell" style="display: none;"></i>
             <?php else: ?>
                 <i class="fas fa-dumbbell"></i>
             <?php endif; ?>
             <div class="logo-text">
-                <?php echo htmlspecialchars($gym_nombre); ?>
+                <?php echo htmlspecialchars($gym_nombre, ENT_QUOTES, 'UTF-8'); ?>
                 <small>Panel de Control</small>
             </div>
         </a>
@@ -1491,34 +308,68 @@ body.sidebar-collapsed .main-content {
 
     <div class="user-profile">
         <div class="user-avatar">
-            <?php 
-            // Verificar si el usuario tiene foto de perfil
-            $user_id = $_SESSION['user_id'];
+            <?php
+            $user_id = (int) $_SESSION['user_id'];
             $foto_perfil = '';
-            $query_foto = "SELECT foto_perfil FROM usuarios WHERE id = ?";
-            $stmt_foto = $conn->prepare($query_foto);
-            $stmt_foto->bind_param("i", $user_id);
-            $stmt_foto->execute();
-            $result_foto = $stmt_foto->get_result();
-            if ($result_foto && $row_foto = $result_foto->fetch_assoc()) {
-                $foto_perfil = $row_foto['foto_perfil'];
+
+            if ($conn) {
+                $query_foto = "
+                    SELECT foto_perfil
+                    FROM usuarios
+                    WHERE id = ?
+                    LIMIT 1
+                ";
+
+                $stmt_foto = $conn->prepare($query_foto);
+
+                if ($stmt_foto) {
+                    $stmt_foto->bind_param('i', $user_id);
+                    $stmt_foto->execute();
+
+                    $result_foto = $stmt_foto->get_result();
+
+                    if (
+                        $result_foto
+                        && $row_foto = $result_foto->fetch_assoc()
+                    ) {
+                        $foto_perfil = trim(
+                            (string) ($row_foto['foto_perfil'] ?? '')
+                        );
+                    }
+
+                    $stmt_foto->close();
+                }
             }
-            
-            if (!empty($foto_perfil) && file_exists($foto_perfil)): ?>
-                <img src="<?php echo htmlspecialchars($foto_perfil); ?>" alt="Foto de perfil" style="width: 45px; height: 45px; border-radius: 50%; object-fit: cover;">
+
+            if (
+                $foto_perfil !== ''
+                && sidebarArchivoExiste(
+                    $foto_perfil,
+                    $sidebar_project_root
+                )
+            ):
+            ?>
+                <img
+                    src="<?php echo htmlspecialchars(
+                        $foto_perfil,
+                        ENT_QUOTES,
+                        'UTF-8'
+                    ); ?>"
+                    alt="Foto de perfil"
+                >
             <?php else: ?>
                 <i class="fas fa-user-circle"></i>
             <?php endif; ?>
         </div>
         <div class="user-info">
-            <h4><?php echo htmlspecialchars($user_name); ?></h4>
+            <h4><?php echo htmlspecialchars((string) $user_name, ENT_QUOTES, 'UTF-8'); ?></h4>
             <p>
                 <i class="fas fa-envelope"></i> 
-                <?php echo htmlspecialchars($user_email); ?>
+                <?php echo htmlspecialchars((string) $user_email, ENT_QUOTES, 'UTF-8'); ?>
             </p>
             <span class="rol-badge">
                 <i class="fas fa-user-tag"></i> 
-                <?php echo htmlspecialchars($user_rol_display); ?>
+                <?php echo htmlspecialchars($user_rol_display, ENT_QUOTES, 'UTF-8'); ?>
             </span>
         </div>
     </div>
@@ -1528,7 +379,7 @@ body.sidebar-collapsed .main-content {
     $grupo_ventas_activo = in_array($active_module, ['ventas', 'historial_ventas', 'corte_caja'], true);
     $grupo_socios_activo = in_array($active_module, ['inscriptions', 'assistance'], true);
     $grupo_clases_activo = in_array($active_module, ['classes', 'clases_inscriptions'], true);
-    $grupo_admin_activo = in_array($active_module, ['reports', 'notificaciones', 'settings'], true);
+    $grupo_admin_activo = in_array($active_module, ['reports', 'notificaciones', 'settings', 'user_requests'], true);
     ?>
 
     <nav class="sidebar-nav" aria-label="Módulos del sistema">
@@ -1540,7 +391,7 @@ body.sidebar-collapsed .main-content {
                 </a>
             </li>
 
-            <?php if ($user_rol === 'admin'): ?>
+            <?php if (in_array($user_rol, ['admin', 'administrador'], true)): ?>
                 <li class="nav-group <?php echo $grupo_socios_activo ? 'open' : ''; ?>" data-group="socios">
                     <button
                         type="button"
@@ -1668,6 +519,24 @@ body.sidebar-collapsed .main-content {
 
                     <ul class="nav-submenu">
                         <li>
+                            <a
+                                href="solicitudes_usuarios.php"
+                                class="nav-link <?php echo $active_module === 'user_requests' ? 'active' : ''; ?>"
+                            >
+                                <i class="fas fa-user-clock"></i>
+                                <span class="nav-text">Solicitudes de usuarios</span>
+                                <?php if ($solicitudes_pendientes > 0): ?>
+                                    <span
+                                        class="nav-count"
+                                        aria-label="<?php echo $solicitudes_pendientes; ?> solicitudes pendientes"
+                                        title="<?php echo $solicitudes_pendientes; ?> solicitudes pendientes"
+                                    >
+                                        <?php echo $solicitudes_pendientes > 99 ? '99+' : $solicitudes_pendientes; ?>
+                                    </span>
+                                <?php endif; ?>
+                            </a>
+                        </li>
+                        <li>
                             <a href="reportes.php" class="nav-link <?php echo $active_module === 'reports' ? 'active' : ''; ?>">
                                 <i class="fas fa-chart-column"></i>
                                 <span class="nav-text">Reportes</span>
@@ -1785,6 +654,19 @@ body.sidebar-collapsed .main-content {
                 </li>
             <?php endif; ?>
 
+            <li class="nav-item">
+                <a
+                    href="legal.php"
+                    class="nav-link legal-access-link <?php echo $active_module === 'legal_acceptances' ? 'active' : ''; ?>"
+                    <?php echo $active_module === 'legal_acceptances'
+                        ? 'aria-current="page"'
+                        : ''; ?>
+                >
+                    <i class="fas fa-shield-halved"></i>
+                    <span class="nav-text">Aviso y términos</span>
+                </a>
+            </li>
+
             <li class="nav-divider" aria-hidden="true"></li>
 
             <li class="nav-item">
@@ -1803,6 +685,1527 @@ body.sidebar-collapsed .main-content {
         </a>
     </div>
 </aside>
+
+<?php if ($sidebar_legal_pendiente): ?>
+<style>
+    html.legal-acceptance-required,
+    body.legal-acceptance-required {
+        width: 100%;
+        height: 100%;
+        overflow: hidden !important;
+    }
+
+    body.legal-acceptance-required
+    .sidebar
+    .nav-link:not(.legal-access-link),
+    body.legal-acceptance-required
+    .sidebar
+    .nav-group-toggle,
+    body.legal-acceptance-required
+    .sidebar
+    .sidebar-collapse-btn,
+    body.legal-acceptance-required
+    .sidebar
+    .drag-handle {
+        pointer-events: none !important;
+        opacity: .42 !important;
+    }
+
+    body.legal-acceptance-required
+    .sidebar
+    .legal-access-link,
+    body.legal-acceptance-required
+    .sidebar
+    .logout-btn {
+        pointer-events: auto !important;
+        opacity: 1 !important;
+    }
+
+    .legal-required-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 11000;
+        display: grid;
+        place-items: center;
+        padding: 14px;
+        overflow: hidden;
+        background: rgba(15, 23, 42, .58);
+        backdrop-filter: blur(7px);
+    }
+
+    .legal-required-card {
+        display: grid;
+        grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+        width: min(940px, 100%);
+        max-height: calc(100dvh - 28px);
+        overflow: hidden;
+        border: 1px solid rgba(255, 255, 255, .78);
+        border-radius: 21px;
+        background: #ffffff;
+        box-shadow: 0 30px 90px rgba(2, 6, 23, .34);
+    }
+
+    .legal-required-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 18px;
+        padding: 18px 20px 15px;
+        border-bottom: 1px solid #e8edf4;
+        background: #ffffff;
+    }
+
+    .legal-required-heading {
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+        min-width: 0;
+    }
+
+    .legal-required-header-icon {
+        display: grid;
+        flex: 0 0 42px;
+        width: 42px;
+        height: 42px;
+        place-items: center;
+        border-radius: 12px;
+        color: #1e3a8a;
+        background: #eef4ff;
+        font-size: .95rem;
+    }
+
+    .legal-required-kicker {
+        display: block;
+        margin-bottom: 3px;
+        color: #64748b;
+        font-size: .61rem;
+        font-weight: 850;
+        letter-spacing: .075em;
+        text-transform: uppercase;
+    }
+
+    .legal-required-header h2 {
+        margin: 0 0 4px;
+        color: #13275c;
+        font-size: clamp(1.2rem, 3vw, 1.55rem);
+        line-height: 1.12;
+        letter-spacing: -.025em;
+    }
+
+    .legal-required-header p {
+        max-width: 610px;
+        margin: 0;
+        color: #64748b;
+        font-size: .7rem;
+        line-height: 1.48;
+    }
+
+    .legal-required-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        flex: 0 0 auto;
+        min-height: 29px;
+        padding: 0 10px;
+        border-radius: 999px;
+        color: #92400e;
+        background: #fffbeb;
+        font-size: .6rem;
+        font-weight: 850;
+    }
+
+    .legal-document-tabs {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+        padding: 11px 20px;
+        border-bottom: 1px solid #e8edf4;
+        background: #f8fafc;
+    }
+
+    .legal-document-tab {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        min-width: 0;
+        min-height: 45px;
+        padding: 8px 11px;
+        border: 1px solid #d7e0ec;
+        border-radius: 10px;
+        color: #475569;
+        background: #ffffff;
+        cursor: pointer;
+        transition:
+            border-color .18s ease,
+            color .18s ease,
+            background .18s ease,
+            box-shadow .18s ease;
+    }
+
+    .legal-document-tab:hover {
+        border-color: #a9bddd;
+        color: #1e3a8a;
+    }
+
+    .legal-document-tab.active {
+        border-color: #8facd9;
+        color: #1e3a8a;
+        background: #eef4ff;
+        box-shadow: 0 0 0 3px rgba(30, 58, 138, .07);
+    }
+
+    .legal-document-tab.completed {
+        border-color: #a7f3d0;
+        color: #047857;
+        background: #ecfdf5;
+    }
+
+    .legal-document-tab.completed.active {
+        border-color: #6ee7b7;
+        box-shadow: 0 0 0 3px rgba(4, 120, 87, .07);
+    }
+
+    .legal-document-tab-main {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        min-width: 0;
+    }
+
+    .legal-document-tab-icon {
+        display: grid;
+        flex: 0 0 31px;
+        width: 31px;
+        height: 31px;
+        place-items: center;
+        border-radius: 9px;
+        color: inherit;
+        background: rgba(148, 163, 184, .12);
+        font-size: .72rem;
+    }
+
+    .legal-document-tab-copy {
+        min-width: 0;
+        text-align: left;
+    }
+
+    .legal-document-tab-copy strong {
+        display: block;
+        overflow: hidden;
+        font-size: .69rem;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+    }
+
+    .legal-document-tab-copy span {
+        display: block;
+        margin-top: 2px;
+        color: #64748b;
+        font-size: .56rem;
+    }
+
+    .legal-document-tab-state {
+        display: grid;
+        flex: 0 0 23px;
+        width: 23px;
+        height: 23px;
+        place-items: center;
+        border-radius: 999px;
+        color: #94a3b8;
+        background: #f1f5f9;
+        font-size: .57rem;
+    }
+
+    .legal-document-tab.completed
+    .legal-document-tab-state {
+        color: #ffffff;
+        background: #10b981;
+    }
+
+    .legal-reading-progress {
+        height: 3px;
+        background: #e8edf5;
+    }
+
+    .legal-reading-progress > span {
+        display: block;
+        width: 0;
+        height: 100%;
+        background: #2563eb;
+        transition: width .12s linear;
+    }
+
+    .legal-required-content {
+        min-height: 0;
+        padding: 17px 20px 21px;
+        overflow-x: hidden;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        scrollbar-width: thin;
+        scrollbar-color: #aebbd0 transparent;
+    }
+
+    .legal-required-content::-webkit-scrollbar {
+        width: 6px;
+    }
+
+    .legal-required-content::-webkit-scrollbar-track {
+        background: transparent;
+    }
+
+    .legal-required-content::-webkit-scrollbar-thumb {
+        border-radius: 999px;
+        background: #aebbd0;
+    }
+
+    .legal-required-greeting {
+        margin: 0 0 15px;
+        color: #475569;
+        font-size: .7rem;
+        line-height: 1.48;
+    }
+
+    .legal-required-greeting strong {
+        color: #1f2937;
+    }
+
+    .legal-document-panel {
+        display: none;
+    }
+
+    .legal-document-panel.active {
+        display: block;
+    }
+
+    .legal-inline-document {
+        margin-bottom: 0;
+        padding: 18px 19px;
+        border: 1px solid #dce4ef;
+        border-radius: 15px;
+        background: #ffffff;
+    }
+
+    .legal-inline-document:last-of-type {
+        margin-bottom: 14px;
+    }
+
+    .legal-inline-document-header {
+        display: flex;
+        align-items: flex-start;
+        gap: 11px;
+        margin-bottom: 15px;
+        padding-bottom: 13px;
+        border-bottom: 1px solid #e8edf4;
+    }
+
+    .legal-inline-document-icon {
+        display: grid;
+        flex: 0 0 39px;
+        width: 39px;
+        height: 39px;
+        place-items: center;
+        border-radius: 11px;
+        color: #1e3a8a;
+        background: #eef4ff;
+        font-size: .85rem;
+    }
+
+    .legal-inline-document-header h3 {
+        margin: 0 0 4px;
+        color: #13275c;
+        font-size: .94rem;
+    }
+
+    .legal-inline-document-header p {
+        margin: 0;
+        color: #64748b;
+        font-size: .66rem;
+        line-height: 1.42;
+    }
+
+    .legal-inline-document-version {
+        display: inline-flex;
+        margin-top: 6px;
+        padding: 4px 7px;
+        border-radius: 999px;
+        color: #475569;
+        background: #f1f5f9;
+        font-size: .57rem;
+        font-weight: 750;
+    }
+
+    .legal-inline-document-body h2 {
+        margin: 19px 0 7px;
+        color: #13275c;
+        font-size: .84rem;
+    }
+
+    .legal-inline-document-body h2:first-child {
+        margin-top: 0;
+    }
+
+    .legal-inline-document-body p,
+    .legal-inline-document-body li {
+        color: #475569;
+        font-size: .71rem;
+        line-height: 1.62;
+    }
+
+    .legal-inline-document-body p {
+        margin: 0 0 8px;
+    }
+
+    .legal-inline-document-body ul {
+        margin: 7px 0 11px;
+        padding-left: 20px;
+    }
+
+    .legal-inline-document-body li {
+        margin-bottom: 5px;
+    }
+
+    .legal-protection-block {
+        margin: 17px 0;
+        padding: 15px;
+        border: 1px solid #bfdbfe;
+        border-radius: 13px;
+        background: #f8fbff;
+    }
+
+    .legal-protection-block h2 {
+        margin-top: 0;
+    }
+
+    .legal-copy-warning {
+        margin: 12px 0;
+        padding: 13px;
+        border: 1px solid #fde68a;
+        border-radius: 11px;
+        color: #78350f;
+        background: #fffbeb;
+    }
+
+    .legal-copy-warning li {
+        color: #78350f;
+    }
+
+    .legal-document-note {
+        margin-top: 18px;
+        padding: 11px 12px;
+        border-radius: 9px;
+        color: #64748b;
+        background: #f8fafc;
+        font-size: .62rem;
+        line-height: 1.45;
+    }
+
+    .legal-required-warning {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        margin-bottom: 15px;
+        padding: 11px 12px;
+        border: 1px solid #fde68a;
+        border-radius: 11px;
+        color: #78350f;
+        background: #fffbeb;
+        font-size: .64rem;
+        line-height: 1.46;
+    }
+
+    .legal-required-warning > i {
+        flex: 0 0 auto;
+        margin-top: 2px;
+    }
+
+    .legal-required-warning strong {
+        display: block;
+        margin-bottom: 2px;
+        font-size: .68rem;
+    }
+
+    .legal-required-error {
+        margin-bottom: 14px;
+        padding: 11px 12px;
+        border: 1px solid #fecaca;
+        border-radius: 10px;
+        color: #991b1b;
+        background: #fef2f2;
+        font-size: .66rem;
+        line-height: 1.48;
+    }
+
+    .legal-document-finished {
+        display: none;
+        align-items: center;
+        gap: 7px;
+        margin-top: 14px;
+        padding: 9px 11px;
+        border: 1px solid #a7f3d0;
+        border-radius: 10px;
+        color: #065f46;
+        background: #ecfdf5;
+        font-size: .64rem;
+        font-weight: 750;
+    }
+
+    .legal-document-finished.show {
+        display: flex;
+    }
+
+    .legal-read-complete {
+        display: none;
+        align-items: center;
+        gap: 7px;
+        margin: 0 0 11px;
+        padding: 9px 11px;
+        border: 1px solid #a7f3d0;
+        border-radius: 10px;
+        color: #065f46;
+        background: #ecfdf5;
+        font-size: .64rem;
+        font-weight: 750;
+    }
+
+    .legal-read-complete.show {
+        display: flex;
+    }
+
+    .legal-required-checks {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 9px;
+    }
+
+    .legal-required-check {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        width: 100%;
+        padding: 11px 12px;
+        border: 1px solid #dce4ef;
+        border-radius: 11px;
+        cursor: pointer;
+        transition:
+            border-color .18s ease,
+            background .18s ease,
+            opacity .18s ease;
+    }
+
+    .legal-required-check.locked {
+        cursor: not-allowed;
+        opacity: .52;
+        background: #f8fafc;
+    }
+
+    .legal-required-check:not(.locked):hover {
+        border-color: #abc0df;
+        background: #fbfdff;
+    }
+
+    .legal-required-check input {
+        flex: 0 0 auto;
+        width: 18px;
+        height: 18px;
+        margin-top: 1px;
+        accent-color: #1e3a8a;
+    }
+
+    .legal-required-check strong {
+        display: block;
+        color: #1f2937;
+        font-size: .71rem;
+    }
+
+    .legal-required-check span span {
+        display: block;
+        margin-top: 3px;
+        color: #64748b;
+        font-size: .63rem;
+        line-height: 1.4;
+    }
+
+    .legal-required-footer {
+        display: grid;
+        grid-template-columns: auto minmax(180px, 1fr) auto;
+        align-items: center;
+        gap: 13px;
+        padding: 13px 20px 14px;
+        border-top: 1px solid #e8edf4;
+        background: #ffffff;
+        box-shadow: 0 -8px 22px rgba(15, 23, 42, .045);
+    }
+
+    .legal-required-note {
+        color: #64748b;
+        font-size: .59rem;
+        line-height: 1.36;
+        text-align: center;
+    }
+
+    .legal-required-note strong {
+        color: #334155;
+    }
+
+    .legal-required-submit,
+    .legal-required-logout {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 7px;
+        min-height: 41px;
+        padding: 0 15px;
+        border-radius: 10px;
+        font-size: .69rem;
+        font-weight: 850;
+        text-decoration: none;
+        white-space: nowrap;
+    }
+
+    .legal-required-submit {
+        min-width: 190px;
+        border: 0;
+        color: #ffffff;
+        background: #1e3a8a;
+        cursor: pointer;
+        transition:
+            background .18s ease,
+            transform .18s ease;
+    }
+
+    .legal-required-submit:hover:not(:disabled) {
+        background: #254a9e;
+        transform: translateY(-1px);
+    }
+
+    .legal-required-submit:disabled {
+        cursor: not-allowed;
+        opacity: .42;
+        transform: none;
+    }
+
+    .legal-required-logout {
+        min-width: 132px;
+        border: 1px solid #fecaca;
+        color: #b91c1c;
+        background: #fff7f7;
+    }
+
+    .legal-required-logout:hover {
+        border-color: #fca5a5;
+        background: #fef2f2;
+    }
+
+    .legal-required-loading {
+        position: fixed;
+        inset: 0;
+        z-index: 13000;
+        display: none;
+        place-items: center;
+        background: rgba(243, 246, 250, .95);
+    }
+
+    .legal-required-loading.show {
+        display: grid;
+    }
+
+    .legal-required-loading-box {
+        min-width: 245px;
+        padding: 24px;
+        border: 1px solid #dce4ef;
+        border-radius: 15px;
+        background: #ffffff;
+        box-shadow: 0 18px 45px rgba(15, 23, 42, .14);
+        text-align: center;
+    }
+
+    .legal-required-loading-box i {
+        color: #1e3a8a;
+        font-size: 1.6rem;
+    }
+
+    .legal-required-loading-box strong,
+    .legal-required-loading-box span {
+        display: block;
+    }
+
+    .legal-required-loading-box strong {
+        margin-top: 11px;
+        font-size: .8rem;
+    }
+
+    .legal-required-loading-box span {
+        margin-top: 4px;
+        color: #64748b;
+        font-size: .66rem;
+    }
+
+    @media (max-width: 720px) {
+        .legal-required-overlay {
+            padding: 7px;
+        }
+
+        .legal-required-card {
+            width: 100%;
+            max-height: calc(100dvh - 14px);
+            border-radius: 16px;
+        }
+
+        .legal-required-header {
+            padding: 15px 14px 12px;
+        }
+
+        .legal-required-header-icon {
+            width: 39px;
+            height: 39px;
+            flex-basis: 39px;
+        }
+
+        .legal-required-badge {
+            display: none;
+        }
+
+        .legal-document-tabs {
+            gap: 6px;
+            padding: 9px 10px;
+        }
+
+        .legal-document-tab {
+            min-height: 42px;
+            padding: 7px 8px;
+        }
+
+        .legal-document-tab-icon {
+            display: none;
+        }
+
+        .legal-document-tab-copy strong {
+            font-size: .63rem;
+        }
+
+        .legal-document-tab-copy span {
+            font-size: .52rem;
+        }
+
+        .legal-required-content {
+            padding: 13px 14px 17px;
+        }
+
+        .legal-inline-document {
+            padding: 15px 14px;
+        }
+
+        .legal-required-footer {
+            grid-template-columns: 1fr;
+            gap: 8px;
+            padding: 11px 14px 13px;
+        }
+
+        .legal-required-note {
+            order: -1;
+        }
+
+        .legal-required-submit,
+        .legal-required-logout {
+            width: 100%;
+            min-width: 0;
+            min-height: 44px;
+        }
+    }
+</style>
+
+<div
+    class="legal-required-overlay"
+    id="legalRequiredOverlay"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="legalRequiredTitle"
+>
+    <form
+        method="POST"
+        action="legal.php?obligatorio=1"
+        class="legal-required-card"
+        id="sidebarLegalAcceptanceForm"
+    >
+        <input
+            type="hidden"
+            name="legal_action"
+            value="accept"
+        >
+
+        <input
+            type="hidden"
+            name="legal_csrf"
+            value="<?php echo legal_h(
+                (string) $_SESSION['legal_csrf']
+            ); ?>"
+        >
+
+        <input
+            type="hidden"
+            name="return"
+            value="<?php echo legal_h(
+                $sidebar_legal_return
+            ); ?>"
+        >
+
+        <header>
+            <div class="legal-required-header">
+                <div class="legal-required-heading">
+                    <div class="legal-required-header-icon">
+                        <i class="fas fa-shield-halved"></i>
+                    </div>
+
+                    <div>
+                        <span class="legal-required-kicker">
+                            Acceso protegido
+                        </span>
+
+                        <h2 id="legalRequiredTitle">
+                            Aviso de privacidad y términos
+                        </h2>
+
+                        <p>
+                            Lee los dos documentos dentro de esta ventana.
+                            Al llegar al final se habilitarán las casillas
+                            de aceptación.
+                        </p>
+                    </div>
+                </div>
+
+                <span class="legal-required-badge">
+                    <i class="fas fa-lock"></i>
+                    Requerido
+                </span>
+            </div>
+
+            <nav
+                class="legal-document-tabs"
+                aria-label="Documentos legales"
+            >
+                <button
+                    type="button"
+                    class="legal-document-tab active"
+                    id="legalPrivacyTab"
+                    data-legal-document-tab="privacy"
+                    aria-selected="true"
+                    aria-controls="legalPrivacyPanel"
+                >
+                    <span class="legal-document-tab-main">
+                        <span class="legal-document-tab-icon">
+                            <i class="fas fa-user-shield"></i>
+                        </span>
+
+                        <span class="legal-document-tab-copy">
+                            <strong>Aviso de privacidad</strong>
+                            <span>
+                                Documento 1 de 2 · Versión
+                                <?php echo legal_h(
+                                    $sidebar_legal_documentos[
+                                        'aviso'
+                                    ]['version'] ?? LEGAL_AVISO_VERSION
+                                ); ?>
+                            </span>
+                        </span>
+                    </span>
+
+                    <span
+                        class="legal-document-tab-state"
+                        id="legalPrivacyTabState"
+                    >
+                        <i class="fas fa-book-open"></i>
+                    </span>
+                </button>
+
+                <button
+                    type="button"
+                    class="legal-document-tab"
+                    id="legalTermsTab"
+                    data-legal-document-tab="terms"
+                    aria-selected="false"
+                    aria-controls="legalTermsPanel"
+                >
+                    <span class="legal-document-tab-main">
+                        <span class="legal-document-tab-icon">
+                            <i class="fas fa-file-signature"></i>
+                        </span>
+
+                        <span class="legal-document-tab-copy">
+                            <strong>Términos y condiciones</strong>
+                            <span>
+                                Documento 2 de 2 · Versión
+                                <?php echo legal_h(
+                                    $sidebar_legal_documentos[
+                                        'terminos'
+                                    ]['version'] ?? LEGAL_TERMINOS_VERSION
+                                ); ?>
+                            </span>
+                        </span>
+                    </span>
+
+                    <span
+                        class="legal-document-tab-state"
+                        id="legalTermsTabState"
+                    >
+                        <i class="fas fa-book-open"></i>
+                    </span>
+                </button>
+            </nav>
+
+            <div class="legal-reading-progress">
+                <span id="legalReadingProgressBar"></span>
+            </div>
+        </header>
+
+        <div
+            class="legal-required-content"
+            id="legalReadingArea"
+            tabindex="0"
+        >
+            <p class="legal-required-greeting">
+                Hola,
+                <strong>
+                    <?php echo htmlspecialchars(
+                        (string) $user_name,
+                        ENT_QUOTES,
+                        'UTF-8'
+                    ); ?>
+                </strong>.
+                Tu aceptación quedará vinculada a esta cuenta.
+            </p>
+
+            <?php if ($sidebar_legal_error !== ''): ?>
+                <div class="legal-required-error">
+                    <i class="fas fa-circle-exclamation"></i>
+                    No fue posible preparar el registro de aceptación.
+
+                    <?php if (
+                        in_array(
+                            $user_rol,
+                            ['admin', 'administrador'],
+                            true
+                        )
+                    ): ?>
+                        <br>
+                        Detalle:
+                        <?php echo legal_h($sidebar_legal_error); ?>
+                    <?php endif; ?>
+                </div>
+            <?php else: ?>
+                <section
+                    class="legal-document-panel active"
+                    id="legalPrivacyPanel"
+                    data-legal-document-panel="privacy"
+                    role="tabpanel"
+                    aria-labelledby="legalPrivacyTab"
+                >
+                    <article class="legal-inline-document">
+                        <header class="legal-inline-document-header">
+                            <div class="legal-inline-document-icon">
+                                <i class="fas fa-user-shield"></i>
+                            </div>
+
+                            <div>
+                                <h3>Aviso de privacidad</h3>
+
+                                <p>
+                                    Tratamiento de datos personales,
+                                    finalidades, conservación, seguridad y
+                                    derechos.
+                                </p>
+
+                                <span class="legal-inline-document-version">
+                                    Versión
+                                    <?php echo legal_h(
+                                        $sidebar_legal_documentos[
+                                            'aviso'
+                                        ]['version'] ?? LEGAL_AVISO_VERSION
+                                    ); ?>
+                                </span>
+                            </div>
+                        </header>
+
+                        <div class="legal-inline-document-body">
+                            <?php echo
+                                $sidebar_legal_documentos[
+                                    'aviso'
+                                ]['content'] ?? '';
+                            ?>
+                        </div>
+
+                        <div
+                            class="legal-document-finished"
+                            id="legalPrivacyFinished"
+                        >
+                            <i class="fas fa-circle-check"></i>
+                            Aviso de privacidad revisado. Continúa con los
+                            términos y condiciones.
+                        </div>
+                    </article>
+                </section>
+
+                <section
+                    class="legal-document-panel"
+                    id="legalTermsPanel"
+                    data-legal-document-panel="terms"
+                    role="tabpanel"
+                    aria-labelledby="legalTermsTab"
+                    hidden
+                >
+                    <article class="legal-inline-document">
+                        <header class="legal-inline-document-header">
+                            <div class="legal-inline-document-icon">
+                                <i class="fas fa-file-signature"></i>
+                            </div>
+
+                            <div>
+                                <h3>Términos y condiciones</h3>
+
+                                <p>
+                                    Reglas de acceso, confidencialidad,
+                                    seguridad y protección contra copia o
+                                    plagio.
+                                </p>
+
+                                <span class="legal-inline-document-version">
+                                    Versión
+                                    <?php echo legal_h(
+                                        $sidebar_legal_documentos[
+                                            'terminos'
+                                        ]['version'] ?? LEGAL_TERMINOS_VERSION
+                                    ); ?>
+                                </span>
+                            </div>
+                        </header>
+
+                        <div class="legal-inline-document-body">
+                            <?php echo
+                                $sidebar_legal_documentos[
+                                    'terminos'
+                                ]['content'] ?? '';
+                            ?>
+                        </div>
+
+                        <div
+                            class="legal-document-finished"
+                            id="legalTermsFinished"
+                        >
+                            <i class="fas fa-circle-check"></i>
+                            Términos y condiciones revisados.
+                        </div>
+                    </article>
+                </section>
+
+                <div class="legal-required-warning">
+                    <i class="fas fa-copyright"></i>
+
+                    <div>
+                        <strong>
+                            Protección de la aplicación
+                        </strong>
+
+                        El código, la composición original de la interfaz,
+                        plantillas, textos, reportes y materiales
+                        confidenciales no pueden copiarse ni utilizarse
+                        para crear un clon o producto derivado sin
+                        autorización.
+                    </div>
+                </div>
+
+                <div
+                    class="legal-read-complete"
+                    id="legalReadComplete"
+                >
+                    <i class="fas fa-circle-check"></i>
+                    Ambos documentos fueron revisados. Ya puedes confirmar la aceptación.
+                </div>
+
+                <div class="legal-required-checks">
+                    <label
+                        class="legal-required-check locked"
+                        id="legalPrivacyLabel"
+                    >
+                        <input
+                            type="checkbox"
+                            name="acepto_aviso"
+                            id="sidebarLegalPrivacyCheck"
+                            value="1"
+                            disabled
+                        >
+
+                        <span>
+                            <strong>
+                                He leído el aviso de privacidad.
+                            </strong>
+
+                            <span>
+                                Conozco el tratamiento de mis datos y mis
+                                derechos.
+                            </span>
+                        </span>
+                    </label>
+
+                    <label
+                        class="legal-required-check locked"
+                        id="legalTermsLabel"
+                    >
+                        <input
+                            type="checkbox"
+                            name="acepto_terminos"
+                            id="sidebarLegalTermsCheck"
+                            value="1"
+                            disabled
+                        >
+
+                        <span>
+                            <strong>
+                                Acepto los términos y condiciones.
+                            </strong>
+
+                            <span>
+                                Respetaré el uso autorizado, la
+                                confidencialidad y la propiedad
+                                intelectual.
+                            </span>
+                        </span>
+                    </label>
+                </div>
+            <?php endif; ?>
+        </div>
+
+        <footer class="legal-required-footer">
+            <a
+                href="logout.php"
+                class="legal-required-logout"
+            >
+                <i class="fas fa-right-from-bracket"></i>
+                Cerrar sesión
+            </a>
+
+            <span
+                class="legal-required-note"
+                id="legalReadingStatus"
+            >
+                <strong>Desplázate hasta el final</strong>
+                para habilitar la aceptación.
+            </span>
+
+            <button
+                type="submit"
+                class="legal-required-submit"
+                id="sidebarLegalSubmit"
+                disabled
+            >
+                <i class="fas fa-check"></i>
+                Aceptar y entrar
+            </button>
+        </footer>
+    </form>
+</div>
+
+<div
+    class="legal-required-loading"
+    id="sidebarLegalLoading"
+>
+    <div class="legal-required-loading-box">
+        <i class="fas fa-spinner fa-spin"></i>
+        <strong>Guardando aceptación</strong>
+        <span>
+            Espera mientras registramos los documentos.
+        </span>
+    </div>
+</div>
+
+<script>
+(function () {
+    const html = document.documentElement;
+    const body = document.body;
+
+    html.classList.add('legal-acceptance-required');
+    body.classList.add('legal-acceptance-required');
+
+    const readingArea = document.getElementById(
+        'legalReadingArea'
+    );
+
+    const progressBar = document.getElementById(
+        'legalReadingProgressBar'
+    );
+
+    const readingStatus = document.getElementById(
+        'legalReadingStatus'
+    );
+
+    const readComplete = document.getElementById(
+        'legalReadComplete'
+    );
+
+    const privacyCheck = document.getElementById(
+        'sidebarLegalPrivacyCheck'
+    );
+
+    const termsCheck = document.getElementById(
+        'sidebarLegalTermsCheck'
+    );
+
+    const privacyLabel = document.getElementById(
+        'legalPrivacyLabel'
+    );
+
+    const termsLabel = document.getElementById(
+        'legalTermsLabel'
+    );
+
+    const submitButton = document.getElementById(
+        'sidebarLegalSubmit'
+    );
+
+    const form = document.getElementById(
+        'sidebarLegalAcceptanceForm'
+    );
+
+    const tabs = {
+        privacy: document.getElementById('legalPrivacyTab'),
+        terms: document.getElementById('legalTermsTab')
+    };
+
+    const panels = {
+        privacy: document.getElementById('legalPrivacyPanel'),
+        terms: document.getElementById('legalTermsPanel')
+    };
+
+    const finishedMessages = {
+        privacy: document.getElementById(
+            'legalPrivacyFinished'
+        ),
+        terms: document.getElementById(
+            'legalTermsFinished'
+        )
+    };
+
+    const tabStates = {
+        privacy: document.getElementById(
+            'legalPrivacyTabState'
+        ),
+        terms: document.getElementById(
+            'legalTermsTabState'
+        )
+    };
+
+    const readState = {
+        privacy: false,
+        terms: false
+    };
+
+    const scrollState = {
+        privacy: 0,
+        terms: 0
+    };
+
+    let activeDocument = 'privacy';
+    let acceptanceUnlocked = false;
+
+    function documentProgress(documentKey) {
+        if (readState[documentKey]) {
+            return 100;
+        }
+
+        if (documentKey !== activeDocument || !readingArea) {
+            return 0;
+        }
+
+        const maximum =
+            readingArea.scrollHeight
+            - readingArea.clientHeight;
+
+        if (maximum <= 0) {
+            return 100;
+        }
+
+        return Math.min(
+            100,
+            Math.max(
+                0,
+                (readingArea.scrollTop / maximum) * 100
+            )
+        );
+    }
+
+    function updateOverallProgress() {
+        const privacyProgress = documentProgress('privacy');
+        const termsProgress = documentProgress('terms');
+
+        const total =
+            (privacyProgress + termsProgress) / 2;
+
+        if (progressBar) {
+            progressBar.style.width =
+                total.toFixed(1) + '%';
+        }
+    }
+
+    function updateReadingStatus() {
+        if (!readingStatus) {
+            return;
+        }
+
+        if (readState.privacy && readState.terms) {
+            readingStatus.innerHTML =
+                '<strong>Documentos revisados.</strong> ' +
+                'Marca las dos casillas para continuar.';
+            return;
+        }
+
+        if (!readState.privacy && activeDocument === 'privacy') {
+            readingStatus.innerHTML =
+                '<strong>Documento 1 de 2.</strong> ' +
+                'Lee el aviso hasta el final.';
+            return;
+        }
+
+        if (readState.privacy && !readState.terms) {
+            readingStatus.innerHTML =
+                '<strong>Documento 2 de 2.</strong> ' +
+                'Lee los términos hasta el final.';
+            return;
+        }
+
+        readingStatus.innerHTML =
+            '<strong>Revisión pendiente.</strong> ' +
+            'Debes completar ambos documentos.';
+    }
+
+    function markDocumentRead(documentKey) {
+        if (readState[documentKey]) {
+            return;
+        }
+
+        readState[documentKey] = true;
+        scrollState[documentKey] = 0;
+
+        const tab = tabs[documentKey];
+        const state = tabStates[documentKey];
+        const message = finishedMessages[documentKey];
+
+        if (tab) {
+            tab.classList.add('completed');
+        }
+
+        if (state) {
+            state.innerHTML =
+                '<i class="fas fa-check"></i>';
+        }
+
+        if (message) {
+            message.classList.add('show');
+        }
+
+        if (documentKey === 'privacy' && !readState.terms) {
+            window.setTimeout(function () {
+                activateDocument('terms');
+            }, 450);
+        }
+
+        if (readState.privacy && readState.terms) {
+            unlockAcceptance();
+        }
+
+        updateOverallProgress();
+        updateReadingStatus();
+    }
+
+    function unlockAcceptance() {
+        if (
+            acceptanceUnlocked
+            || !privacyCheck
+            || !termsCheck
+        ) {
+            return;
+        }
+
+        acceptanceUnlocked = true;
+
+        privacyCheck.disabled = false;
+        termsCheck.disabled = false;
+
+        if (privacyLabel) {
+            privacyLabel.classList.remove('locked');
+        }
+
+        if (termsLabel) {
+            termsLabel.classList.remove('locked');
+        }
+
+        if (readComplete) {
+            readComplete.classList.add('show');
+        }
+
+        updateReadingStatus();
+    }
+
+    function reachedBottom() {
+        if (!readingArea) {
+            return false;
+        }
+
+        return (
+            readingArea.scrollHeight
+            <= readingArea.clientHeight + 4
+        ) || (
+            readingArea.scrollTop
+            + readingArea.clientHeight
+            >= readingArea.scrollHeight - 18
+        );
+    }
+
+    function updateActiveDocumentProgress() {
+        if (!readingArea) {
+            return;
+        }
+
+        scrollState[activeDocument] =
+            readingArea.scrollTop;
+
+        updateOverallProgress();
+
+        if (reachedBottom()) {
+            markDocumentRead(activeDocument);
+        }
+    }
+
+    function activateDocument(documentKey) {
+        if (
+            !tabs[documentKey]
+            || !panels[documentKey]
+        ) {
+            return;
+        }
+
+        if (readingArea) {
+            scrollState[activeDocument] =
+                readingArea.scrollTop;
+        }
+
+        activeDocument = documentKey;
+
+        Object.keys(tabs).forEach(function (key) {
+            const isActive = key === documentKey;
+
+            tabs[key].classList.toggle(
+                'active',
+                isActive
+            );
+
+            tabs[key].setAttribute(
+                'aria-selected',
+                isActive ? 'true' : 'false'
+            );
+
+            panels[key].classList.toggle(
+                'active',
+                isActive
+            );
+
+            panels[key].hidden = !isActive;
+        });
+
+        if (readingArea) {
+            readingArea.scrollTop =
+                scrollState[documentKey] || 0;
+
+            requestAnimationFrame(function () {
+                updateActiveDocumentProgress();
+                readingArea.focus({
+                    preventScroll: true
+                });
+            });
+        }
+
+        updateReadingStatus();
+    }
+
+    function syncSubmitButton() {
+        if (!submitButton) {
+            return;
+        }
+
+        submitButton.disabled = !(
+            acceptanceUnlocked
+            && privacyCheck
+            && privacyCheck.checked
+            && termsCheck
+            && termsCheck.checked
+        );
+    }
+
+    Object.keys(tabs).forEach(function (key) {
+        tabs[key].addEventListener(
+            'click',
+            function () {
+                activateDocument(key);
+            }
+        );
+    });
+
+    if (readingArea) {
+        readingArea.addEventListener(
+            'scroll',
+            updateActiveDocumentProgress,
+            { passive: true }
+        );
+
+        window.addEventListener(
+            'resize',
+            updateActiveDocumentProgress
+        );
+
+        requestAnimationFrame(function () {
+            activateDocument('privacy');
+        });
+    }
+
+    if (privacyCheck) {
+        privacyCheck.addEventListener(
+            'change',
+            syncSubmitButton
+        );
+    }
+
+    if (termsCheck) {
+        termsCheck.addEventListener(
+            'change',
+            syncSubmitButton
+        );
+    }
+
+    if (form) {
+        form.addEventListener(
+            'submit',
+            function (event) {
+                if (
+                    !acceptanceUnlocked
+                    || !privacyCheck
+                    || !privacyCheck.checked
+                    || !termsCheck
+                    || !termsCheck.checked
+                ) {
+                    event.preventDefault();
+                    syncSubmitButton();
+                    return;
+                }
+
+                submitButton.disabled = true;
+
+                document.getElementById(
+                    'sidebarLegalLoading'
+                ).classList.add('show');
+            }
+        );
+    }
+})();
+</script>
+<?php endif; ?>
 
 <?php if (is_array($alerta_acceso_denegado)): ?>
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>

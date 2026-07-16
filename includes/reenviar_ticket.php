@@ -40,6 +40,103 @@ if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
 $database = new Database();
 $conn = $database->getConnection();
 
+if (!$conn) {
+    echo json_encode([
+        'success' => false,
+        'message' => 'No fue posible conectar con la base de datos.'
+    ], JSON_UNESCAPED_UNICODE);
+    exit();
+}
+
+/**
+ * Consulta la configuración SMTP vigente en cada reenvío.
+ */
+function obtenerConfiguracionCorreoSMTP(mysqli $conn): array
+{
+    $result = $conn->query(
+        "SELECT
+            host,
+            puerto,
+            usuario,
+            password_smtp,
+            cifrado,
+            smtp_auth,
+            remitente_email,
+            remitente_nombre,
+            verificar_ssl,
+            activo
+         FROM configuracion_correo
+         WHERE id = 1
+         LIMIT 1"
+    );
+
+    if (!$result || $result->num_rows === 0) {
+        throw new RuntimeException(
+            'No se encontró la configuración de correo con id = 1.'
+        );
+    }
+
+    $config = $result->fetch_assoc();
+
+    if ((int) ($config['activo'] ?? 0) !== 1) {
+        throw new RuntimeException(
+            'El envío de correo está desactivado en Configuración.'
+        );
+    }
+
+    $config['host'] = trim((string) ($config['host'] ?? ''));
+    $config['puerto'] = (int) ($config['puerto'] ?? 0);
+    $config['smtp_auth'] =
+        (int) ($config['smtp_auth'] ?? 0) === 1;
+    $config['usuario'] =
+        trim((string) ($config['usuario'] ?? ''));
+    $config['password_smtp'] =
+        (string) ($config['password_smtp'] ?? '');
+    $config['remitente_email'] =
+        trim((string) ($config['remitente_email'] ?? ''));
+    $config['remitente_nombre'] =
+        trim((string) ($config['remitente_nombre'] ?? ''));
+
+    if ($config['host'] === '') {
+        throw new RuntimeException('El host SMTP está vacío.');
+    }
+
+    if ($config['puerto'] < 1 || $config['puerto'] > 65535) {
+        throw new RuntimeException(
+            'El puerto SMTP configurado no es válido.'
+        );
+    }
+
+    if (
+        $config['smtp_auth']
+        && (
+            $config['usuario'] === ''
+            || $config['password_smtp'] === ''
+        )
+    ) {
+        throw new RuntimeException(
+            'El usuario o la contraseña SMTP están incompletos.'
+        );
+    }
+
+    if ($config['remitente_email'] === '') {
+        $config['remitente_email'] = $config['usuario'];
+    }
+
+    if (
+        !filter_var(
+            $config['remitente_email'],
+            FILTER_VALIDATE_EMAIL
+        )
+    ) {
+        throw new RuntimeException(
+            'El correo remitente configurado no es válido.'
+        );
+    }
+
+    return $config;
+}
+
 // Obtener datos de la venta
 $query = "SELECT v.*, u.nombre as usuario_nombre,
           CONCAT(COALESCE(c.nombre,''), ' ', COALESCE(c.apellido,'')) as cliente_nombre,
@@ -288,43 +385,121 @@ $cuerpo_html = '
 </body>
 </html>';
 
-// Enviar correo usando SMTP
+// Enviar correo usando configuracion_correo, registro id = 1.
+$mail = null;
+
 try {
+    $configCorreo = obtenerConfiguracionCorreoSMTP($conn);
+
     $mail = new PHPMailer(true);
-    
     $mail->isSMTP();
-    $mail->Host = 'smtp.gmail.com';
-    $mail->SMTPAuth = true;
-    $mail->Username = 'jesusgabrielmtz78@gmail.com';
-    $mail->Password = 'iwdf uyqu erzq wvbm';
-    $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
-    $mail->Port = 587;
-    
-    $mail->SMTPOptions = array(
-        'ssl' => array(
-            'verify_peer' => false,
-            'verify_peer_name' => false,
-            'allow_self_signed' => true
-        )
-    );
-    
-    $mail->setFrom('jesusgabrielmtz78@gmail.com', $gym_nombre);
-    $mail->addAddress($email, $venta['cliente_nombre'] ?? 'Cliente');
-    
-    // Adjuntar PDF
-    $mail->addStringAttachment($pdf_content, 'ticket_venta_' . $venta_id . '.pdf', 'base64', 'application/pdf');
-    
-    $mail->isHTML(true);
+    $mail->Host = (string) $configCorreo['host'];
+    $mail->Port = (int) $configCorreo['puerto'];
+    $mail->SMTPAuth = (bool) $configCorreo['smtp_auth'];
     $mail->CharSet = 'UTF-8';
+    $mail->Timeout = 30;
+
+    if ($mail->SMTPAuth) {
+        $mail->Username = (string) $configCorreo['usuario'];
+        $mail->Password = (string) $configCorreo['password_smtp'];
+    }
+
+    $cifrado = strtolower(
+        trim((string) ($configCorreo['cifrado'] ?? ''))
+    );
+
+    if (in_array($cifrado, ['ssl', 'smtps'], true)) {
+        $mail->SMTPSecure = PHPMailer::ENCRYPTION_SMTPS;
+    } elseif (in_array($cifrado, ['tls', 'starttls'], true)) {
+        $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
+    } else {
+        $mail->SMTPSecure = '';
+        $mail->SMTPAutoTLS = false;
+    }
+
+    $verificarSsl =
+        (int) ($configCorreo['verificar_ssl'] ?? 0) === 1;
+
+    $mail->SMTPOptions = [
+        'ssl' => [
+            'verify_peer' => $verificarSsl,
+            'verify_peer_name' => $verificarSsl,
+            'allow_self_signed' => !$verificarSsl
+        ]
+    ];
+
+    $nombreRemitente = trim(
+        (string) ($configCorreo['remitente_nombre'] ?? '')
+    );
+
+    if ($nombreRemitente === '') {
+        $nombreRemitente = $gym_nombre;
+    }
+
+    $mail->setFrom(
+        (string) $configCorreo['remitente_email'],
+        $nombreRemitente
+    );
+
+    $mail->addAddress(
+        $email,
+        trim((string) ($venta['cliente_nombre'] ?? '')) ?: 'Cliente'
+    );
+
+    $mail->addStringAttachment(
+        $pdf_content,
+        'ticket_venta_' . $venta_id . '.pdf',
+        'base64',
+        'application/pdf'
+    );
+
+    $mail->isHTML(true);
     $mail->Subject = $asunto;
     $mail->Body = $cuerpo_html;
-    $mail->AltBody = strip_tags($cuerpo_html);
-    
+    $mail->AltBody = html_entity_decode(
+        strip_tags($cuerpo_html),
+        ENT_QUOTES | ENT_HTML5,
+        'UTF-8'
+    );
+
     $mail->send();
-    
-    echo json_encode(['success' => true, 'message' => 'Ticket enviado correctamente a ' . $email]);
-    
-} catch (Exception $e) {
-    echo json_encode(['success' => false, 'message' => 'Error al enviar: ' . $mail->ErrorInfo]);
+
+    echo json_encode([
+        'success' => true,
+        'message' => 'Ticket enviado correctamente a ' . $email
+    ], JSON_UNESCAPED_UNICODE);
+
+} catch (Throwable $e) {
+    $detalle = trim((string) $e->getMessage());
+
+    if (
+        $mail instanceof PHPMailer
+        && trim((string) $mail->ErrorInfo) !== ''
+    ) {
+        $detalle = trim((string) $mail->ErrorInfo);
+    }
+
+    error_log(
+        'Error al reenviar ticket #' .
+        $venta_id .
+        ': ' .
+        $detalle
+    );
+
+    echo json_encode([
+        'success' => false,
+        'message' => $detalle !== ''
+            ? 'No fue posible enviar el ticket: ' . $detalle
+            : 'No fue posible enviar el ticket.'
+    ], JSON_UNESCAPED_UNICODE);
+
+} finally {
+    if ($mail instanceof PHPMailer) {
+        try {
+            $mail->smtpClose();
+        } catch (Throwable $ignored) {
+        }
+    }
 }
+
 ?>

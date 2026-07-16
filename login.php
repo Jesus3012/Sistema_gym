@@ -2,627 +2,1118 @@
 session_start();
 require_once 'config/database.php';
 
-// Verificar si la sesión actual sigue siendo válida
-if (isset($_SESSION['user_id']) && isset($_SESSION['login_time'])) {
-    $tiempo_sesion = time() - $_SESSION['login_time'];
-    $tiempo_maximo = 12 * 3600; // 12 horas en segundos
-    
-    if ($tiempo_sesion < $tiempo_maximo) {
-        // Verificar inactividad (también 12 horas)
-        if (isset($_SESSION['last_activity'])) {
-            $tiempo_inactividad = time() - $_SESSION['last_activity'];
-            if ($tiempo_inactividad < $tiempo_maximo) {
-                // Sesión válida, redirigir al dashboard
-                header("Location: dashboard.php");
-                exit();
-            }
-        }
+$error = '';
+$email_value = '';
+$tiempo_maximo = 12 * 3600; // 12 horas
+
+// Verificar si la sesión actual sigue siendo válida.
+if (isset($_SESSION['user_id'], $_SESSION['login_time'])) {
+    $tiempo_sesion = time() - (int) $_SESSION['login_time'];
+    $tiempo_inactividad = isset($_SESSION['last_activity'])
+        ? time() - (int) $_SESSION['last_activity']
+        : $tiempo_maximo;
+
+    if ($tiempo_sesion < $tiempo_maximo && $tiempo_inactividad < $tiempo_maximo) {
+        header('Location: dashboard.php');
+        exit();
     }
-    
-    // Sesión expirada, cerrar sesión
+
+    // Sesión expirada.
     session_unset();
     session_destroy();
-    $error = "sesion_expirada";
+    session_start();
+    $error = 'sesion_expirada';
 }
 
-$error = '';
-$mensaje_swal = '';
-
-// Obtener configuración del gimnasio (incluyendo el logo)
 $database = new Database();
 $db = $database->getConnection();
 
-// Función para obtener el logo del gimnasio
-function getGymLogo($conn) {
-    // Intentar obtener logo de la base de datos
-    $query = "SELECT logo FROM configuracion_gimnasio WHERE id = 1";
+function getGymLogo($conn): string
+{
+    $query = 'SELECT logo FROM configuracion_gimnasio WHERE id = 1';
     $result = $conn->query($query);
-    
-    if ($result && $row = $result->fetch_assoc()) {
-        if (!empty($row['logo']) && file_exists($row['logo'])) {
-            // Agregar timestamp para evitar caché
-            $timestamp = filemtime($row['logo']);
-            return $row['logo'] . '?v=' . $timestamp;
+
+    if ($result && ($row = $result->fetch_assoc())) {
+        $logo = trim((string) ($row['logo'] ?? ''));
+        if ($logo !== '' && file_exists($logo)) {
+            return $logo . '?v=' . filemtime($logo);
         }
     }
-    
-    // Buscar logo con cualquier extensión en la carpeta img
-    $extensiones = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'ico'];
-    foreach ($extensiones as $ext) {
-        $ruta = "img/logo-gym." . $ext;
+
+    foreach (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'ico'] as $extension) {
+        $ruta = 'img/logo-gym.' . $extension;
         if (file_exists($ruta)) {
-            $timestamp = filemtime($ruta);
-            return $ruta . '?v=' . $timestamp;
+            return $ruta . '?v=' . filemtime($ruta);
         }
     }
-    
-    // Logo por defecto (placeholder)
-    return 'https://via.placeholder.com/80x80?text=GYM';
+
+    return '';
 }
 
-// Función para obtener el nombre del gimnasio
-function getGymName($conn) {
-    $query = "SELECT nombre FROM configuracion_gimnasio WHERE id = 1";
+function getGymName($conn): string
+{
+    $query = 'SELECT nombre FROM configuracion_gimnasio WHERE id = 1';
     $result = $conn->query($query);
-    
-    if ($result && $row = $result->fetch_assoc()) {
-        return htmlspecialchars($row['nombre']);
+
+    if ($result && ($row = $result->fetch_assoc())) {
+        $nombre = trim((string) ($row['nombre'] ?? ''));
+        if ($nombre !== '') {
+            return $nombre;
+        }
     }
-    
+
     return 'Gym System';
 }
 
-// Obtener datos del gimnasio
 $gym_logo = getGymLogo($db);
 $gym_name = getGymName($db);
+$gym_name_safe = htmlspecialchars($gym_name, ENT_QUOTES, 'UTF-8');
 
-if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    $email = mysqli_real_escape_string($db, $_POST['email']);
-    $password = $_POST['password'];
-    
-    if (empty($email) || empty($password)) {
-        $error = "campos_vacios";
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $email = trim((string) ($_POST['email'] ?? ''));
+    $password = (string) ($_POST['password'] ?? '');
+    $email_value = $email;
+
+    if ($email === '' || $password === '') {
+        $error = 'campos_vacios';
+    } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        $error = 'email_invalido';
     } else {
-        // Modificar la consulta para incluir el campo estado
-        $query = "SELECT id, nombre, email, password, rol, estado FROM usuarios WHERE email = ?";
+        $query = 'SELECT id, nombre, email, password, rol, estado FROM usuarios WHERE email = ? LIMIT 1';
         $stmt = $db->prepare($query);
-        $stmt->bind_param("s", $email);
-        $stmt->execute();
-        $result = $stmt->get_result();
-        
-        if ($result->num_rows == 1) {
-            $user = $result->fetch_assoc();
-            
-            // Verificar si el usuario está activo
-            if ($user['estado'] == 'inactivo') {
-                $error = "usuario_inactivo";
-            } elseif (password_verify($password, $user['password'])) {
-                // Regenerar ID de sesión por seguridad
-                session_regenerate_id(true);
-                
-                $_SESSION['user_id'] = $user['id'];
-                $_SESSION['user_name'] = $user['nombre'];
-                $_SESSION['user_email'] = $user['email'];
-                $_SESSION['user_rol'] = $user['rol'];
-                $_SESSION['login_time'] = time(); // Registrar tiempo de inicio de sesión
-                $_SESSION['last_activity'] = time(); // Registrar última actividad
-                
-                header("Location: dashboard.php");
-                exit();
-            } else {
-                $error = "password_incorrecta";
-            }
+
+        if (!$stmt) {
+            $error = 'error_sistema';
         } else {
-            $error = "usuario_no_encontrado";
+            $stmt->bind_param('s', $email);
+            $stmt->execute();
+            $result = $stmt->get_result();
+
+            if ($result && $result->num_rows === 1) {
+                $user = $result->fetch_assoc();
+
+                $estado_usuario = strtolower(trim((string) ($user['estado'] ?? '')));
+
+                if ($estado_usuario === 'pendiente') {
+                    $error = 'usuario_pendiente';
+                } elseif ($estado_usuario === 'rechazado') {
+                    $error = 'usuario_rechazado';
+                } elseif ($estado_usuario !== 'activo') {
+                    // Por seguridad, solo las cuentas expresamente activas pueden entrar.
+                    $error = 'usuario_inactivo';
+                } elseif (password_verify($password, (string) $user['password'])) {
+                    session_regenerate_id(true);
+
+                    $_SESSION['user_id'] = $user['id'];
+                    $_SESSION['user_name'] = $user['nombre'];
+                    $_SESSION['user_email'] = $user['email'];
+                    $_SESSION['user_rol'] = $user['rol'];
+                    $_SESSION['login_time'] = time();
+                    $_SESSION['last_activity'] = time();
+
+                    header('Location: dashboard.php');
+                    exit();
+                } else {
+                    $error = 'password_incorrecta';
+                }
+            } else {
+                $error = 'usuario_no_encontrado';
+            }
+
+            $stmt->close();
         }
-        
-        $stmt->close();
     }
 }
 
-// Mapear errores a mensajes para SweetAlert
-$mensaje_error = '';
-$tipo_error = '';
-if ($error == 'campos_vacios') {
-    $mensaje_error = 'Por favor complete todos los campos';
-    $tipo_error = 'warning';
-} elseif ($error == 'password_incorrecta') {
-    $mensaje_error = 'Contraseña incorrecta';
-    $tipo_error = 'error';
-} elseif ($error == 'usuario_no_encontrado') {
-    $mensaje_error = 'Usuario no encontrado';
-    $tipo_error = 'error';
-} elseif ($error == 'usuario_inactivo') {
-    $mensaje_error = 'Su cuenta está desactivada. Por favor contacte al administrador.';
-    $tipo_error = 'error';
-} elseif ($error == 'sesion_expirada') {
-    $mensaje_error = 'Tu sesión ha expirado después de 12 horas. Por favor inicia sesión nuevamente.';
-    $tipo_error = 'info';
-}
+$errores = [
+    'campos_vacios' => [
+        'title' => 'Campos incompletos',
+        'message' => 'Por favor completa tu correo electrónico y contraseña.',
+        'icon' => 'warning',
+        'timer' => 3500,
+    ],
+    'email_invalido' => [
+        'title' => 'Correo no válido',
+        'message' => 'Revisa el formato del correo electrónico e inténtalo nuevamente.',
+        'icon' => 'warning',
+        'timer' => 3500,
+    ],
+    'password_incorrecta' => [
+        'title' => 'Acceso no autorizado',
+        'message' => 'La contraseña ingresada no es correcta.',
+        'icon' => 'error',
+        'timer' => 3500,
+    ],
+    'usuario_no_encontrado' => [
+        'title' => 'Usuario no encontrado',
+        'message' => 'No encontramos una cuenta asociada con ese correo.',
+        'icon' => 'error',
+        'timer' => 3500,
+    ],
+    'usuario_pendiente' => [
+        'title' => 'Cuenta pendiente de aprobación',
+        'message' => 'Tu solicitud fue recibida, pero un administrador todavía debe autorizarla.',
+        'icon' => 'info',
+        'timer' => 6000,
+    ],
+    'usuario_rechazado' => [
+        'title' => 'Solicitud no autorizada',
+        'message' => 'Tu solicitud de acceso fue rechazada. Contacta al administrador para obtener más información.',
+        'icon' => 'error',
+        'timer' => 6000,
+    ],
+    'usuario_inactivo' => [
+        'title' => 'Cuenta desactivada',
+        'message' => 'Tu cuenta está desactivada. Contacta al administrador del sistema.',
+        'icon' => 'error',
+        'timer' => 5000,
+    ],
+    'sesion_expirada' => [
+        'title' => 'Sesión finalizada',
+        'message' => 'Tu sesión expiró después de 12 horas. Inicia sesión nuevamente.',
+        'icon' => 'info',
+        'timer' => 5000,
+    ],
+    'error_sistema' => [
+        'title' => 'No fue posible iniciar sesión',
+        'message' => 'Ocurrió un problema al procesar la solicitud. Inténtalo nuevamente.',
+        'icon' => 'error',
+        'timer' => 5000,
+    ],
+];
+
+$alerta = $errores[$error] ?? null;
 ?>
 <!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes">
-    <title><?php echo $gym_name; ?> - Iniciar Sesión</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-    <!-- SweetAlert2 CSS -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#1e3a8a">
+    <title><?php echo $gym_name_safe; ?> | Iniciar sesión</title>
+
+    <link rel="preconnect" href="https://cdnjs.cloudflare.com">
+    <link rel="preconnect" href="https://cdn.jsdelivr.net">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css">
-    
-    <!-- SweetAlert2 JS -->
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-    
+
     <style>
-        * {
-            margin: 0;
-            padding: 0;
+        :root {
+            --azul: #1e3a8a;
+            --azul-oscuro: #152c6b;
+            --azul-claro: #eef3ff;
+            --fondo: #f3f5f9;
+            --blanco: #ffffff;
+            --texto: #1f2937;
+            --texto-suave: #64748b;
+            --borde: #dfe5ee;
+            --radio-grande: 28px;
+            --radio: 14px;
+            --sombra: 0 24px 70px rgba(30, 58, 138, 0.14);
+        }
+
+        *,
+        *::before,
+        *::after {
             box-sizing: border-box;
         }
 
+        html {
+            width: 100%;
+            min-height: 100%;
+            background: var(--fondo);
+            -webkit-text-size-adjust: 100%;
+        }
+
         body {
-            font-family: 'Segoe UI', 'Poppins', 'Roboto', sans-serif;
+            width: 100%;
             min-height: 100vh;
-            background: #f5f5ff;
+            min-height: 100dvh;
+            margin: 0;
+            padding: clamp(16px, 3vw, 36px);
+            overflow-x: hidden;
+            display: grid;
+            place-items: center;
+            color: var(--texto);
+            font-family: "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background:
+                radial-gradient(circle at 8% 12%, rgba(30, 58, 138, 0.08), transparent 28rem),
+                radial-gradient(circle at 92% 88%, rgba(30, 58, 138, 0.05), transparent 24rem),
+                var(--fondo);
+        }
+
+        button,
+        input {
+            font: inherit;
+        }
+
+        a {
+            color: inherit;
+        }
+
+        .page-shell {
+            position: relative;
+            width: min(950px, 100%);
+            min-height: min(650px, calc(100dvh - clamp(32px, 6vw, 72px)));
+            display: grid;
+            grid-template-columns: minmax(350px, 0.84fr) minmax(470px, 1.16fr);
+            overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, 0.9);
+            border-radius: var(--radio-grande);
+            background: var(--blanco);
+            box-shadow: var(--sombra);
+        }
+
+        .brand-panel {
+            position: relative;
+            isolation: isolate;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: clamp(42px, 5vw, 68px);
+            overflow: hidden;
+            color: var(--blanco);
+            text-align: center;
+            background:
+                linear-gradient(145deg, #162d6f 0%, var(--azul) 56%, #3155ad 100%);
+        }
+
+        .brand-panel::before,
+        .brand-panel::after {
+            content: "";
+            position: absolute;
+            z-index: -1;
+            border-radius: 50%;
+            pointer-events: none;
+        }
+
+        .brand-panel::before {
+            width: 420px;
+            height: 420px;
+            top: -235px;
+            right: -205px;
+            border: 72px solid rgba(255, 255, 255, 0.055);
+        }
+
+        .brand-panel::after {
+            width: 330px;
+            height: 330px;
+            bottom: -205px;
+            left: -175px;
+            border: 54px solid rgba(255, 255, 255, 0.04);
+        }
+
+        .brand-hero {
+            position: relative;
+            z-index: 1;
+            width: min(100%, 340px);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .brand-logo-box {
+            position: relative;
+            flex: 0 0 auto;
+            width: clamp(190px, 18vw, 232px);
+            aspect-ratio: 1 / 1;
+            display: grid;
+            place-items: center;
+            overflow: hidden;
+            padding: 0;
+            border: 1px solid rgba(255, 255, 255, 0.5);
+            border-radius: 38px;
+            background: #ffffff;
+            box-shadow:
+                0 26px 60px rgba(4, 15, 48, 0.3),
+                0 0 0 8px rgba(255, 255, 255, 0.075);
+        }
+
+        .brand-logo-box.light {
+            width: 110px;
+            height: 88px;
+            aspect-ratio: auto;
+            padding: 8px;
+            border-color: rgba(30, 58, 138, 0.12);
+            border-radius: 22px;
+            background: var(--blanco);
+            box-shadow: 0 15px 35px rgba(30, 58, 138, 0.16);
+        }
+
+        .brand-logo-box img {
+            width: 100%;
+            height: 100%;
+            display: block;
+            padding: 0;
+            object-fit: contain;
+        }
+
+        .brand-logo-box.light img {
+            padding: 0;
+        }
+
+        .logo-fallback {
+            width: 100%;
+            height: 100%;
+            display: grid;
+            place-items: center;
+            color: var(--azul);
+            font-size: 58px;
+        }
+
+        .brand-logo-box.light .logo-fallback {
+            font-size: 34px;
+        }
+
+        .brand-name {
+            max-width: 100%;
+            margin: 24px 0 0;
+            overflow-wrap: anywhere;
+            color: #ffffff;
+            font-size: clamp(27px, 3vw, 36px);
+            font-weight: 800;
+            line-height: 1.12;
+            letter-spacing: -0.03em;
+            text-shadow: 0 5px 18px rgba(5, 17, 52, 0.18);
+        }
+
+        .brand-access {
+            position: absolute;
+            z-index: 2;
+            left: 50%;
+            bottom: clamp(26px, 3.2vw, 38px);
+            width: calc(100% - 48px);
             display: flex;
             align-items: center;
             justify-content: center;
-            padding: 20px;
-            position: relative;
-        }
-
-        .container {
-            width: 100%;
-            max-width: 450px;
-            margin: 0 auto;
-            position: relative;
-            z-index: 1;
-        }
-
-        /* Login Card */
-        .login-container {
-            background: white;
-            border-radius: 20px;
-            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
-            padding: 40px 35px;
-            transition: transform 0.3s ease;
-        }
-
-        .login-container:hover {
-            transform: translateY(-5px);
-        }
-
-        /* Header con logo y título */
-        .login-header {
+            gap: 10px;
+            color: rgba(255, 255, 255, 0.76);
+            font-size: 12px;
+            font-weight: 500;
+            line-height: 1.35;
             text-align: center;
-            margin-bottom: 35px;
+            transform: translateX(-50%);
         }
 
-        .logo-wrapper {
-            margin-bottom: 20px;
-        }
-
-        .logo-img {
-            width: 80px;
-            height: 80px;
-            object-fit: contain; /* Cambiado de cover a contain para que no se recorte */
-            border-radius: 20px;
-            box-shadow: 0 5px 15px rgba(0, 51, 102, 0.2);
-            transition: transform 0.3s ease;
-            background-color: #f8f9fa; /* Fondo claro por si el logo es transparente */
-            padding: 5px;
-        }
-
-        .logo-img:hover {
-            transform: scale(1.05);
-        }
-
-        .header-text h1 {
-            color: #003366;
-            font-size: 28px;
-            font-weight: 700;
-            margin-bottom: 8px;
-            letter-spacing: -0.5px;
-        }
-
-        .header-text p {
-            color: #666;
+        .brand-access i {
+            flex: 0 0 auto;
+            color: #b9caef;
             font-size: 14px;
         }
 
-        /* Formulario */
-        .form-group {
-            margin-bottom: 25px;
+        .auth-panel {
+            min-width: 0;
+            display: grid;
+            place-items: center;
+            padding: clamp(34px, 5vw, 70px);
+            background: var(--blanco);
         }
 
-        .form-group label {
+        .login-card {
+            width: min(420px, 100%);
+            min-width: 0;
+        }
+
+        .login-brand {
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            margin-bottom: 26px;
+            text-align: center;
+        }
+
+        .login-brand .brand-name {
+            margin-top: 14px;
+            color: var(--azul-oscuro);
+            font-size: 21px;
+        }
+
+        .login-brand .brand-subtitle {
+            margin-top: 5px;
+            color: var(--texto-suave);
+            font-size: 11px;
+        }
+
+        .login-header {
+            margin-bottom: 30px;
+        }
+
+        .login-header h2 {
+            margin: 0 0 9px;
+            color: var(--azul-oscuro);
+            font-size: clamp(28px, 3vw, 35px);
+            font-weight: 760;
+            line-height: 1.1;
+            letter-spacing: -0.035em;
+        }
+
+        .login-header p {
+            margin: 0;
+            color: var(--texto-suave);
+            font-size: 14px;
+            line-height: 1.6;
+        }
+
+        .form-group {
+            margin-bottom: 19px;
+        }
+
+        .form-label {
             display: block;
             margin-bottom: 8px;
-            color: #003366;
+            color: #334155;
             font-size: 13px;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
+            font-weight: 700;
         }
 
-        /* Input con icono */
         .input-wrapper {
             position: relative;
-            width: 100%;
+            min-width: 0;
         }
 
         .input-icon {
             position: absolute;
-            left: 15px;
+            z-index: 1;
+            left: 16px;
             top: 50%;
             transform: translateY(-50%);
-            color: #003366;
-            font-size: 16px;
+            color: #94a3b8;
+            font-size: 15px;
+            pointer-events: none;
+            transition: color 0.2s ease;
         }
 
-        .form-group input {
+        .form-control {
             width: 100%;
-            padding: 14px 15px 14px 45px;
-            font-size: 14px;
-            color: #333;
-            background-color: #f8f9fa;
-            border: 2px solid #e1e8ed;
-            border-radius: 12px;
-            transition: all 0.3s ease;
-        }
-
-        .password-wrapper input {
-            padding-right: 45px;
-        }
-
-        .form-group input:focus {
+            min-width: 0;
+            min-height: 52px;
+            padding: 13px 46px;
+            border: 1px solid var(--borde);
+            border-radius: var(--radio);
             outline: none;
-            border-color: #003366;
-            background-color: #fff;
-            box-shadow: 0 0 0 4px rgba(0, 51, 102, 0.1);
+            color: var(--texto);
+            background: #f8fafc;
+            font-size: 15px;
+            transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
         }
 
-        .form-group input::placeholder {
-            color: #bbb;
-            font-size: 13px;
+        .form-control::placeholder {
+            color: #a0aec0;
+        }
+
+        .form-control:hover {
+            border-color: #c4cfdd;
+        }
+
+        .form-control:focus {
+            border-color: var(--azul);
+            background: var(--blanco);
+            box-shadow: 0 0 0 4px rgba(30, 58, 138, 0.1);
+        }
+
+        .input-wrapper:focus-within .input-icon {
+            color: var(--azul);
         }
 
         .toggle-password {
             position: absolute;
-            right: 15px;
+            z-index: 2;
+            right: 8px;
             top: 50%;
+            width: 38px;
+            height: 38px;
             transform: translateY(-50%);
-            cursor: pointer;
-            color: #003366;
-            font-size: 16px;
-            background: transparent;
-            border: none;
+            display: grid;
+            place-items: center;
             padding: 0;
-            transition: color 0.3s ease;
+            border: 0;
+            border-radius: 10px;
+            color: #64748b;
+            background: transparent;
+            cursor: pointer;
+            transition: color 0.2s ease, background 0.2s ease;
         }
 
         .toggle-password:hover {
-            color: #0047b3;
+            color: var(--azul);
+            background: var(--azul-claro);
         }
 
-        /* Opciones adicionales */
+        .toggle-password:focus-visible,
+        .forgot-link:focus-visible,
+        .register-link a:focus-visible,
+        .btn-login:focus-visible {
+            outline: 3px solid rgba(30, 58, 138, 0.22);
+            outline-offset: 3px;
+        }
+
         .form-options {
             display: flex;
+            align-items: center;
             justify-content: space-between;
+            gap: 14px;
+            margin: 4px 0 26px;
+        }
+
+        .remember-option {
+            display: inline-flex;
             align-items: center;
-            margin-bottom: 25px;
-        }
-
-        .checkbox {
-            display: flex;
-            align-items: center;
-            cursor: pointer;
-        }
-
-        .checkbox input {
-            margin-right: 8px;
-            cursor: pointer;
-            accent-color: #003366;
-        }
-
-        .checkbox span {
+            gap: 9px;
+            min-width: 0;
+            color: var(--texto-suave);
             font-size: 13px;
-            color: #666;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .remember-option input {
+            width: 17px;
+            height: 17px;
+            flex: 0 0 auto;
+            margin: 0;
+            accent-color: var(--azul);
+            cursor: pointer;
         }
 
         .forgot-link {
+            flex: 0 0 auto;
+            color: var(--azul);
             font-size: 13px;
-            color: #003366;
+            font-weight: 700;
             text-decoration: none;
-            transition: color 0.3s ease;
         }
 
-        .forgot-link:hover {
-            color: #0047b3;
+        .forgot-link:hover,
+        .register-link a:hover {
+            color: var(--azul-oscuro);
             text-decoration: underline;
+            text-underline-offset: 3px;
         }
 
-        /* Botón de login */
         .btn-login {
-            width: 100%;
-            padding: 14px;
-            background: #003366;
-            color: white;
-            border: none;
-            border-radius: 12px;
-            font-size: 16px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            margin-bottom: 25px;
-            text-transform: uppercase;
-            letter-spacing: 1px;
             position: relative;
-            overflow: hidden;
-        }
-
-        .btn-login::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: -100%;
             width: 100%;
-            height: 100%;
-            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
-            transition: left 0.5s ease;
+            min-height: 52px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            padding: 13px 18px;
+            border: 0;
+            border-radius: var(--radio);
+            color: var(--blanco);
+            background: var(--azul);
+            box-shadow: 0 12px 25px rgba(30, 58, 138, 0.2);
+            font-size: 15px;
+            font-weight: 750;
+            cursor: pointer;
+            transition: transform 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
         }
 
-        .btn-login:hover::before {
-            left: 100%;
+        .btn-login:hover:not(:disabled) {
+            transform: translateY(-1px);
+            background: var(--azul-oscuro);
+            box-shadow: 0 15px 30px rgba(30, 58, 138, 0.25);
         }
 
-        .btn-login:hover {
-            background: #0047b3;
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(0, 51, 102, 0.3);
-        }
-
-        .btn-login:active {
+        .btn-login:active:not(:disabled) {
             transform: translateY(0);
         }
 
-        /* Enlace de registro */
+        .btn-login:disabled {
+            cursor: wait;
+            opacity: 0.84;
+        }
+
+        .btn-spinner {
+            display: none;
+            width: 17px;
+            height: 17px;
+            border: 2px solid rgba(255, 255, 255, 0.45);
+            border-top-color: var(--blanco);
+            border-radius: 50%;
+            animation: spin 0.75s linear infinite;
+        }
+
+        .btn-login.is-loading .btn-spinner {
+            display: inline-block;
+        }
+
         .register-link {
+            margin-top: 24px;
+            padding-top: 23px;
+            border-top: 1px solid #e8edf3;
             text-align: center;
-            margin-top: 20px;
-            padding-top: 20px;
-            border-top: 1px solid #e1e8ed;
         }
 
         .register-link p {
-            color: #666;
-            font-size: 14px;
+            margin: 0;
+            color: var(--texto-suave);
+            font-size: 13px;
+            line-height: 1.6;
         }
 
         .register-link a {
-            color: #003366;
+            color: var(--azul);
+            font-weight: 750;
             text-decoration: none;
-            font-weight: 600;
-            transition: color 0.3s ease;
         }
 
-        .register-link a:hover {
-            color: #0047b3;
-            text-decoration: underline;
-        }
-
-        /* Footer */
         .login-footer {
-            text-align: center;
-            margin-top: 25px;
-            color: #aaa;
+            margin-top: 24px;
+            color: #94a3b8;
             font-size: 11px;
+            line-height: 1.5;
+            text-align: center;
         }
 
-        /* Animaciones */
-        @keyframes fadeInUp {
-            from {
-                opacity: 0;
-                transform: translateY(30px);
+        .swal2-popup.login-alert {
+            width: min(450px, calc(100vw - 28px));
+            border-radius: 20px;
+            padding: 1.5rem;
+        }
+
+        .swal2-confirm.login-alert-button {
+            min-width: 112px;
+            border-radius: 10px !important;
+            background: var(--azul) !important;
+            box-shadow: none !important;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        @media (max-width: 840px) {
+            body {
+                padding: 18px;
             }
-            to {
-                opacity: 1;
-                transform: translateY(0);
+
+            .page-shell {
+                width: min(560px, 100%);
+                min-height: auto;
+                grid-template-columns: 1fr;
+                border-color: rgba(30, 58, 138, 0.08);
+                border-radius: 26px;
+            }
+
+            .brand-panel {
+                min-height: 220px;
+                padding: 28px 28px 25px;
+            }
+
+            .brand-panel::before {
+                width: 260px;
+                height: 260px;
+                top: -155px;
+                right: -130px;
+                border-width: 44px;
+            }
+
+            .brand-panel::after {
+                width: 220px;
+                height: 220px;
+                bottom: -150px;
+                left: -125px;
+                border-width: 38px;
+            }
+
+            .brand-hero {
+                width: min(100%, 250px);
+            }
+
+            .brand-logo-box {
+                width: 130px;
+                height: 130px;
+                aspect-ratio: auto;
+                padding: 0;
+                border-radius: 28px;
+                box-shadow:
+                    0 18px 38px rgba(4, 15, 48, 0.25),
+                    0 0 0 6px rgba(255, 255, 255, 0.065);
+            }
+
+            .brand-name {
+                margin-top: 13px;
+                font-size: 22px;
+            }
+
+            .brand-access {
+                position: static;
+                width: auto;
+                margin-top: 12px;
+                font-size: 10px;
+                transform: none;
+            }
+
+            .brand-access i {
+                font-size: 12px;
+            }
+
+            .auth-panel {
+                display: block;
+                padding: clamp(32px, 7vw, 48px);
+            }
+
+            .login-card {
+                width: 100%;
+            }
+
+            .login-brand {
+                display: none;
+            }
+
+            .login-header {
+                text-align: center;
             }
         }
 
-        .login-container {
-            animation: fadeInUp 0.6s ease;
-        }
-
-        /* Responsive */
         @media (max-width: 480px) {
             body {
-                padding: 15px;
-            }
-            
-            .login-container {
-                padding: 30px 20px;
-            }
-            
-            .logo-img {
-                width: 60px;
-                height: 60px;
-            }
-            
-            .header-text h1 {
-                font-size: 24px;
-            }
-            
-            .form-group input {
-                padding: 12px 15px 12px 40px;
-            }
-            
-            .btn-login {
+                place-items: start center;
                 padding: 12px;
-                font-size: 14px;
+                background:
+                    linear-gradient(180deg, rgba(30, 58, 138, 0.08), transparent 230px),
+                    var(--fondo);
             }
-            
-            .form-options {
-                flex-direction: column;
-                gap: 10px;
-                align-items: flex-start;
+
+            .page-shell {
+                width: 100%;
+                min-height: calc(100dvh - 24px);
+                border: 1px solid rgba(30, 58, 138, 0.08);
+                border-radius: 23px;
+                box-shadow: 0 18px 45px rgba(30, 58, 138, 0.12);
+            }
+
+            .brand-panel {
+                min-height: 182px;
+                padding: 21px 20px 19px;
+            }
+
+            .brand-logo-box {
+                width: 112px;
+                height: 112px;
+                padding: 0;
+                border-radius: 25px;
+            }
+
+            .brand-name {
+                margin-top: 10px;
+                font-size: 19px;
+            }
+
+            .brand-access {
+                margin-top: 10px;
+                font-size: 9px;
+            }
+
+            .auth-panel {
+                min-height: 0;
+                display: block;
+                padding: 27px 20px 22px;
+            }
+
+            .login-header {
+                margin-bottom: 25px;
+            }
+
+            .login-header h2 {
+                font-size: 27px;
+            }
+
+            .form-control {
+                min-height: 50px;
+                font-size: 16px;
+            }
+
+            .btn-login {
+                min-height: 50px;
+            }
+
+            .login-footer {
+                margin-top: 20px;
             }
         }
 
-        /* Para pantallas muy pequeñas */
-        @media (max-width: 360px) {
-            .login-container {
-                padding: 25px 18px;
+        @media (max-width: 380px) {
+            body {
+                padding: 8px;
             }
-            
-            .header-text h1 {
-                font-size: 22px;
+
+            .page-shell {
+                min-height: calc(100dvh - 16px);
+                border-radius: 20px;
+            }
+
+            .brand-panel {
+                min-height: 166px;
+                padding: 18px 16px 16px;
+            }
+
+            .brand-logo-box {
+                width: 102px;
+                height: 102px;
+                border-radius: 23px;
+            }
+
+            .brand-name {
+                margin-top: 9px;
+                font-size: 18px;
+            }
+
+            .auth-panel {
+                padding: 24px 16px 18px;
+            }
+
+            .form-options {
+                gap: 10px;
+            }
+
+            .remember-option,
+            .forgot-link {
+                font-size: 12px;
+            }
+        }
+
+        @media (max-height: 720px) and (min-width: 841px) {
+            body {
+                align-items: start;
+            }
+
+            .page-shell {
+                min-height: 600px;
+            }
+
+            .brand-panel,
+            .auth-panel {
+                padding-top: 32px;
+                padding-bottom: 32px;
+            }
+
+            .brand-logo-box {
+                width: 190px;
+                height: 190px;
+                aspect-ratio: auto;
+            }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            *,
+            *::before,
+            *::after {
+                scroll-behavior: auto !important;
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 0.01ms !important;
             }
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="login-container">
-            <!-- Header con logo y título dinámicos -->
-            <div class="login-header">
-                <div class="logo-wrapper">
-                    <img src="<?php echo $gym_logo; ?>" 
-                         alt="<?php echo $gym_name; ?> Logo" 
-                         class="logo-img" 
-                         onerror="this.src='https://via.placeholder.com/80x80?text=GYM'">
+    <div class="page-shell">
+        <aside class="brand-panel" aria-label="Identidad del gimnasio">
+            <div class="brand-hero">
+                <div class="brand-logo-box">
+                    <?php if ($gym_logo !== ''): ?>
+                        <img
+                            src="<?php echo htmlspecialchars($gym_logo, ENT_QUOTES, 'UTF-8'); ?>"
+                            alt="Logo de <?php echo $gym_name_safe; ?>"
+                            onerror="this.hidden=true; this.nextElementSibling.hidden=false;"
+                        >
+                    <?php endif; ?>
+                    <span class="logo-fallback" <?php echo $gym_logo !== '' ? 'hidden' : ''; ?> aria-hidden="true">
+                        <i class="fa-solid fa-dumbbell"></i>
+                    </span>
                 </div>
-                <div class="header-text">
-                    <h1><?php echo $gym_name; ?></h1>
-                    <p>Inicia sesión para continuar</p>
-                </div>
+                <p class="brand-name"><?php echo $gym_name_safe; ?></p>
             </div>
-            
-            <form method="POST" action="" id="loginForm">
-                <div class="form-group">
-                    <label for="email">Correo electrónico</label>
-                    <div class="input-wrapper">
-                        <i class="fas fa-envelope input-icon"></i>
-                        <input type="email" id="email" name="email" 
-                               placeholder="ejemplo@correo.com" 
-                               value="<?php echo isset($_POST['email']) ? htmlspecialchars($_POST['email']) : ''; ?>" 
-                               required>
+
+            <div class="brand-access" aria-label="Acceso restringido">
+                <i class="fa-solid fa-shield-halved" aria-hidden="true"></i>
+                <span>Acceso exclusivo para personal autorizado</span>
+            </div>
+        </aside>
+
+        <main class="auth-panel">
+            <section class="login-card" aria-labelledby="login-title">
+                <div class="login-brand">
+                    <div class="brand-logo-box light">
+                        <?php if ($gym_logo !== ''): ?>
+                            <img
+                                src="<?php echo htmlspecialchars($gym_logo, ENT_QUOTES, 'UTF-8'); ?>"
+                                alt="Logo de <?php echo $gym_name_safe; ?>"
+                                onerror="this.hidden=true; this.nextElementSibling.hidden=false;"
+                            >
+                        <?php endif; ?>
+                        <span class="logo-fallback" <?php echo $gym_logo !== '' ? 'hidden' : ''; ?> aria-hidden="true">
+                            <i class="fa-solid fa-dumbbell"></i>
+                        </span>
                     </div>
+                    <p class="brand-name"><?php echo $gym_name_safe; ?></p>
                 </div>
-                
-                <div class="form-group">
-                    <label for="password">Contraseña</label>
-                    <div class="input-wrapper password-wrapper">
-                        <i class="fas fa-lock input-icon"></i>
-                        <input type="password" id="password" name="password" 
-                               placeholder="Ingresa tu contraseña" required>
-                        <button type="button" class="toggle-password" onclick="togglePassword()">
-                            <i class="fas fa-eye"></i>
-                        </button>
+
+                <header class="login-header">
+                    <h2 id="login-title">Bienvenido de nuevo</h2>
+                    <p>Ingresa tus datos para acceder al sistema.</p>
+                </header>
+
+                <form method="POST" action="" id="loginForm" novalidate>
+                    <div class="form-group">
+                        <label class="form-label" for="email">Correo electrónico</label>
+                        <div class="input-wrapper">
+                            <i class="fa-regular fa-envelope input-icon" aria-hidden="true"></i>
+                            <input
+                                class="form-control"
+                                type="email"
+                                id="email"
+                                name="email"
+                                placeholder="ejemplo@correo.com"
+                                value="<?php echo htmlspecialchars($email_value, ENT_QUOTES, 'UTF-8'); ?>"
+                                autocomplete="username"
+                                inputmode="email"
+                                autocapitalize="none"
+                                spellcheck="false"
+                                required
+                            >
+                        </div>
                     </div>
+
+                    <div class="form-group">
+                        <label class="form-label" for="password">Contraseña</label>
+                        <div class="input-wrapper">
+                            <i class="fa-solid fa-lock input-icon" aria-hidden="true"></i>
+                            <input
+                                class="form-control"
+                                type="password"
+                                id="password"
+                                name="password"
+                                placeholder="Ingresa tu contraseña"
+                                autocomplete="current-password"
+                                required
+                            >
+                            <button
+                                type="button"
+                                class="toggle-password"
+                                id="togglePassword"
+                                aria-label="Mostrar contraseña"
+                                aria-pressed="false"
+                            >
+                                <i class="fa-regular fa-eye" aria-hidden="true"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="form-options">
+                        <label class="remember-option" for="remember">
+                            <input type="checkbox" id="remember">
+                            <span>Recordar correo</span>
+                        </label>
+                        <a href="recuperar-password.php" class="forgot-link">¿Olvidaste tu contraseña?</a>
+                    </div>
+
+                    <button type="submit" class="btn-login" id="loginButton">
+                        <span class="btn-spinner" aria-hidden="true"></span>
+                        <span class="btn-text">Iniciar sesión</span>
+                        <i class="fa-solid fa-arrow-right-to-bracket" aria-hidden="true"></i>
+                    </button>
+                </form>
+
+                <div class="register-link">
+                    <p>¿No tienes una cuenta? <a href="registro.php">Crear cuenta</a></p>
                 </div>
-                
-                <div class="form-options">
-                    <label class="checkbox">
-                        <input type="checkbox" id="remember">
-                        <span>Recordarme</span>
-                    </label>
-                    <a href="recuperar-password.php" class="forgot-link">¿Olvidaste tu contraseña?</a>
-                </div>
-                
-                <button type="submit" class="btn-login">
-                    Iniciar sesión
-                </button>
-            </form>
-            
-            <div class="register-link">
-                <p>¿No tienes una cuenta? <a href="registro.php">Crear cuenta</a></p>
-            </div>
-            
-            <div class="login-footer">
-                &copy; <?php echo date('Y'); ?> <?php echo $gym_name; ?>. Todos los derechos reservados.
-            </div>
-        </div>
+
+                <footer class="login-footer">
+                    &copy; <?php echo date('Y'); ?> <?php echo $gym_name_safe; ?>. Todos los derechos reservados.
+                </footer>
+            </section>
+        </main>
     </div>
-    
+
     <script>
-    // Función para mostrar/ocultar contraseña
-    function togglePassword() {
-        const passwordInput = document.getElementById('password');
-        const toggleIcon = document.querySelector('.toggle-password i');
-        
-        if (passwordInput.type === 'password') {
-            passwordInput.type = 'text';
-            toggleIcon.classList.remove('fa-eye');
-            toggleIcon.classList.add('fa-eye-slash');
-        } else {
-            passwordInput.type = 'password';
-            toggleIcon.classList.remove('fa-eye-slash');
-            toggleIcon.classList.add('fa-eye');
-        }
-    }
-    
-    // Guardar email si se selecciona "Recordarme"
-    document.getElementById('loginForm').addEventListener('submit', function(e) {
-        const remember = document.getElementById('remember').checked;
-        const email = document.getElementById('email').value;
-        
-        if (remember) {
-            localStorage.setItem('savedEmail', email);
-        } else {
-            localStorage.removeItem('savedEmail');
-        }
-    });
-    
-    // Cargar email guardado
-    window.addEventListener('load', function() {
-        const savedEmail = localStorage.getItem('savedEmail');
-        if (savedEmail) {
-            document.getElementById('email').value = savedEmail;
-            document.getElementById('remember').checked = true;
-        }
-    });
-    
-    // Mostrar alerta si hay error
-    <?php if ($mensaje_error): ?>
-    Swal.fire({
-        icon: '<?php echo $tipo_error; ?>',
-        title: '<?php 
-            if ($error == 'usuario_inactivo') {
-                echo 'Cuenta Desactivada';
-            } elseif ($tipo_error == 'warning') {
-                echo 'Atención';
-            } elseif ($tipo_error == 'info') {
-                echo 'Información';
-            } else {
-                echo 'Error';
+        (() => {
+            'use strict';
+
+            const form = document.getElementById('loginForm');
+            const emailInput = document.getElementById('email');
+            const passwordInput = document.getElementById('password');
+            const rememberInput = document.getElementById('remember');
+            const toggleButton = document.getElementById('togglePassword');
+            const toggleIcon = toggleButton.querySelector('i');
+            const loginButton = document.getElementById('loginButton');
+
+            const savedEmail = localStorage.getItem('savedEmail');
+            if (savedEmail && emailInput.value.trim() === '') {
+                emailInput.value = savedEmail;
+                rememberInput.checked = true;
             }
-        ?>',
-        text: '<?php echo $mensaje_error; ?>',
-        confirmButtonColor: '#003366',
-        confirmButtonText: 'Entendido',
-        timer: <?php echo ($error == 'usuario_inactivo') ? '5000' : ($tipo_error == 'info' ? '5000' : '3000'); ?>,
-        timerProgressBar: true
-    });
-    <?php endif; ?>
-    
-    // Validación adicional del formulario
-    document.getElementById('loginForm').addEventListener('submit', function(e) {
-        const email = document.getElementById('email').value;
-        const password = document.getElementById('password').value;
-        
-        if (!email || !password) {
-            e.preventDefault();
-            Swal.fire({
-                icon: 'warning',
-                title: 'Campos incompletos',
-                text: 'Por favor complete todos los campos',
-                confirmButtonColor: '#003366',
-                confirmButtonText: 'OK'
+
+            toggleButton.addEventListener('click', () => {
+                const showPassword = passwordInput.type === 'password';
+                passwordInput.type = showPassword ? 'text' : 'password';
+                toggleButton.setAttribute('aria-pressed', String(showPassword));
+                toggleButton.setAttribute('aria-label', showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña');
+                toggleIcon.classList.toggle('fa-eye', !showPassword);
+                toggleIcon.classList.toggle('fa-eye-slash', showPassword);
+                passwordInput.focus({ preventScroll: true });
             });
-        }
-    });
+
+            form.addEventListener('submit', (event) => {
+                const email = emailInput.value.trim();
+                const password = passwordInput.value;
+
+                emailInput.value = email;
+
+                if (!email || !password || !emailInput.validity.valid) {
+                    event.preventDefault();
+
+                    const invalidEmail = email !== '' && !emailInput.validity.valid;
+                    Swal.fire({
+                        icon: 'warning',
+                        title: invalidEmail ? 'Correo no válido' : 'Campos incompletos',
+                        text: invalidEmail
+                            ? 'Ingresa un correo electrónico con un formato válido.'
+                            : 'Completa tu correo electrónico y contraseña.',
+                        confirmButtonText: 'Entendido',
+                        customClass: {
+                            popup: 'login-alert',
+                            confirmButton: 'login-alert-button'
+                        }
+                    }).then(() => {
+                        (invalidEmail || !email ? emailInput : passwordInput).focus();
+                    });
+                    return;
+                }
+
+                if (rememberInput.checked) {
+                    localStorage.setItem('savedEmail', email);
+                } else {
+                    localStorage.removeItem('savedEmail');
+                }
+
+                loginButton.disabled = true;
+                loginButton.classList.add('is-loading');
+                loginButton.setAttribute('aria-busy', 'true');
+                loginButton.querySelector('.btn-text').textContent = 'Ingresando...';
+            });
+
+            <?php if ($alerta): ?>
+            Swal.fire({
+                icon: <?php echo json_encode($alerta['icon'], JSON_UNESCAPED_UNICODE); ?>,
+                title: <?php echo json_encode($alerta['title'], JSON_UNESCAPED_UNICODE); ?>,
+                text: <?php echo json_encode($alerta['message'], JSON_UNESCAPED_UNICODE); ?>,
+                confirmButtonText: 'Entendido',
+                timer: <?php echo (int) $alerta['timer']; ?>,
+                timerProgressBar: true,
+                customClass: {
+                    popup: 'login-alert',
+                    confirmButton: 'login-alert-button'
+                }
+            });
+            <?php endif; ?>
+        })();
     </script>
 </body>
 </html>
