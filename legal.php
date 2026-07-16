@@ -1128,15 +1128,6 @@ $userNameLegal = trim(
             <div>
 
                 <h1>Aviso de privacidad y términos</h1>
-
-                <p>
-                    Consulta ambos documentos en ventanas modales.
-                    <?php if (!$isCurrentLegal): ?>
-                        Debes aceptarlos para utilizar los demás módulos.
-                    <?php else: ?>
-                        Tu aceptación se encuentra vigente.
-                    <?php endif; ?>
-                </p>
             </div>
 
             <span
@@ -1169,21 +1160,9 @@ $userNameLegal = trim(
                     </h2>
 
                     <p>
-                        El aviso explica cómo se tratan tus datos. Los
-                        términos establecen las reglas de uso,
+                        Los términos establecen las reglas de uso,
                         confidencialidad y protección de la aplicación.
                     </p>
-                </div>
-
-                <div class="legal-evidence">
-                    <i class="fas fa-building-shield"></i>
-
-                    <span>
-                        Plataforma administrada por
-                        <strong>RexCoreSolutions</strong>.<br>
-                        Contacto:
-                        <strong>rexcoresolutions@gmail.com</strong>
-                    </span>
                 </div>
             </div>
 

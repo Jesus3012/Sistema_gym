@@ -182,6 +182,17 @@ if ($gym_logo === '') {
     }
 }
 
+require_once __DIR__ . '/permisos_helper.php';
+
+$sidebar_permisos = permisos_obtener_mapa_rol(
+    $conn,
+    $user_rol
+);
+
+$sidebar_puede = static function (string $clave) use ($sidebar_permisos): bool {
+    return !empty($sidebar_permisos[$clave]);
+};
+
 // Determinar módulo activo basado en la página actual.
 $active_module = '';
 
@@ -213,6 +224,8 @@ if ($sidebar_legal_activo) {
     $active_module = 'settings';
 } elseif ($current_page === 'solicitudes_usuarios.php') {
     $active_module = 'user_requests';
+} elseif ($current_page === 'permisos_roles.php') {
+    $active_module = 'role_permissions';
 } elseif ($current_page === 'mi_perfil.php') {
     $active_module = 'perfil';
 } elseif (
@@ -375,293 +388,245 @@ if (
     </div>
 
     <?php
+    $puede_dashboard = $sidebar_puede('dashboard');
+    $puede_inscripciones = $sidebar_puede('inscripciones');
+    $puede_asistencias = $sidebar_puede('asistencias');
+    $puede_ventas = $sidebar_puede('ventas');
+    $puede_historial_ventas = $sidebar_puede('historial_ventas');
+    $puede_corte_caja = $sidebar_puede('corte_caja');
+    $puede_productos = $sidebar_puede('productos');
+    $puede_historial_stock = $sidebar_puede('historial_stock');
+    $puede_clases = $sidebar_puede('clases');
+    $puede_inscripciones_clases = $sidebar_puede('inscripciones_clases');
+    $puede_reportes = $sidebar_puede('reportes');
+    $puede_notificaciones = $sidebar_puede('notificaciones');
+    $puede_solicitudes = $sidebar_puede('solicitudes_usuarios');
+    $puede_configuracion = $sidebar_puede('configuracion');
+    $puede_permisos_roles = $sidebar_puede('permisos_roles');
+
+    $mostrar_grupo_socios = $puede_inscripciones || $puede_asistencias;
+    $mostrar_grupo_ventas = $puede_ventas || $puede_historial_ventas || $puede_corte_caja;
+    $mostrar_grupo_inventario = $puede_productos || $puede_historial_stock;
+    $mostrar_grupo_clases = $puede_clases || $puede_inscripciones_clases;
+    $mostrar_grupo_admin = $puede_reportes
+        || $puede_notificaciones
+        || $puede_solicitudes
+        || $puede_configuracion;
+
     $grupo_inventario_activo = in_array($active_module, ['products', 'historial'], true);
     $grupo_ventas_activo = in_array($active_module, ['ventas', 'historial_ventas', 'corte_caja'], true);
     $grupo_socios_activo = in_array($active_module, ['inscriptions', 'assistance'], true);
     $grupo_clases_activo = in_array($active_module, ['classes', 'clases_inscriptions'], true);
-    $grupo_admin_activo = in_array($active_module, ['reports', 'notificaciones', 'settings', 'user_requests'], true);
+    $grupo_admin_activo = in_array(
+        $active_module,
+        ['reports', 'notificaciones', 'settings', 'user_requests'],
+        true
+    );
     ?>
 
     <nav class="sidebar-nav" aria-label="Módulos del sistema">
         <ul class="sidebar-menu">
-            <li class="nav-item nav-dashboard">
-                <a href="dashboard.php" class="nav-link <?php echo $active_module === 'dashboard' ? 'active' : ''; ?>">
-                    <i class="fas fa-gauge-high"></i>
-                    <span class="nav-text">Panel principal</span>
-                </a>
-            </li>
-
-            <?php if (in_array($user_rol, ['admin', 'administrador'], true)): ?>
-                <li class="nav-group <?php echo $grupo_socios_activo ? 'open' : ''; ?>" data-group="socios">
-                    <button
-                        type="button"
-                        class="nav-group-toggle"
-                        aria-expanded="<?php echo $grupo_socios_activo ? 'true' : 'false'; ?>"
-                    >
-                        <i class="fas fa-users"></i>
-                        <span class="nav-group-label">Socios</span>
-                        <i class="fas fa-chevron-down group-chevron"></i>
-                    </button>
-
-                    <ul class="nav-submenu">
-                        <li>
-                            <a href="inscripciones.php" class="nav-link <?php echo $active_module === 'inscriptions' ? 'active' : ''; ?>">
-                                <i class="fas fa-id-card"></i>
-                                <span class="nav-text">Inscripciones</span>
-                            </a>
-                        </li>
-                        <li>
-                            <a href="asistencias.php" class="nav-link <?php echo $active_module === 'assistance' ? 'active' : ''; ?>">
-                                <i class="fas fa-fingerprint"></i>
-                                <span class="nav-text">Asistencias</span>
-                            </a>
-                        </li>
-                    </ul>
-                </li>
-
-                <li class="nav-group <?php echo $grupo_ventas_activo ? 'open' : ''; ?>" data-group="ventas">
-                    <button
-                        type="button"
-                        class="nav-group-toggle"
-                        aria-expanded="<?php echo $grupo_ventas_activo ? 'true' : 'false'; ?>"
-                    >
-                        <i class="fas fa-cash-register"></i>
-                        <span class="nav-group-label">Ventas y caja</span>
-                        <i class="fas fa-chevron-down group-chevron"></i>
-                    </button>
-
-                    <ul class="nav-submenu">
-                        <li>
-                            <a href="ventas.php" class="nav-link <?php echo $active_module === 'ventas' ? 'active' : ''; ?>">
-                                <i class="fas fa-cart-shopping"></i>
-                                <span class="nav-text">Venta de productos</span>
-                            </a>
-                        </li>
-                        <li>
-                            <a href="historial_ventas.php" class="nav-link <?php echo $active_module === 'historial_ventas' ? 'active' : ''; ?>">
-                                <i class="fas fa-receipt"></i>
-                                <span class="nav-text">Historial de ventas</span>
-                            </a>
-                        </li>
-                        <li>
-                            <a href="corte_caja.php" class="nav-link <?php echo $active_module === 'corte_caja' ? 'active' : ''; ?>">
-                                <i class="fas fa-coins"></i>
-                                <span class="nav-text">Corte de caja</span>
-                            </a>
-                        </li>
-                    </ul>
-                </li>
-
-                <li class="nav-group <?php echo $grupo_inventario_activo ? 'open' : ''; ?>" data-group="inventario">
-                    <button
-                        type="button"
-                        class="nav-group-toggle"
-                        aria-expanded="<?php echo $grupo_inventario_activo ? 'true' : 'false'; ?>"
-                    >
-                        <i class="fas fa-boxes-stacked"></i>
-                        <span class="nav-group-label">Inventario</span>
-                        <i class="fas fa-chevron-down group-chevron"></i>
-                    </button>
-
-                    <ul class="nav-submenu">
-                        <li>
-                            <a href="productos.php" class="nav-link <?php echo $active_module === 'products' ? 'active' : ''; ?>">
-                                <i class="fas fa-box"></i>
-                                <span class="nav-text">Productos</span>
-                            </a>
-                        </li>
-                        <li>
-                            <a href="historial_stock.php" class="nav-link <?php echo $active_module === 'historial' ? 'active' : ''; ?>">
-                                <i class="fas fa-clock-rotate-left"></i>
-                                <span class="nav-text">Historial de stock</span>
-                            </a>
-                        </li>
-                    </ul>
-                </li>
-
-                <li class="nav-group <?php echo $grupo_clases_activo ? 'open' : ''; ?>" data-group="clases">
-                    <button
-                        type="button"
-                        class="nav-group-toggle"
-                        aria-expanded="<?php echo $grupo_clases_activo ? 'true' : 'false'; ?>"
-                    >
-                        <i class="fas fa-calendar-days"></i>
-                        <span class="nav-group-label">Clases</span>
-                        <i class="fas fa-chevron-down group-chevron"></i>
-                    </button>
-
-                    <ul class="nav-submenu">
-                        <li>
-                            <a href="clases.php" class="nav-link <?php echo $active_module === 'classes' ? 'active' : ''; ?>">
-                                <i class="fas fa-dumbbell"></i>
-                                <span class="nav-text">Administrar clases</span>
-                            </a>
-                        </li>
-                        <li>
-                            <a href="inscripciones_clases.php" class="nav-link <?php echo $active_module === 'clases_inscriptions' ? 'active' : ''; ?>">
-                                <i class="fas fa-user-check"></i>
-                                <span class="nav-text">Socios por clase</span>
-                            </a>
-                        </li>
-                    </ul>
-                </li>
-
-                <li class="nav-group <?php echo $grupo_admin_activo ? 'open' : ''; ?>" data-group="administracion">
-                    <button
-                        type="button"
-                        class="nav-group-toggle"
-                        aria-expanded="<?php echo $grupo_admin_activo ? 'true' : 'false'; ?>"
-                    >
-                        <i class="fas fa-sliders"></i>
-                        <span class="nav-group-label">Administración</span>
-                        <i class="fas fa-chevron-down group-chevron"></i>
-                    </button>
-
-                    <ul class="nav-submenu">
-                        <li>
-                            <a
-                                href="solicitudes_usuarios.php"
-                                class="nav-link <?php echo $active_module === 'user_requests' ? 'active' : ''; ?>"
-                            >
-                                <i class="fas fa-user-clock"></i>
-                                <span class="nav-text">Solicitudes de usuarios</span>
-                                <?php if ($solicitudes_pendientes > 0): ?>
-                                    <span
-                                        class="nav-count"
-                                        aria-label="<?php echo $solicitudes_pendientes; ?> solicitudes pendientes"
-                                        title="<?php echo $solicitudes_pendientes; ?> solicitudes pendientes"
-                                    >
-                                        <?php echo $solicitudes_pendientes > 99 ? '99+' : $solicitudes_pendientes; ?>
-                                    </span>
-                                <?php endif; ?>
-                            </a>
-                        </li>
-                        <li>
-                            <a href="reportes.php" class="nav-link <?php echo $active_module === 'reports' ? 'active' : ''; ?>">
-                                <i class="fas fa-chart-column"></i>
-                                <span class="nav-text">Reportes</span>
-                            </a>
-                        </li>
-                        <li>
-                            <a href="notificaciones.php" class="nav-link <?php echo $active_module === 'notificaciones' ? 'active' : ''; ?>">
-                                <i class="fas fa-bell"></i>
-                                <span class="nav-text">Notificaciones</span>
-                            </a>
-                        </li>
-                        <li>
-                            <a href="configuracion.php" class="nav-link <?php echo $active_module === 'settings' ? 'active' : ''; ?>">
-                                <i class="fas fa-gear"></i>
-                                <span class="nav-text">Configuración</span>
-                            </a>
-                        </li>
-                    </ul>
-                </li>
-
-            <?php elseif ($user_rol === 'recepcionista'): ?>
-                <li class="nav-group <?php echo $grupo_socios_activo ? 'open' : ''; ?>" data-group="socios">
-                    <button
-                        type="button"
-                        class="nav-group-toggle"
-                        aria-expanded="<?php echo $grupo_socios_activo ? 'true' : 'false'; ?>"
-                    >
-                        <i class="fas fa-users"></i>
-                        <span class="nav-group-label">Socios</span>
-                        <i class="fas fa-chevron-down group-chevron"></i>
-                    </button>
-
-                    <ul class="nav-submenu">
-                        <li>
-                            <a href="inscripciones.php" class="nav-link <?php echo $active_module === 'inscriptions' ? 'active' : ''; ?>">
-                                <i class="fas fa-id-card"></i>
-                                <span class="nav-text">Inscripciones</span>
-                            </a>
-                        </li>
-                        <li>
-                            <a href="asistencias.php" class="nav-link <?php echo $active_module === 'assistance' ? 'active' : ''; ?>">
-                                <i class="fas fa-fingerprint"></i>
-                                <span class="nav-text">Asistencias</span>
-                            </a>
-                        </li>
-                    </ul>
-                </li>
-
-                <li class="nav-group <?php echo $grupo_ventas_activo ? 'open' : ''; ?>" data-group="ventas">
-                    <button
-                        type="button"
-                        class="nav-group-toggle"
-                        aria-expanded="<?php echo $grupo_ventas_activo ? 'true' : 'false'; ?>"
-                    >
-                        <i class="fas fa-cash-register"></i>
-                        <span class="nav-group-label">Ventas y caja</span>
-                        <i class="fas fa-chevron-down group-chevron"></i>
-                    </button>
-
-                    <ul class="nav-submenu">
-                        <li>
-                            <a href="ventas.php" class="nav-link <?php echo $active_module === 'ventas' ? 'active' : ''; ?>">
-                                <i class="fas fa-cart-shopping"></i>
-                                <span class="nav-text">Venta de productos</span>
-                            </a>
-                        </li>
-                        <li>
-                            <a href="historial_ventas.php" class="nav-link <?php echo $active_module === 'historial_ventas' ? 'active' : ''; ?>">
-                                <i class="fas fa-receipt"></i>
-                                <span class="nav-text">Historial de ventas</span>
-                            </a>
-                        </li>
-                    </ul>
-                </li>
-
-                <li class="nav-item">
-                    <a href="reportes.php" class="nav-link <?php echo $active_module === 'reports' ? 'active' : ''; ?>">
-                        <i class="fas fa-chart-column"></i>
-                        <span class="nav-text">Reportes</span>
+            <?php if ($puede_dashboard): ?>
+                <li class="nav-item nav-dashboard">
+                    <a href="dashboard.php" class="nav-link <?php echo $active_module === 'dashboard' ? 'active' : ''; ?>">
+                        <i class="fas fa-gauge-high"></i>
+                        <span class="nav-text">Panel principal</span>
                     </a>
                 </li>
+            <?php endif; ?>
 
-            <?php elseif ($user_rol === 'entrenador'): ?>
-                <li class="nav-group <?php echo ($grupo_clases_activo || $active_module === 'assistance') ? 'open' : ''; ?>" data-group="clases">
-                    <button
-                        type="button"
-                        class="nav-group-toggle"
-                        aria-expanded="<?php echo ($grupo_clases_activo || $active_module === 'assistance') ? 'true' : 'false'; ?>"
-                    >
-                        <i class="fas fa-dumbbell"></i>
-                        <span class="nav-group-label">Clases y alumnos</span>
+            <?php if ($mostrar_grupo_socios): ?>
+                <li class="nav-group <?php echo $grupo_socios_activo ? 'open' : ''; ?>" data-group="socios">
+                    <button type="button" class="nav-group-toggle" aria-expanded="<?php echo $grupo_socios_activo ? 'true' : 'false'; ?>">
+                        <i class="fas fa-users"></i>
+                        <span class="nav-group-label">Socios</span>
                         <i class="fas fa-chevron-down group-chevron"></i>
                     </button>
-
                     <ul class="nav-submenu">
-                        <li>
-                            <a href="clases.php" class="nav-link <?php echo $active_module === 'classes' ? 'active' : ''; ?>">
-                                <i class="fas fa-calendar-days"></i>
-                                <span class="nav-text">Mis clases</span>
-                            </a>
-                        </li>
-                        <li>
-                            <a href="inscripciones_clases.php" class="nav-link <?php echo $active_module === 'clases_inscriptions' ? 'active' : ''; ?>">
-                                <i class="fas fa-user-check"></i>
-                                <span class="nav-text">Inscripciones</span>
-                            </a>
-                        </li>
-                        <li>
-                            <a href="asistencias.php" class="nav-link <?php echo $active_module === 'assistance' ? 'active' : ''; ?>">
-                                <i class="fas fa-fingerprint"></i>
-                                <span class="nav-text">Asistencias</span>
-                            </a>
-                        </li>
+                        <?php if ($puede_inscripciones): ?>
+                            <li>
+                                <a href="inscripciones.php" class="nav-link <?php echo $active_module === 'inscriptions' ? 'active' : ''; ?>">
+                                    <i class="fas fa-id-card"></i>
+                                    <span class="nav-text">Inscripciones</span>
+                                </a>
+                            </li>
+                        <?php endif; ?>
+                        <?php if ($puede_asistencias): ?>
+                            <li>
+                                <a href="asistencias.php" class="nav-link <?php echo $active_module === 'assistance' ? 'active' : ''; ?>">
+                                    <i class="fas fa-fingerprint"></i>
+                                    <span class="nav-text">Asistencias</span>
+                                </a>
+                            </li>
+                        <?php endif; ?>
                     </ul>
                 </li>
             <?php endif; ?>
 
+            <?php if ($mostrar_grupo_ventas): ?>
+                <li class="nav-group <?php echo $grupo_ventas_activo ? 'open' : ''; ?>" data-group="ventas">
+                    <button type="button" class="nav-group-toggle" aria-expanded="<?php echo $grupo_ventas_activo ? 'true' : 'false'; ?>">
+                        <i class="fas fa-cash-register"></i>
+                        <span class="nav-group-label">Ventas y caja</span>
+                        <i class="fas fa-chevron-down group-chevron"></i>
+                    </button>
+                    <ul class="nav-submenu">
+                        <?php if ($puede_ventas): ?>
+                            <li>
+                                <a href="ventas.php" class="nav-link <?php echo $active_module === 'ventas' ? 'active' : ''; ?>">
+                                    <i class="fas fa-cart-shopping"></i>
+                                    <span class="nav-text">Venta de productos</span>
+                                </a>
+                            </li>
+                        <?php endif; ?>
+                        <?php if ($puede_historial_ventas): ?>
+                            <li>
+                                <a href="historial_ventas.php" class="nav-link <?php echo $active_module === 'historial_ventas' ? 'active' : ''; ?>">
+                                    <i class="fas fa-receipt"></i>
+                                    <span class="nav-text">Historial de ventas</span>
+                                </a>
+                            </li>
+                        <?php endif; ?>
+                        <?php if ($puede_corte_caja): ?>
+                            <li>
+                                <a href="corte_caja.php" class="nav-link <?php echo $active_module === 'corte_caja' ? 'active' : ''; ?>">
+                                    <i class="fas fa-coins"></i>
+                                    <span class="nav-text">Corte de caja</span>
+                                </a>
+                            </li>
+                        <?php endif; ?>
+                    </ul>
+                </li>
+            <?php endif; ?>
+
+            <?php if ($mostrar_grupo_inventario): ?>
+                <li class="nav-group <?php echo $grupo_inventario_activo ? 'open' : ''; ?>" data-group="inventario">
+                    <button type="button" class="nav-group-toggle" aria-expanded="<?php echo $grupo_inventario_activo ? 'true' : 'false'; ?>">
+                        <i class="fas fa-boxes-stacked"></i>
+                        <span class="nav-group-label">Inventario</span>
+                        <i class="fas fa-chevron-down group-chevron"></i>
+                    </button>
+                    <ul class="nav-submenu">
+                        <?php if ($puede_productos): ?>
+                            <li>
+                                <a href="productos.php" class="nav-link <?php echo $active_module === 'products' ? 'active' : ''; ?>">
+                                    <i class="fas fa-box"></i>
+                                    <span class="nav-text">Productos</span>
+                                </a>
+                            </li>
+                        <?php endif; ?>
+                        <?php if ($puede_historial_stock): ?>
+                            <li>
+                                <a href="historial_stock.php" class="nav-link <?php echo $active_module === 'historial' ? 'active' : ''; ?>">
+                                    <i class="fas fa-clock-rotate-left"></i>
+                                    <span class="nav-text">Historial de stock</span>
+                                </a>
+                            </li>
+                        <?php endif; ?>
+                    </ul>
+                </li>
+            <?php endif; ?>
+
+            <?php if ($mostrar_grupo_clases): ?>
+                <li class="nav-group <?php echo $grupo_clases_activo ? 'open' : ''; ?>" data-group="clases">
+                    <button type="button" class="nav-group-toggle" aria-expanded="<?php echo $grupo_clases_activo ? 'true' : 'false'; ?>">
+                        <i class="fas fa-calendar-days"></i>
+                        <span class="nav-group-label">Clases</span>
+                        <i class="fas fa-chevron-down group-chevron"></i>
+                    </button>
+                    <ul class="nav-submenu">
+                        <?php if ($puede_clases): ?>
+                            <li>
+                                <a href="clases.php" class="nav-link <?php echo $active_module === 'classes' ? 'active' : ''; ?>">
+                                    <i class="fas fa-dumbbell"></i>
+                                    <span class="nav-text"><?php echo $user_rol === 'entrenador' ? 'Mis clases' : 'Administrar clases'; ?></span>
+                                </a>
+                            </li>
+                        <?php endif; ?>
+                        <?php if ($puede_inscripciones_clases): ?>
+                            <li>
+                                <a href="inscripciones_clases.php" class="nav-link <?php echo $active_module === 'clases_inscriptions' ? 'active' : ''; ?>">
+                                    <i class="fas fa-user-check"></i>
+                                    <span class="nav-text">Socios por clase</span>
+                                </a>
+                            </li>
+                        <?php endif; ?>
+                    </ul>
+                </li>
+            <?php endif; ?>
+
+            <?php if ($mostrar_grupo_admin): ?>
+                <li class="nav-group <?php echo $grupo_admin_activo ? 'open' : ''; ?>" data-group="administracion">
+                    <button type="button" class="nav-group-toggle" aria-expanded="<?php echo $grupo_admin_activo ? 'true' : 'false'; ?>">
+                        <i class="fas fa-sliders"></i>
+                        <span class="nav-group-label">Administración</span>
+                        <i class="fas fa-chevron-down group-chevron"></i>
+                    </button>
+                    <ul class="nav-submenu">
+                        <?php if ($puede_solicitudes): ?>
+                            <li>
+                                <a href="solicitudes_usuarios.php" class="nav-link <?php echo $active_module === 'user_requests' ? 'active' : ''; ?>">
+                                    <i class="fas fa-user-clock"></i>
+                                    <span class="nav-text">Solicitudes de usuarios</span>
+                                    <?php if ($solicitudes_pendientes > 0): ?>
+                                        <span class="nav-count" aria-label="<?php echo $solicitudes_pendientes; ?> solicitudes pendientes" title="<?php echo $solicitudes_pendientes; ?> solicitudes pendientes">
+                                            <?php echo $solicitudes_pendientes > 99 ? '99+' : $solicitudes_pendientes; ?>
+                                        </span>
+                                    <?php endif; ?>
+                                </a>
+                            </li>
+                        <?php endif; ?>
+                        <?php if ($puede_reportes): ?>
+                            <li>
+                                <a href="reportes.php" class="nav-link <?php echo $active_module === 'reports' ? 'active' : ''; ?>">
+                                    <i class="fas fa-chart-column"></i>
+                                    <span class="nav-text">Reportes</span>
+                                </a>
+                            </li>
+                        <?php endif; ?>
+                        <?php if ($puede_notificaciones): ?>
+                            <li>
+                                <a href="notificaciones.php" class="nav-link <?php echo $active_module === 'notificaciones' ? 'active' : ''; ?>">
+                                    <i class="fas fa-bell"></i>
+                                    <span class="nav-text">Notificaciones</span>
+                                </a>
+                            </li>
+                        <?php endif; ?>
+                        <?php if ($puede_configuracion): ?>
+                            <li>
+                                <a href="configuracion.php" class="nav-link <?php echo $active_module === 'settings' ? 'active' : ''; ?>">
+                                    <i class="fas fa-gear"></i>
+                                    <span class="nav-text">Configuración</span>
+                                </a>
+                            </li>
+                        <?php endif; ?>
+                    </ul>
+                </li>
+            <?php endif; ?>
+
+            <?php if ($puede_permisos_roles): ?>
+                <li class="nav-item">
+                    <a
+                        href="permisos_roles.php"
+                        class="nav-link <?php echo
+                            $active_module === 'role_permissions'
+                                ? 'active'
+                                : '';
+                        ?>"
+                        <?php echo
+                            $active_module === 'role_permissions'
+                                ? 'aria-current="page"'
+                                : '';
+                        ?>
+                    >
+                        <i class="fas fa-key"></i>
+                        <span class="nav-text">Control de acceso</span>
+                    </a>
+                </li>
+            <?php endif; ?>
+
             <li class="nav-item">
-                <a
-                    href="legal.php"
-                    class="nav-link legal-access-link <?php echo $active_module === 'legal_acceptances' ? 'active' : ''; ?>"
-                    <?php echo $active_module === 'legal_acceptances'
-                        ? 'aria-current="page"'
-                        : ''; ?>
-                >
+                <a href="legal.php" class="nav-link legal-access-link <?php echo $active_module === 'legal_acceptances' ? 'active' : ''; ?>" <?php echo $active_module === 'legal_acceptances' ? 'aria-current="page"' : ''; ?>>
                     <i class="fas fa-shield-halved"></i>
                     <span class="nav-text">Aviso y términos</span>
                 </a>

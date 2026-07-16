@@ -77,75 +77,14 @@ $paginaActual = basename(
     )
 );
 
-$rutasPermitidasPorRol = [
-    'admin' => [
-        'dashboard.php',
-        'productos.php',
-        'historial_stock.php',
-        'ventas.php',
-        'historial_ventas.php',
-        'inscripciones.php',
-        'asistencias.php',
-        'clases.php',
-        'inscripciones_clases.php',
-        'reportes.php',
-        'notificaciones.php',
-        'configuracion.php',
-        'mi_perfil.php',
-        'corte_caja.php',
-        'corte_caja_detalle.php',
-        'solicitudes_usuarios.php',
-        'legal.php',
-    ],
-
-    'recepcionista' => [
-        'dashboard.php',
-        'inscripciones.php',
-        'asistencias.php',
-        'reportes.php',
-        'ventas.php',
-        'historial_ventas.php',
-        'mi_perfil.php',
-        'legal.php',
-    ],
-
-    'entrenador' => [
-        'dashboard.php',
-        'clases.php',
-        'inscripciones_clases.php',
-        'asistencias.php',
-        'mi_perfil.php',
-        'legal.php',
-    ],
-];
-
 $nombresRoles = [
     'admin' => 'Administrador',
+    'administrador' => 'Administrador',
     'recepcionista' => 'Recepcionista',
     'entrenador' => 'Entrenador',
 ];
 
-$nombresModulos = [
-    'dashboard.php' => 'Dashboard',
-    'productos.php' => 'Productos',
-    'historial_stock.php' => 'Historial de stock',
-    'ventas.php' => 'Venta de productos',
-    'historial_ventas.php' => 'Historial de ventas',
-    'inscripciones.php' => 'Inscripciones',
-    'asistencias.php' => 'Asistencias',
-    'clases.php' => 'Clases',
-    'inscripciones_clases.php' => 'Inscripciones a clases',
-    'reportes.php' => 'Reportes',
-    'notificaciones.php' => 'Notificaciones',
-    'configuracion.php' => 'Configuración',
-    'mi_perfil.php' => 'Mi perfil',
-    'corte_caja.php' => 'Corte de caja',
-    'corte_caja_detalle.php' => 'Detalle del corte de caja',
-    'solicitudes_usuarios.php' => 'Solicitudes de usuarios',
-    'legal.php' => 'Aviso y términos',
-];
-
-if (!array_key_exists($rolActual, $rutasPermitidasPorRol)) {
+if (!array_key_exists($rolActual, $nombresRoles)) {
     $_SESSION = [];
 
     if (ini_get('session.use_cookies')) {
@@ -169,18 +108,34 @@ if (!array_key_exists($rolActual, $rutasPermitidasPorRol)) {
     );
 }
 
-if (
-    !in_array(
-        $paginaActual,
-        $rutasPermitidasPorRol[$rolActual],
-        true
-    )
-) {
+require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/permisos_helper.php';
+
+$databasePermisos = new Database();
+$connPermisos = $databasePermisos->getConnection();
+
+if ($connPermisos) {
+    $connPermisos->set_charset('utf8mb4');
+}
+
+$claveModuloActual = permisos_modulo_por_pagina(
+    $paginaActual
+);
+
+$accesoPermitido = $claveModuloActual !== null
+    && permisos_rol_tiene_modulo(
+        $connPermisos,
+        $rolActual,
+        $claveModuloActual
+    );
+
+if (!$accesoPermitido) {
     $nombreRol = $nombresRoles[$rolActual]
         ?? ucfirst($rolActual);
 
-    $nombreModulo = $nombresModulos[$paginaActual]
-        ?? 'el módulo solicitado';
+    $nombreModulo = $claveModuloActual !== null
+        ? permisos_nombre_modulo($claveModuloActual)
+        : 'el módulo solicitado';
 
     $_SESSION['alerta_acceso_denegado'] = [
         'titulo' => 'Acceso restringido',
@@ -197,3 +152,10 @@ if (
         $dashboardUrl . '?error=acceso_denegado'
     );
 }
+
+/*
+ * Debe permanecer al final. El guard legal permite cargar el dashboard
+ * para mostrar la aceptación obligatoria y bloquea los demás módulos.
+ */
+require_once __DIR__ . '/legal_guard.php';
+legal_require_acceptance();
