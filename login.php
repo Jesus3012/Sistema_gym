@@ -1,8 +1,9 @@
 <?php
 session_start();
 require_once 'config/database.php';
+require_once 'includes/sucursal_context.php';
 
-$error = '';
+$error = trim((string) ($_GET['error'] ?? ''));
 $email_value = '';
 $tiempo_maximo = 12 * 3600; // 12 horas
 
@@ -27,6 +28,10 @@ if (isset($_SESSION['user_id'], $_SESSION['login_time'])) {
 
 $database = new Database();
 $db = $database->getConnection();
+
+if ($db instanceof mysqli) {
+    $db->set_charset('utf8mb4');
+}
 
 function getGymLogo($conn): string
 {
@@ -104,15 +109,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 } elseif (password_verify($password, (string) $user['password'])) {
                     session_regenerate_id(true);
 
-                    $_SESSION['user_id'] = $user['id'];
-                    $_SESSION['user_name'] = $user['nombre'];
-                    $_SESSION['user_email'] = $user['email'];
-                    $_SESSION['user_rol'] = $user['rol'];
+                    $_SESSION['user_id'] = (int) $user['id'];
+                    $_SESSION['user_name'] = (string) $user['nombre'];
+                    $_SESSION['user_email'] = (string) $user['email'];
+                    $_SESSION['user_rol_base'] = (string) $user['rol'];
+                    $_SESSION['user_rol'] = (string) $user['rol'];
                     $_SESSION['login_time'] = time();
                     $_SESSION['last_activity'] = time();
 
-                    header('Location: dashboard.php');
-                    exit();
+                    try {
+                        /*
+                         * Selecciona la sucursal principal del usuario y
+                         * guarda en sesión el rol efectivo de esa sede.
+                         */
+                        sucursal_inicializar_sesion($db);
+
+                        header('Location: dashboard.php');
+                        exit();
+                    } catch (Throwable $sucursalException) {
+                        error_log(
+                            '[Login sucursal] '
+                            . $sucursalException->getMessage()
+                        );
+
+                        // No se permite una sesión autenticada sin sede.
+                        $_SESSION = [];
+                        session_regenerate_id(true);
+
+                        $mensajeSucursal = strtolower(
+                            $sucursalException->getMessage()
+                        );
+
+                        $error = strpos(
+                            $mensajeSucursal,
+                            'no tiene una sucursal'
+                        ) !== false
+                            ? 'sin_sucursal_asignada'
+                            : 'error_sucursal';
+                    }
                 } else {
                     $error = 'password_incorrecta';
                 }
@@ -126,6 +160,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $errores = [
+    'sesion_requerida' => [
+        'title' => 'Inicia sesión',
+        'message' => 'Debes iniciar sesión para acceder al sistema.',
+        'icon' => 'info',
+        'timer' => 4200,
+    ],
+    'rol_invalido' => [
+        'title' => 'Perfil no válido',
+        'message' => 'El perfil de la cuenta no tiene un rol permitido. Contacta al administrador.',
+        'icon' => 'error',
+        'timer' => 5500,
+    ],
     'campos_vacios' => [
         'title' => 'Campos incompletos',
         'message' => 'Por favor completa tu correo electrónico y contraseña.',
@@ -167,6 +213,30 @@ $errores = [
         'message' => 'Tu cuenta está desactivada. Contacta al administrador del sistema.',
         'icon' => 'error',
         'timer' => 5000,
+    ],
+    'sin_sucursal_asignada' => [
+        'title' => 'Sucursal no asignada',
+        'message' => 'Tu cuenta está activa, pero todavía no tiene una sucursal disponible. Solicita al administrador que te asigne una sede.',
+        'icon' => 'warning',
+        'timer' => 6500,
+    ],
+    'sin_sucursal' => [
+        'title' => 'Sucursal no disponible',
+        'message' => 'La sucursal de tu sesión dejó de estar disponible. Inicia sesión nuevamente o contacta al administrador.',
+        'icon' => 'warning',
+        'timer' => 6500,
+    ],
+    'conexion_sucursal' => [
+        'title' => 'No fue posible validar la sucursal',
+        'message' => 'No se pudo comprobar la sede asignada. Inténtalo nuevamente.',
+        'icon' => 'error',
+        'timer' => 5500,
+    ],
+    'error_sucursal' => [
+        'title' => 'Configuración de sucursales no disponible',
+        'message' => 'No fue posible cargar la sucursal asignada a tu cuenta. Verifica que la migración multisucursal esté instalada.',
+        'icon' => 'error',
+        'timer' => 6500,
     ],
     'sesion_expirada' => [
         'title' => 'Sesión finalizada',

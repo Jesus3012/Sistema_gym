@@ -1,10 +1,4 @@
 <?php
-/**
- * Configuración Mercado Pago Point.
- *
- * Recomendado: definir MP_ACCESS_TOKEN y MP_TERMINAL_ID como variables de entorno.
- * No subas el Access Token real al repositorio.
- */
 
 if (!defined('MP_ACCESS_TOKEN')) {
     define('MP_ACCESS_TOKEN', getenv('MP_ACCESS_TOKEN') ?: 'APP_USR-5864631040986073-031901-7746139b15df1b4cee5583d01e27313b-669932070');

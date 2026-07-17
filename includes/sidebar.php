@@ -119,6 +119,37 @@ require_once __DIR__ . '/../config/database.php';
 $database = new Database();
 $conn = $database->getConnection();
 
+require_once __DIR__ . '/sucursal_context.php';
+
+$sidebar_sucursales = [];
+$sidebar_sucursal_actual = (int) (
+    $_SESSION['sucursal_id'] ?? 0
+);
+$sidebar_sucursal_nombre = trim((string) (
+    $_SESSION['sucursal_nombre'] ?? 'Sucursal'
+));
+$sidebar_sucursal_clave = trim((string) (
+    $_SESSION['sucursal_clave'] ?? ''
+));
+$sidebar_sucursal_csrf = '';
+
+if ($conn instanceof mysqli) {
+    $conn->set_charset('utf8mb4');
+
+    try {
+        $sidebar_sucursales = sucursal_obtener_asignadas(
+            $conn,
+            (int) $_SESSION['user_id']
+        );
+        $sidebar_sucursal_csrf = sucursal_asegurar_csrf();
+    } catch (Throwable $sidebarSucursalException) {
+        error_log(
+            '[Sidebar sucursal] '
+            . $sidebarSucursalException->getMessage()
+        );
+    }
+}
+
 $gym_nombre = 'Gimnasio';
 $gym_logo = '';
 $gym_logo_url = '';
@@ -224,6 +255,8 @@ if ($sidebar_legal_activo) {
     $active_module = 'notificaciones';
 } elseif ($current_page === 'configuracion.php') {
     $active_module = 'settings';
+} elseif ($current_page === 'sucursales.php') {
+    $active_module = 'branches';
 } elseif ($current_page === 'solicitudes_usuarios.php') {
     $active_module = 'user_requests';
 } elseif ($current_page === 'permisos_roles.php') {
@@ -283,6 +316,138 @@ if (
 ?>
 
 <link rel="stylesheet" href="css/navbar.css">
+
+<style>
+    .sidebar-branch-switcher {
+        margin: 0 12px 13px;
+        padding: 10px;
+        border: 1px solid #dce4ef;
+        border-radius: 12px;
+        background: #f8fafc;
+        color: #1f2937;
+    }
+
+    .sidebar-branch-heading {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        min-width: 0;
+    }
+
+    .sidebar-branch-icon {
+        display: grid;
+        flex: 0 0 34px;
+        width: 34px;
+        height: 34px;
+        place-items: center;
+        border-radius: 10px;
+        color: #1e3a8a;
+        background: #eaf0ff;
+        font-size: .78rem;
+    }
+
+    .sidebar-branch-copy {
+        min-width: 0;
+        flex: 1 1 auto;
+    }
+
+    .sidebar-branch-label,
+    .sidebar-branch-name,
+    .sidebar-branch-code {
+        display: block;
+    }
+
+    .sidebar-branch-label {
+        margin-bottom: 2px;
+        color: #64748b;
+        font-size: .58rem;
+        font-weight: 850;
+        letter-spacing: .055em;
+        text-transform: uppercase;
+    }
+
+    .sidebar-branch-name {
+        overflow: hidden;
+        color: #1f2937;
+        font-size: .72rem;
+        font-weight: 800;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+    }
+
+    .sidebar-branch-code {
+        margin-top: 2px;
+        color: #64748b;
+        font-size: .56rem;
+        font-weight: 700;
+    }
+
+    .sidebar-branch-select-wrap {
+        position: relative;
+        margin-top: 9px;
+    }
+
+    .sidebar-branch-select {
+        width: 100%;
+        min-height: 38px;
+        padding: 7px 32px 7px 10px;
+        border: 1px solid #cfd9e7;
+        border-radius: 9px;
+        outline: none;
+        color: #1f2937;
+        background: #ffffff;
+        font-size: .68rem;
+        font-weight: 700;
+        cursor: pointer;
+        appearance: none;
+    }
+
+    .sidebar-branch-select:focus {
+        border-color: #1e3a8a;
+        box-shadow: 0 0 0 3px rgba(30, 58, 138, .10);
+    }
+
+    .sidebar-branch-select:disabled {
+        cursor: wait;
+        opacity: .65;
+    }
+
+    .sidebar-branch-select-chevron {
+        position: absolute;
+        right: 11px;
+        top: 50%;
+        color: #64748b;
+        font-size: .62rem;
+        pointer-events: none;
+        transform: translateY(-50%);
+    }
+
+    .sidebar-branch-loading {
+        display: none;
+        margin-top: 7px;
+        color: #64748b;
+        font-size: .58rem;
+        font-weight: 700;
+    }
+
+    .sidebar-branch-switcher.is-loading
+    .sidebar-branch-loading {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .sidebar.collapsed .sidebar-branch-switcher {
+        display: none;
+    }
+
+    @media (max-width: 768px) {
+        .sidebar-branch-switcher {
+            margin-right: 10px;
+            margin-left: 10px;
+        }
+    }
+</style>
 
 <!-- Botón Hamburguesa para móvil (solo visible en móvil) -->
 <button class="hamburger-mobile" id="hamburgerMobile" type="button" aria-label="Abrir menú lateral" aria-controls="sidebar" aria-expanded="false">
@@ -389,6 +554,81 @@ if (
         </div>
     </div>
 
+    <?php if ($sidebar_sucursal_actual > 0): ?>
+        <section
+            class="sidebar-branch-switcher"
+            id="sidebarBranchSwitcher"
+            aria-label="Sucursal activa"
+        >
+            <div class="sidebar-branch-heading">
+                <span class="sidebar-branch-icon" aria-hidden="true">
+                    <i class="fas fa-building"></i>
+                </span>
+
+                <span class="sidebar-branch-copy">
+                    <span class="sidebar-branch-label">
+                        Sucursal activa
+                    </span>
+                    <strong class="sidebar-branch-name">
+                        <?php echo htmlspecialchars(
+                            $sidebar_sucursal_nombre,
+                            ENT_QUOTES,
+                            'UTF-8'
+                        ); ?>
+                    </strong>
+
+                    <?php if ($sidebar_sucursal_clave !== ''): ?>
+                        <span class="sidebar-branch-code">
+                            <?php echo htmlspecialchars(
+                                $sidebar_sucursal_clave,
+                                ENT_QUOTES,
+                                'UTF-8'
+                            ); ?>
+                        </span>
+                    <?php endif; ?>
+                </span>
+            </div>
+
+            <?php if (count($sidebar_sucursales) > 1): ?>
+                <div class="sidebar-branch-select-wrap">
+                    <select
+                        id="sidebarSucursalSelect"
+                        class="sidebar-branch-select"
+                        aria-label="Cambiar sucursal activa"
+                    >
+                        <?php foreach ($sidebar_sucursales as $sidebarSucursal): ?>
+                            <option
+                                value="<?php echo (int) $sidebarSucursal['id']; ?>"
+                                <?php echo
+                                    (int) $sidebarSucursal['id']
+                                    === $sidebar_sucursal_actual
+                                        ? 'selected'
+                                        : '';
+                                ?>
+                            >
+                                <?php echo htmlspecialchars(
+                                    (string) $sidebarSucursal['nombre'],
+                                    ENT_QUOTES,
+                                    'UTF-8'
+                                ); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+
+                    <i
+                        class="fas fa-chevron-down sidebar-branch-select-chevron"
+                        aria-hidden="true"
+                    ></i>
+                </div>
+
+                <span class="sidebar-branch-loading" aria-live="polite">
+                    <i class="fas fa-spinner fa-spin" aria-hidden="true"></i>
+                    Cambiando sucursal...
+                </span>
+            <?php endif; ?>
+        </section>
+    <?php endif; ?>
+
     <?php
     $puede_dashboard = $sidebar_puede('dashboard');
     $puede_inscripciones = $sidebar_puede('inscripciones');
@@ -409,6 +649,11 @@ if (
     $puede_notificaciones = $sidebar_puede('notificaciones');
     $puede_solicitudes = $sidebar_puede('solicitudes_usuarios');
     $puede_configuracion = $sidebar_puede('configuracion');
+    $puede_sucursales = in_array(
+        $user_rol,
+        ['admin', 'administrador'],
+        true
+    );
     $puede_permisos_roles = $sidebar_puede('permisos_roles');
 
     $mostrar_grupo_socios = $puede_inscripciones || $puede_asistencias;
@@ -420,6 +665,7 @@ if (
     $mostrar_grupo_admin = $puede_reportes
         || $puede_notificaciones
         || $puede_solicitudes
+        || $puede_sucursales
         || $puede_configuracion;
 
     $grupo_inventario_activo = in_array(
@@ -432,7 +678,7 @@ if (
     $grupo_clases_activo = in_array($active_module, ['classes', 'clases_inscriptions'], true);
     $grupo_admin_activo = in_array(
         $active_module,
-        ['reports', 'notificaciones', 'settings', 'user_requests'],
+        ['reports', 'notificaciones', 'settings', 'user_requests', 'branches'],
         true
     );
     ?>
@@ -616,6 +862,14 @@ if (
                                 </a>
                             </li>
                         <?php endif; ?>
+                        <?php if ($puede_sucursales): ?>
+                            <li>
+                                <a href="sucursales.php" class="nav-link <?php echo $active_module === 'branches' ? 'active' : ''; ?>">
+                                    <i class="fas fa-building"></i>
+                                    <span class="nav-text">Sucursales</span>
+                                </a>
+                            </li>
+                        <?php endif; ?>
                         <?php if ($puede_configuracion): ?>
                             <li>
                                 <a href="configuracion.php" class="nav-link <?php echo $active_module === 'settings' ? 'active' : ''; ?>">
@@ -674,6 +928,93 @@ if (
         </a>
     </div>
 </aside>
+
+<?php if (count($sidebar_sucursales) > 1 && $sidebar_sucursal_csrf !== ''): ?>
+<script>
+(function () {
+    const select = document.getElementById('sidebarSucursalSelect');
+    const switcher = document.getElementById('sidebarBranchSwitcher');
+
+    if (!select || !switcher) {
+        return;
+    }
+
+    let valorActual = select.value;
+
+    select.addEventListener('change', async function () {
+        const nuevaSucursal = select.value;
+
+        if (nuevaSucursal === valorActual) {
+            return;
+        }
+
+        select.disabled = true;
+        switcher.classList.add('is-loading');
+
+        const body = new URLSearchParams({
+            sucursal_id: nuevaSucursal,
+            csrf: <?php echo json_encode(
+                $sidebar_sucursal_csrf,
+                JSON_HEX_TAG
+                | JSON_HEX_APOS
+                | JSON_HEX_AMP
+                | JSON_HEX_QUOT
+            ); ?>
+        });
+
+        try {
+            const response = await fetch(
+                'api/cambiar_sucursal.php',
+                {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type':
+                            'application/x-www-form-urlencoded; charset=UTF-8',
+                        'X-Requested-With': 'XMLHttpRequest'
+                    },
+                    credentials: 'same-origin',
+                    body: body.toString()
+                }
+            );
+
+            const data = await response.json();
+
+            if (!response.ok || !data.ok) {
+                throw new Error(
+                    data.mensaje
+                    || 'No fue posible cambiar de sucursal.'
+                );
+            }
+
+            valorActual = nuevaSucursal;
+            window.location.replace(
+                data.redirect || 'dashboard.php'
+            );
+        } catch (error) {
+            select.value = valorActual;
+            select.disabled = false;
+            switcher.classList.remove('is-loading');
+
+            const mensaje = error instanceof Error
+                ? error.message
+                : 'No fue posible cambiar de sucursal.';
+
+            if (typeof Swal !== 'undefined') {
+                Swal.fire({
+                    icon: 'error',
+                    title: 'Cambio no realizado',
+                    text: mensaje,
+                    confirmButtonText: 'Entendido',
+                    confirmButtonColor: '#1e3a8a'
+                });
+            } else {
+                alert(mensaje);
+            }
+        }
+    });
+})();
+</script>
+<?php endif; ?>
 
 <?php if ($sidebar_legal_pendiente): ?>
 <style>
