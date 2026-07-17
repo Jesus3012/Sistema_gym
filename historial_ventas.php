@@ -247,6 +247,7 @@ if (
     let currentPage = 1;
     let totalPages = 1;
     let detallesVentasCache = {};
+    let plazosVentasCache = {};
 
     const nombreGimnasio = <?= json_encode(
         isset($gym_nombre) && $gym_nombre !== '' ? $gym_nombre : 'EGO',
@@ -257,6 +258,91 @@ if (
         isset($gym_logo_url) ? $gym_logo_url : '',
         JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
     ) ?>;
+
+    async function cargarPlazosVentas(ventas) {
+        const ids = Array.isArray(ventas)
+            ? ventas
+                .map(venta => Number(venta.id))
+                .filter(id => id > 0)
+            : [];
+
+        if (!ids.length) {
+            plazosVentasCache = {};
+            return;
+        }
+
+        try {
+            const response = await fetch(
+                'api/plazos_devoluciones_api.php?action=ventas' +
+                `&venta_ids=${encodeURIComponent(ids.join(','))}`,
+                {
+                    headers: { 'Accept': 'application/json' },
+                    cache: 'no-store'
+                }
+            );
+
+            const data = await response.json();
+
+            if (!response.ok || !data.success) {
+                throw new Error(
+                    data.message || 'No se pudieron validar los plazos.'
+                );
+            }
+
+            plazosVentasCache = data.plazos || {};
+        } catch (error) {
+            console.error('Error al validar plazos:', error);
+            plazosVentasCache = {};
+        }
+    }
+
+    function obtenerPlazoVenta(ventaId) {
+        return plazosVentasCache[String(ventaId)] || null;
+    }
+
+    function mostrarMotivoPlazo(ventaId, accion) {
+        const plazo = obtenerPlazoVenta(ventaId);
+        const esCancelacion = accion === 'cancelacion';
+
+        const titulo = esCancelacion
+            ? 'Cancelación no disponible'
+            : 'Devolución no disponible';
+
+        const mensaje = plazo
+            ? (
+                esCancelacion
+                    ? plazo.motivo_cancelacion
+                    : plazo.motivo_devolucion
+            )
+            : 'No fue posible validar el plazo de esta venta. Recarga la página.';
+
+        Swal.fire({
+            title: titulo,
+            text: mensaje,
+            icon: 'info',
+            confirmButtonText: 'Entendido'
+        });
+    }
+
+    function validarAccionPorPlazo(ventaId, accion) {
+        const plazo = obtenerPlazoVenta(ventaId);
+
+        if (!plazo) {
+            mostrarMotivoPlazo(ventaId, accion);
+            return false;
+        }
+
+        const permitido = accion === 'cancelacion'
+            ? plazo.puede_cancelar === true
+            : plazo.puede_devolver === true;
+
+        if (!permitido) {
+            mostrarMotivoPlazo(ventaId, accion);
+            return false;
+        }
+
+        return true;
+    }
 
     async function cargarVentas() {
         const buscar = document.getElementById('buscar').value;
@@ -288,6 +374,8 @@ if (
                     }
                 }
                 
+                await cargarPlazosVentas(data.ventas);
+
                 actualizarEstadisticas(data.ventas);
                 mostrarVentas(data.ventas);
                 actualizarPaginacion(data.total_pages);
@@ -347,8 +435,25 @@ if (
             const tieneUnSoloProducto = detalles.length === 1;
             const cantidadUnicaProducto = tieneUnSoloProducto ? (detalles[0]?.cantidad || 0) : 0;
             
-            // Determinar si se puede devolver (solo si tiene más de un producto o más de 1 unidad)
-            const puedeDevolver = venta.estado === 'completada' && (!tieneUnSoloProducto || cantidadUnicaProducto > 1);
+            // Regla comercial existente: solo mostrar devolución si quedan
+            // varios productos o más de una unidad del mismo producto.
+            const puedeDevolverProductos =
+                venta.estado === 'completada' &&
+                (!tieneUnSoloProducto || cantidadUnicaProducto > 1);
+
+            const plazo = obtenerPlazoVenta(venta.id);
+
+            const puedeCancelarPlazo =
+                plazo?.puede_cancelar === true;
+
+            const puedeDevolverPlazo =
+                plazo?.puede_devolver === true;
+
+            const motivoCancelar = plazo?.motivo_cancelacion ||
+                'No fue posible validar el plazo de cancelación.';
+
+            const motivoDevolver = plazo?.motivo_devolucion ||
+                'No fue posible validar el plazo de devolución.';
             
             // Determinar si tiene email (cliente_id válido y mayor que 0)
             const tieneEmail = venta.cliente_id !== null && venta.cliente_id !== undefined && parseInt(venta.cliente_id) > 0;
@@ -403,17 +508,43 @@ if (
                             <i class="fas fa-eye"></i> Ver
                         </button>
                         ${estadoVenta === 'completada' ? `
-                            <button type="button" class="btn-icon btn-cancelar" onclick="event.stopPropagation(); cancelarVenta(${venta.id})">
-                                <i class="fas fa-times"></i> Cancelar
-                            </button>
-                            ${puedeDevolver
-                                ? `<button type="button" class="btn-icon btn-devolver" onclick="event.stopPropagation(); devolverArticulos(${venta.id})">
-                                    <i class="fas fa-undo-alt"></i> Devolver
+                            ${puedeCancelarPlazo
+                                ? `<button type="button"
+                                           class="btn-icon btn-cancelar"
+                                           title="Quedan ${Number(plazo?.dias_restantes_cancelacion || 0)} día(s) para cancelar"
+                                           onclick="event.stopPropagation(); cancelarVenta(${venta.id})">
+                                    <i class="fas fa-times"></i> Cancelar
                                    </button>`
-                                : `<button type="button" class="btn-icon btn-devolver-disabled" disabled
+                                : `<button type="button"
+                                           class="btn-icon btn-cancelar-disabled btn-plazo-bloqueado"
+                                           title="${escapeHtml(motivoCancelar)}"
+                                           onclick="event.stopPropagation(); mostrarMotivoPlazo(${venta.id}, 'cancelacion')">
+                                    <i class="fas fa-clock"></i> Cancelar
+                                   </button>`
+                            }
+
+                            ${!puedeDevolverProductos
+                                ? `<button type="button"
+                                           class="btn-icon btn-devolver-disabled"
+                                           disabled
                                            title="Solo se puede devolver si hay más de un producto o más de una unidad">
                                     <i class="fas fa-undo-alt"></i> Devolver
                                    </button>`
+                                : (
+                                    puedeDevolverPlazo
+                                        ? `<button type="button"
+                                                   class="btn-icon btn-devolver"
+                                                   title="Quedan ${Number(plazo?.dias_restantes_devolucion || 0)} día(s) para devolver"
+                                                   onclick="event.stopPropagation(); devolverArticulos(${venta.id})">
+                                            <i class="fas fa-undo-alt"></i> Devolver
+                                           </button>`
+                                        : `<button type="button"
+                                                   class="btn-icon btn-devolver-disabled btn-plazo-bloqueado"
+                                                   title="${escapeHtml(motivoDevolver)}"
+                                                   onclick="event.stopPropagation(); mostrarMotivoPlazo(${venta.id}, 'devolucion')">
+                                            <i class="fas fa-clock"></i> Devolver
+                                           </button>`
+                                )
                             }
                         ` : ''}
                         ${tieneEmail
@@ -954,9 +1085,18 @@ if (
     }
 
     async function cancelarVenta(ventaId) {
+        if (!validarAccionPorPlazo(ventaId, 'cancelacion')) {
+            return;
+        }
+
+        const plazo = obtenerPlazoVenta(ventaId);
+        const esTarjeta = plazo?.metodo_pago === 'tarjeta';
+
         const confirmacion = await Swal.fire({
             title: '¿Cancelar venta?',
-            text: 'Esta acción devolverá el stock y no se podrá deshacer.',
+            text: esTarjeta
+                ? 'Se solicitará el reembolso a Mercado Pago y después se devolverá el stock.'
+                : 'Esta acción devolverá el stock y no se podrá deshacer.',
             icon: 'warning',
             showCancelButton: true,
             confirmButtonText: 'Sí, cancelar',
@@ -980,7 +1120,11 @@ if (
             const result = await response.json();
             
             if (result.success) {
-                Swal.fire('Cancelada', 'La venta ha sido cancelada correctamente', 'success');
+                Swal.fire(
+                    'Cancelada',
+                    result.message || 'La venta ha sido cancelada correctamente',
+                    'success'
+                );
                 cargarVentas();
             } else {
                 Swal.fire('Error', result.message, 'error');
@@ -989,6 +1133,10 @@ if (
     }
 
     async function devolverArticulos(ventaId) {
+        if (!validarAccionPorPlazo(ventaId, 'devolucion')) {
+            return;
+        }
+
         const response = await fetch(`api/ventas_api.php?action=detalle&venta_id=${ventaId}`);
         const data = await response.json();
         
@@ -1007,6 +1155,11 @@ if (
             width: '450px',
             html: `
                 <div style="text-align: left;">
+                    <div style="margin-bottom:12px;padding:9px 10px;border:1px solid #dbe5f0;border-radius:8px;background:#f8fafc;color:#667085;font-size:.76rem;line-height:1.4;">
+                        <i class="fas fa-clock" style="color:#244292;margin-right:5px;"></i>
+                        Esta venta está dentro del plazo permitido.
+                        Quedan ${Number(obtenerPlazoVenta(ventaId)?.dias_restantes_devolucion || 0)} día(s).
+                    </div>
                     <div style="margin-bottom: 12px;">
                         <label style="display: block; margin-bottom: 6px; font-weight: 600; font-size: 0.85rem;">Producto</label>
                         <select id="producto-select" style="width: 100%; padding: 8px; border-radius: 6px; border: 1px solid #e2e8f0;">${opciones}</select>

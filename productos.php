@@ -89,7 +89,7 @@ function getImagenPorDefecto($nombre_producto, $categoria_nombre) {
         'barra proteica' => 'uploads/productos/defaults/barra_proteica.png',
         
         // Por categoría
-        'suplementos' => 'uploads/productos/defaults/suplemento_generico.png',
+        'suplementos' => 'uploads/productos/defaults/suplementos_generico.png',
         'ropa' => 'uploads/productos/defaults/ropa_generica.png',
         'accesorios' => 'uploads/productos/defaults/accesorio_generico.png',
         'bebidas' => 'uploads/productos/defaults/bebida_generica.png',
@@ -1073,7 +1073,7 @@ function construirUrlProductos($base, $cambios = [])
 
     <!-- Modales -->
     <div class="modal fade" id="editProductoModal" tabindex="-1" role="dialog">
-        <div class="modal-dialog modal-lg" role="document">
+        <div class="modal-dialog modal-lg modal-dialog-scrollable" role="document">
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title"><i class="fas fa-edit"></i> Editar Producto</h5>
@@ -1173,7 +1173,7 @@ function construirUrlProductos($base, $cambios = [])
 
     <!-- Modal para Agregar Stock -->
     <div class="modal fade" id="stockModal" tabindex="-1" role="dialog">
-        <div class="modal-dialog" role="document">
+        <div class="modal-dialog modal-dialog-scrollable" role="document">
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title"><i class="fas fa-plus-circle"></i> Agregar Stock</h5>
@@ -1223,7 +1223,7 @@ function construirUrlProductos($base, $cambios = [])
 
     <!-- Modal para Ajuste de Stock -->
     <div class="modal fade" id="ajusteModal" tabindex="-1" role="dialog">
-        <div class="modal-dialog" role="document">
+        <div class="modal-dialog modal-dialog-scrollable" role="document">
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title"><i class="fas fa-balance-scale"></i> Corrección de Inventario</h5>
@@ -1308,7 +1308,7 @@ function construirUrlProductos($base, $cambios = [])
 
     <!-- Modales para Categoría y Proveedor -->
     <div class="modal fade" id="categoriaModal" tabindex="-1" role="dialog">
-        <div class="modal-dialog" role="document">
+        <div class="modal-dialog modal-dialog-scrollable" role="document">
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title"><i class="fas fa-plus-circle"></i> Agregar Nueva Categoría</h5>
@@ -1335,7 +1335,7 @@ function construirUrlProductos($base, $cambios = [])
     </div>
 
     <div class="modal fade" id="proveedorModal" tabindex="-1" role="dialog">
-        <div class="modal-dialog" role="document">
+        <div class="modal-dialog modal-dialog-scrollable" role="document">
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title"><i class="fas fa-plus-circle"></i> Agregar Nuevo Proveedor</h5>
@@ -1496,9 +1496,12 @@ function construirUrlProductos($base, $cambios = [])
                         // Mostrar imagen actual si existe
                         if (data.producto.foto && data.producto.foto !== 'null' && data.producto.foto !== '') {
                             $('#edit_current_image').html(`
-                                <div class="alert alert-info" style="padding: 10px; margin-top: 10px;">
-                                    <strong>Imagen actual:</strong><br>
-                                    <img src="${data.producto.foto}" class="preview-image" style="max-width: 150px; max-height: 150px; margin-top: 10px;">
+                                <div class="current-image-card">
+                                    <div class="current-image-title">
+                                        <i class="fas fa-image" aria-hidden="true"></i>
+                                        <span>Imagen actual</span>
+                                    </div>
+                                    <img src="${data.producto.foto}" class="preview-image" alt="Imagen actual del producto">
                                 </div>
                             `).show();
                         } else {

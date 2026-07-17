@@ -2,7 +2,7 @@
 session_start();
 
 if (!isset($_SESSION['user_id'])) {
-    header("Location: login.php");
+    header('Location: login.php');
     exit();
 }
 
@@ -11,780 +11,641 @@ require_once 'config/database.php';
 $database = new Database();
 $conn = $database->getConnection();
 
-$user_id = $_SESSION['user_id'];
-$user_nombre = $_SESSION['user_name'];
-
-$query = "SELECT * FROM usuarios WHERE id = ?";
-$stmt = $conn->prepare($query);
-$stmt->bind_param("i", $user_id);
-$stmt->execute();
-$user = $stmt->get_result()->fetch_assoc();
-
-// Obtener estadísticas del usuario
-$stats_query = "SELECT 
-    (SELECT COUNT(*) FROM ventas WHERE usuario_id = ?) as total_ventas,
-    (SELECT COUNT(*) FROM asistencias WHERE verificado_por = ?) as total_asistencias,
-    (SELECT COALESCE(SUM(total), 0) FROM ventas WHERE usuario_id = ?) as total_ingresos";
-$stmt_stats = $conn->prepare($stats_query);
-$stmt_stats->bind_param("iii", $user_id, $user_id, $user_id);
-$stmt_stats->execute();
-$stats = $stmt_stats->get_result()->fetch_assoc();
-
-// Orden de actividad (asc/desc)
-$orden = isset($_GET['orden']) && $_GET['orden'] === 'asc' ? 'asc' : 'desc';
-$orden_texto = $orden === 'asc' ? 'ASC' : 'DESC';
-$icono_orden = $orden === 'asc' ? 'fa-sort-amount-up' : 'fa-sort-amount-down';
-$texto_orden = $orden === 'asc' ? 'Más antiguos primero' : 'Más recientes primero';
-
-// Paginación para actividad reciente
-$pagina = max(1, isset($_GET['page']) ? (int) $_GET['page'] : 1);
-$por_pagina = 5;
-
-// Obtener total de actividades
-$total_query = "SELECT COUNT(*) as total FROM (
-    SELECT id FROM ventas WHERE usuario_id = ?
-    UNION ALL
-    SELECT id FROM asistencias WHERE verificado_por = ?
-) as actividades";
-$stmt_total = $conn->prepare($total_query);
-$stmt_total->bind_param("ii", $user_id, $user_id);
-$stmt_total->execute();
-$total_actividades = $stmt_total->get_result()->fetch_assoc()['total'];
-$total_paginas = max(1, (int) ceil($total_actividades / $por_pagina));
-$pagina = min($pagina, $total_paginas);
-$offset = ($pagina - 1) * $por_pagina;
-
-// Obtener actividades con paginación y orden
-$actividades_query = "SELECT * FROM (
-    SELECT 'venta' as tipo, id, fecha_venta as fecha, total as monto FROM ventas WHERE usuario_id = ?
-    UNION ALL
-    SELECT 'asistencia' as tipo, id, CONCAT(fecha, ' ', hora_entrada) as fecha, NULL as monto FROM asistencias WHERE verificado_por = ?
-) as actividades ORDER BY fecha $orden_texto LIMIT ? OFFSET ?";
-$stmt_act = $conn->prepare($actividades_query);
-$stmt_act->bind_param("iiii", $user_id, $user_id, $por_pagina, $offset);
-$stmt_act->execute();
-$actividades = $stmt_act->get_result();
-
-// Procesar actualización de perfil
-$mensaje = '';
-$error = '';
-
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (isset($_POST['action']) && $_POST['action'] === 'update_profile') {
-        $nombre = trim($_POST['nombre']);
-        $email = trim($_POST['email']);
-        
-        if (empty($nombre) || empty($email)) {
-            $error = "Nombre y email son obligatorios";
-        } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
-            $error = "Email inválido";
-        } else {
-            $check_query = "SELECT id FROM usuarios WHERE email = ? AND id != ?";
-            $stmt_check = $conn->prepare($check_query);
-            $stmt_check->bind_param("si", $email, $user_id);
-            $stmt_check->execute();
-            if ($stmt_check->get_result()->num_rows > 0) {
-                $error = "El email ya está registrado por otro usuario";
-            } else {
-                $update_query = "UPDATE usuarios SET nombre = ?, email = ? WHERE id = ?";
-                $stmt_update = $conn->prepare($update_query);
-                $stmt_update->bind_param("ssi", $nombre, $email, $user_id);
-                if ($stmt_update->execute()) {
-                    $_SESSION['user_name'] = $nombre;
-                    $_SESSION['user_email'] = $email;
-                    $user_nombre = $nombre;
-                    $mensaje = "Perfil actualizado correctamente";
-                    $user['nombre'] = $nombre;
-                    $user['email'] = $email;
-                } else {
-                    $error = "Error al actualizar el perfil";
-                }
-            }
-        }
-    }
-    
-    if (isset($_POST['action']) && $_POST['action'] === 'update_password') {
-        $new_password = $_POST['new_password'];
-        $confirm_password = $_POST['confirm_password'];
-        
-        if (strlen($new_password) < 6) {
-            $error = "La nueva contraseña debe tener al menos 6 caracteres";
-        } elseif ($new_password !== $confirm_password) {
-            $error = "Las contraseñas no coinciden";
-        } else {
-            $hashed_password = password_hash($new_password, PASSWORD_DEFAULT);
-            $update_pass = "UPDATE usuarios SET password = ?, password_change_required = 0, ultimo_cambio_password = NOW() WHERE id = ?";
-            $stmt_update = $conn->prepare($update_pass);
-            $stmt_update->bind_param("si", $hashed_password, $user_id);
-            if ($stmt_update->execute()) {
-                $mensaje = "Contraseña actualizada correctamente";
-            } else {
-                $error = "Error al actualizar la contraseña";
-            }
-        }
-    }
-    
-    if (isset($_FILES['foto_perfil']) && $_FILES['foto_perfil']['error'] === UPLOAD_ERR_OK) {
-        $archivo = $_FILES['foto_perfil'];
-        $tipo = $archivo['type'];
-        $tamano = $archivo['size'];
-        $temp = $archivo['tmp_name'];
-        
-        $tipos_permitidos = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
-        if (!in_array($tipo, $tipos_permitidos)) {
-            $error = "Solo se permiten imágenes JPG, JPEG, PNG o WEBP";
-        } elseif ($tamano > 10 * 1024 * 1024) {
-            $error = "La imagen no puede superar los 10MB";
-        } else {
-            $directorio = 'uploads/perfiles/';
-            if (!file_exists($directorio)) {
-                mkdir($directorio, 0777, true);
-            }
-            
-            $nombre_limpio = preg_replace('/[^a-zA-Z0-9]/', '_', $user_nombre);
-            $extension = strtolower(pathinfo($archivo['name'], PATHINFO_EXTENSION));
-            $nombre_archivo = 'perfil_' . $user_id . '_' . $nombre_limpio . '.' . $extension;
-            $ruta_completa = $directorio . $nombre_archivo;
-            
-            if (!empty($user['foto_perfil']) && file_exists($user['foto_perfil'])) {
-                unlink($user['foto_perfil']);
-            }
-            
-            if (move_uploaded_file($temp, $ruta_completa)) {
-                $update_foto = "UPDATE usuarios SET foto_perfil = ? WHERE id = ?";
-                $stmt_foto = $conn->prepare($update_foto);
-                $stmt_foto->bind_param("si", $ruta_completa, $user_id);
-                if ($stmt_foto->execute()) {
-                    $user['foto_perfil'] = $ruta_completa;
-                    $mensaje = "Foto de perfil actualizada correctamente";
-                } else {
-                    $error = "Error al guardar la foto de perfil";
-                }
-            } else {
-                $error = "Error al subir la imagen";
-            }
-        }
-    }
+if (!$conn) {
+    http_response_code(500);
+    exit('No fue posible conectar con la base de datos.');
 }
 
-// Obtener URL del avatar
-$avatar_url = !empty($user['foto_perfil']) && file_exists($user['foto_perfil']) 
-    ? $user['foto_perfil'] 
-    : 'https://ui-avatars.com/api/?background=3b82f6&color=fff&bold=true&size=120&name=' . urlencode($user['nombre']);
-?>
+$userId = (int) $_SESSION['user_id'];
 
+function responderJson(bool $success, string $message, array $extra = []): void
+{
+    header('Content-Type: application/json; charset=UTF-8');
+    echo json_encode(
+        array_merge(['success' => $success, 'message' => $message], $extra),
+        JSON_UNESCAPED_UNICODE
+    );
+    exit();
+}
+
+function obtenerUsuario(mysqli $conn, int $userId): ?array
+{
+    $stmt = $conn->prepare(
+        'SELECT id, nombre, email, rol, foto_perfil, fecha_registro, ultimo_cambio_password
+         FROM usuarios
+         WHERE id = ?
+         LIMIT 1'
+    );
+    $stmt->bind_param('i', $userId);
+    $stmt->execute();
+    $result = $stmt->get_result();
+
+    return $result->fetch_assoc() ?: null;
+}
+
+$user = obtenerUsuario($conn, $userId);
+
+if (!$user) {
+    session_destroy();
+    header('Location: login.php');
+    exit();
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $action = trim((string) ($_POST['action'] ?? ''));
+
+    if ($action === 'update_profile') {
+        $nombre = trim((string) ($_POST['nombre'] ?? ''));
+        $email = trim((string) ($_POST['email'] ?? ''));
+
+        if ($nombre === '' || $email === '') {
+            responderJson(false, 'El nombre y el correo son obligatorios.');
+        }
+
+        if (mb_strlen($nombre) > 120) {
+            responderJson(false, 'El nombre es demasiado largo.');
+        }
+
+        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            responderJson(false, 'Ingresa un correo electrónico válido.');
+        }
+
+        $check = $conn->prepare('SELECT id FROM usuarios WHERE email = ? AND id <> ? LIMIT 1');
+        $check->bind_param('si', $email, $userId);
+        $check->execute();
+
+        if ($check->get_result()->num_rows > 0) {
+            responderJson(false, 'Ese correo ya está registrado por otro usuario.');
+        }
+
+        $update = $conn->prepare('UPDATE usuarios SET nombre = ?, email = ? WHERE id = ?');
+        $update->bind_param('ssi', $nombre, $email, $userId);
+
+        if (!$update->execute()) {
+            responderJson(false, 'No se pudieron guardar los cambios.');
+        }
+
+        $_SESSION['user_name'] = $nombre;
+        $_SESSION['user_email'] = $email;
+
+        responderJson(true, 'Perfil actualizado correctamente.', [
+            'nombre' => $nombre,
+            'email' => $email,
+        ]);
+    }
+
+    if ($action === 'update_password') {
+        $newPassword = (string) ($_POST['new_password'] ?? '');
+        $confirmPassword = (string) ($_POST['confirm_password'] ?? '');
+
+        if ($newPassword === '' || $confirmPassword === '') {
+            responderJson(false, 'Completa ambos campos de contraseña.');
+        }
+
+        if (strlen($newPassword) < 6) {
+            responderJson(false, 'La contraseña debe tener al menos 6 caracteres.');
+        }
+
+        if ($newPassword !== $confirmPassword) {
+            responderJson(false, 'Las contraseñas no coinciden.');
+        }
+
+        $hashedPassword = password_hash($newPassword, PASSWORD_DEFAULT);
+        $update = $conn->prepare(
+            'UPDATE usuarios
+             SET password = ?, password_change_required = 0, ultimo_cambio_password = NOW()
+             WHERE id = ?'
+        );
+        $update->bind_param('si', $hashedPassword, $userId);
+
+        if (!$update->execute()) {
+            responderJson(false, 'No se pudo actualizar la contraseña.');
+        }
+
+        responderJson(true, 'Contraseña actualizada correctamente.');
+    }
+
+    if ($action === 'update_photo') {
+        if (!isset($_FILES['foto_perfil']) || $_FILES['foto_perfil']['error'] !== UPLOAD_ERR_OK) {
+            responderJson(false, 'Selecciona una imagen válida.');
+        }
+
+        $archivo = $_FILES['foto_perfil'];
+        $maxSize = 10 * 1024 * 1024;
+
+        if ((int) $archivo['size'] > $maxSize) {
+            responderJson(false, 'La imagen no puede superar los 10 MB.');
+        }
+
+        $finfo = new finfo(FILEINFO_MIME_TYPE);
+        $mime = (string) $finfo->file($archivo['tmp_name']);
+        $extensiones = [
+            'image/jpeg' => 'jpg',
+            'image/png' => 'png',
+            'image/webp' => 'webp',
+        ];
+
+        if (!isset($extensiones[$mime])) {
+            responderJson(false, 'Solo se permiten imágenes JPG, PNG o WEBP.');
+        }
+
+        $directorio = 'uploads/perfiles/';
+        if (!is_dir($directorio) && !mkdir($directorio, 0775, true) && !is_dir($directorio)) {
+            responderJson(false, 'No fue posible preparar la carpeta de perfiles.');
+        }
+
+        $nombreArchivo = 'perfil_' . $userId . '_' . bin2hex(random_bytes(5)) . '.' . $extensiones[$mime];
+        $rutaNueva = $directorio . $nombreArchivo;
+
+        if (!move_uploaded_file($archivo['tmp_name'], $rutaNueva)) {
+            responderJson(false, 'No fue posible guardar la imagen.');
+        }
+
+        $update = $conn->prepare('UPDATE usuarios SET foto_perfil = ? WHERE id = ?');
+        $update->bind_param('si', $rutaNueva, $userId);
+
+        if (!$update->execute()) {
+            @unlink($rutaNueva);
+            responderJson(false, 'No fue posible actualizar la foto de perfil.');
+        }
+
+        $rutaAnterior = trim((string) ($user['foto_perfil'] ?? ''));
+        if ($rutaAnterior !== '' && $rutaAnterior !== $rutaNueva && is_file($rutaAnterior)) {
+            @unlink($rutaAnterior);
+        }
+
+        responderJson(true, 'Foto actualizada correctamente.', [
+            'avatar_url' => $rutaNueva,
+        ]);
+    }
+
+    responderJson(false, 'Acción no válida.');
+}
+
+$configResult = $conn->query('SELECT nombre FROM configuracion_gimnasio WHERE id = 1 LIMIT 1');
+$configGym = $configResult ? $configResult->fetch_assoc() : [];
+$gymNombre = trim((string) ($configGym['nombre'] ?? 'Ego Gym')) ?: 'Ego Gym';
+
+$roles = [
+    'admin' => 'Administrador',
+    'recepcionista' => 'Recepcionista',
+    'entrenador' => 'Entrenador',
+];
+$rolTexto = $roles[$user['rol']] ?? ucfirst((string) $user['rol']);
+
+$fechaRegistro = !empty($user['fecha_registro'])
+    ? date('d/m/Y', strtotime($user['fecha_registro']))
+    : 'Sin fecha';
+
+$avatarFallback = 'https://ui-avatars.com/api/?background=1e3a8a&color=fff&bold=true&size=240&name=' . urlencode((string) $user['nombre']);
+$avatarUrl = !empty($user['foto_perfil']) && is_file($user['foto_perfil'])
+    ? $user['foto_perfil']
+    : $avatarFallback;
+?>
 <!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mi Perfil - Ego Gym</title>
+    <title>Mi perfil - <?php echo htmlspecialchars($gymNombre); ?></title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-    <link rel="stylesheet" href="css/mi_perfil.css?v=1.0.0">
+    <link rel="stylesheet" href="css/mi_perfil.css?v=2.0.0">
 </head>
 <body>
     <?php include 'includes/sidebar.php'; ?>
 
     <main class="main-content" id="contenido-principal">
-        <!-- Cover y avatar -->
-        <section class="profile-cover" aria-label="Resumen del perfil">
-            <div class="profile-cover-img"></div>
-            <button type="button" class="profile-avatar" onclick="cambiarFotoPerfil()" aria-label="Cambiar foto de perfil">
-                <img id="avatar-img" src="<?php echo $avatar_url; ?>" alt="Avatar" onerror="this.src='https://ui-avatars.com/api/?background=3b82f6&color=fff&bold=true&size=120&name=<?php echo urlencode($user['nombre']); ?>'">
-            </button>
-            <div class="edit-avatar-hint">
-                <i class="fas fa-camera"></i> Click para cambiar foto
-            </div>
-            <div class="profile-name">
-                <h2><?php echo htmlspecialchars($user['nombre']); ?></h2>
-                <p><i class="fas fa-envelope"></i> <?php echo htmlspecialchars($user['email']); ?></p>
-            </div>
-        </section>
+        <div class="profile-page">
+            <header class="page-heading">
+                <div>
+                    <h1>Mi perfil</h1>
+                    <p class="page-description">Actualiza tus datos personales, foto y contraseña.</p>
+                </div>
+            </header>
 
-        <!-- Estadísticas -->
-        <section class="stats-grid" aria-label="Estadísticas del usuario">
-            <div class="stat-card" onclick="cambiarPagina(1)">
-                <div class="stat-icon"><i class="fas fa-shopping-cart"></i></div>
-                <div class="stat-info">
-                    <h3><?php echo $stats['total_ventas'] ?? 0; ?></h3>
-                    <p>Ventas Realizadas</p>
-                </div>
-            </div>
-            <div class="stat-card" onclick="cambiarPagina(1)">
-                <div class="stat-icon"><i class="fas fa-fingerprint"></i></div>
-                <div class="stat-info">
-                    <h3><?php echo $stats['total_asistencias'] ?? 0; ?></h3>
-                    <p>Asistencias Registradas</p>
-                </div>
-            </div>
-            <div class="stat-card" onclick="cambiarPagina(1)">
-                <div class="stat-icon"><i class="fas fa-dollar-sign"></i></div>
-                <div class="stat-info">
-                    <h3>$<?php echo number_format($stats['total_ingresos'] ?? 0, 2); ?></h3>
-                    <p>Total en Ventas</p>
-                </div>
-            </div>
-            <div class="stat-card" onclick="cambiarPagina(1)">
-                <div class="stat-icon"><i class="fas fa-calendar-alt"></i></div>
-                <div class="stat-info">
-                    <h3><?php echo date('d/m/Y', strtotime($user['fecha_registro'])); ?></h3>
-                    <p>Miembro desde</p>
-                </div>
-            </div>
-        </section>
+            <div class="profile-layout">
+                <aside class="profile-summary-card" aria-label="Resumen de la cuenta">
+                    <div class="profile-avatar-wrap">
+                        <img
+                            id="avatar-img"
+                            class="profile-avatar-img"
+                            src="<?php echo htmlspecialchars($avatarUrl); ?>"
+                            data-fallback="<?php echo htmlspecialchars($avatarFallback); ?>"
+                            alt="Foto de perfil de <?php echo htmlspecialchars($user['nombre']); ?>"
+                        >
+                        <button type="button" class="avatar-edit-button" id="btnCambiarFoto" aria-label="Cambiar foto de perfil">
+                            <i class="fas fa-camera" aria-hidden="true"></i>
+                        </button>
+                    </div>
 
-        <!-- Grid de información -->
-        <div class="profile-grid">
-            <!-- Información personal -->
-            <div class="info-card">
-                <div class="card-header">
-                    <i class="fas fa-id-card"></i>
-                    <h3>Editar Información Personal</h3>
-                </div>
-                <div class="card-body">
-                    <div class="form-group">
-                        <label><i class="fas fa-user"></i> Nombre completo</label>
-                        <input type="text" id="nombre" value="<?php echo htmlspecialchars($user['nombre']); ?>" required>
+                    <div class="profile-identity">
+                        <h2 id="profile-name-display"><?php echo htmlspecialchars($user['nombre']); ?></h2>
+                        <p id="profile-email-display"><?php echo htmlspecialchars($user['email']); ?></p>
                     </div>
-                    <div class="form-group">
-                        <label><i class="fas fa-envelope"></i> Correo electrónico</label>
-                        <input type="email" id="email" value="<?php echo htmlspecialchars($user['email']); ?>" required>
+
+                    <div class="profile-badges">
+                        <span class="profile-badge">
+                            <i class="fas fa-user-shield" aria-hidden="true"></i>
+                            <?php echo htmlspecialchars($rolTexto); ?>
+                        </span>
+                        <span class="profile-badge profile-badge-muted">
+                            <i class="fas fa-calendar" aria-hidden="true"></i>
+                            Desde <?php echo htmlspecialchars($fechaRegistro); ?>
+                        </span>
                     </div>
-                    <div class="form-group">
-                        <label><i class="fas fa-user-tag"></i> Rol</label>
-                        <input type="text" value="<?php 
-                            $roles = ['admin' => 'Administrador', 'recepcionista' => 'Recepcionista', 'entrenador' => 'Entrenador'];
-                            echo $roles[$user['rol']] ?? $user['rol'];
-                        ?>" disabled class="readonly-input">
-                    </div>
-                    <button type="button" class="btn-action" onclick="actualizarPerfil()">
-                        <i class="fas fa-save"></i> Actualizar Datos
+
+                    <button type="button" class="change-photo-link" id="btnCambiarFotoTexto">
+                        <i class="fas fa-image" aria-hidden="true"></i>
+                        Cambiar foto
                     </button>
-                </div>
-            </div>
+                    <p class="photo-help">JPG, PNG o WEBP · máximo 10 MB</p>
+                </aside>
 
-            <!-- Seguridad -->
-            <div class="info-card">
-                <div class="card-header">
-                    <i class="fas fa-shield-alt"></i>
-                    <h3>Seguridad</h3>
-                </div>
-                <div class="card-body">
-                    <div class="form-group">
-                        <label><i class="fas fa-lock"></i> Nueva contraseña</label>
-                        <div class="password-input-wrapper">
-                            <input type="password" id="new_password" autocomplete="off">
-                            <button type="button" class="toggle-password" onclick="togglePasswordVisibility('new_password')">
-                                <i class="fas fa-eye"></i>
-                            </button>
-                        </div>
-                        <div class="password-strength">
-                            <div class="password-strength-bar" id="strength-bar"></div>
-                        </div>
-                        <div class="password-hint" id="password-hint">Mínimo 6 caracteres</div>
-                    </div>
-                    <div class="form-group">
-                        <label><i class="fas fa-check-circle"></i> Confirmar contraseña</label>
-                        <div class="password-input-wrapper">
-                            <input type="password" id="confirm_password" autocomplete="off">
-                            <button type="button" class="toggle-password" onclick="togglePasswordVisibility('confirm_password')">
-                                <i class="fas fa-eye"></i>
-                            </button>
-                        </div>
-                        <div id="password-match-indicator" class="password-match"></div>
-                    </div>
-                    <button type="button" class="btn-action" onclick="cambiarPassword()">
-                        <i class="fas fa-sync-alt"></i> Cambiar Contraseña
-                    </button>
-                    
-                    <div class="acciones-buttons">
-                        <button type="button" class="btn-action btn-export" onclick="exportarActividad()">
-                            <i class="fas fa-download"></i> Exportar
+                <section class="profile-settings-card">
+                    <div class="settings-tabs" role="tablist" aria-label="Opciones del perfil">
+                        <button type="button" class="settings-tab active" data-tab="datos" role="tab" aria-selected="true">
+                            <i class="fas fa-user" aria-hidden="true"></i>
+                            Datos personales
                         </button>
-                        <button type="button" class="btn-action btn-session" onclick="verSesiones()">
-                            <i class="fas fa-history"></i> Sesiones
+                        <button type="button" class="settings-tab" data-tab="seguridad" role="tab" aria-selected="false">
+                            <i class="fas fa-lock" aria-hidden="true"></i>
+                            Seguridad
                         </button>
                     </div>
-                </div>
-            </div>
 
-            <!-- Actividad reciente con paginación y orden -->
-            <div class="info-card activity-card">
-                <div class="card-header">
-                    <i class="fas fa-clock"></i>
-                    <h3>Actividad Reciente</h3>
-                </div>
-                <div class="card-body">
-                    <div class="activity-toolbar">
-                        <button type="button" class="orden-btn" onclick="cambiarOrden()">
-                            <i class="fas <?php echo $icono_orden; ?>"></i>
-                            <?php echo $texto_orden; ?>
-                        </button>
-                    </div>
-                    
-                    <?php if ($actividades->num_rows > 0): ?>
-                        <?php while ($act = $actividades->fetch_assoc()): ?>
-                            <div class="actividad-item">
-                                <div class="actividad-icon">
-                                    <i class="fas <?php echo $act['tipo'] == 'venta' ? 'fa-shopping-cart' : 'fa-fingerprint'; ?>" ></i>
-                                </div>
-                                <div class="actividad-info">
-                                    <div class="actividad-titulo">
-                                        <?php echo $act['tipo'] == 'venta' ? 'Venta realizada' : 'Asistencia registrada'; ?>
-                                        <?php if ($act['tipo'] == 'venta'): ?>
-                                            <span class="actividad-folio">#<?php echo str_pad($act['id'], 8, '0', STR_PAD_LEFT); ?></span>
-                                        <?php endif; ?>
-                                    </div>
-                                    <div class="actividad-fecha">
-                                        <i class="fas fa-calendar-alt"></i> <?php echo date('d/m/Y H:i', strtotime($act['fecha'])); ?>
+                    <div class="settings-panel active" data-panel="datos" role="tabpanel">
+                        <div class="panel-heading">
+                            <h2>Información personal</h2>
+                            <p>Estos datos identifican tu cuenta dentro del sistema.</p>
+                        </div>
+
+                        <form id="profileForm" novalidate>
+                            <div class="form-grid">
+                                <div class="form-field form-field-full">
+                                    <label for="nombre">Nombre completo</label>
+                                    <div class="input-control">
+                                        <i class="fas fa-user" aria-hidden="true"></i>
+                                        <input
+                                            type="text"
+                                            id="nombre"
+                                            name="nombre"
+                                            value="<?php echo htmlspecialchars($user['nombre']); ?>"
+                                            maxlength="120"
+                                            autocomplete="name"
+                                            required
+                                        >
                                     </div>
                                 </div>
-                                <?php if ($act['tipo'] == 'venta' && $act['monto']): ?>
-                                    <div class="actividad-monto">$<?php echo number_format($act['monto'], 2); ?></div>
-                                <?php endif; ?>
+
+                                <div class="form-field form-field-full">
+                                    <label for="email">Correo electrónico</label>
+                                    <div class="input-control">
+                                        <i class="fas fa-envelope" aria-hidden="true"></i>
+                                        <input
+                                            type="email"
+                                            id="email"
+                                            name="email"
+                                            value="<?php echo htmlspecialchars($user['email']); ?>"
+                                            autocomplete="email"
+                                            required
+                                        >
+                                    </div>
+                                </div>
                             </div>
-                        <?php endwhile; ?>
-                        
-                        <?php if ($total_paginas > 1): ?>
-                            <div class="pagination">
-                                <button onclick="cambiarPagina(1)" <?php echo $pagina <= 1 ? 'disabled' : ''; ?>>
-                                    <i class="fas fa-angle-double-left"></i>
-                                </button>
-                                <button onclick="cambiarPagina(<?php echo max(1, $pagina - 1); ?>)" <?php echo $pagina <= 1 ? 'disabled' : ''; ?>>
-                                    <i class="fas fa-chevron-left"></i>
-                                </button>
-                                
-                                <?php
-                                $start = max(1, $pagina - 2);
-                                $end = min($total_paginas, $pagina + 2);
-                                for ($i = $start; $i <= $end; $i++):
-                                ?>
-                                    <button onclick="cambiarPagina(<?php echo $i; ?>)" class="<?php echo $i == $pagina ? 'active' : ''; ?>">
-                                        <?php echo $i; ?>
-                                    </button>
-                                <?php endfor; ?>
-                                
-                                <button onclick="cambiarPagina(<?php echo min($total_paginas, $pagina + 1); ?>)" <?php echo $pagina >= $total_paginas ? 'disabled' : ''; ?>>
-                                    <i class="fas fa-chevron-right"></i>
-                                </button>
-                                <button onclick="cambiarPagina(<?php echo $total_paginas; ?>)" <?php echo $pagina >= $total_paginas ? 'disabled' : ''; ?>>
-                                    <i class="fas fa-angle-double-right"></i>
+
+                            <div class="form-actions">
+                                <button type="submit" class="primary-button" id="btnGuardarPerfil">
+                                    <i class="fas fa-check" aria-hidden="true"></i>
+                                    Guardar cambios
                                 </button>
                             </div>
-                        <?php endif; ?>
-                    <?php else: ?>
-                        <div class="empty-actividades">
-                            <i class="fas fa-inbox" class="empty-icon"></i>
-                            <p>No hay actividad reciente</p>
+                        </form>
+                    </div>
+
+                    <div class="settings-panel" data-panel="seguridad" role="tabpanel" hidden>
+                        <div class="panel-heading">
+                            <h2>Cambiar contraseña</h2>
+                            <p>Utiliza al menos 6 caracteres y evita contraseñas fáciles de adivinar.</p>
                         </div>
-                    <?php endif; ?>
-                </div>
+
+                        <form id="passwordForm" novalidate>
+                            <div class="form-grid">
+                                <div class="form-field">
+                                    <label for="new_password">Nueva contraseña</label>
+                                    <div class="input-control password-control">
+                                        <i class="fas fa-key" aria-hidden="true"></i>
+                                        <input type="password" id="new_password" name="new_password" minlength="6" autocomplete="new-password" required>
+                                        <button type="button" class="password-toggle" data-target="new_password" aria-label="Mostrar contraseña">
+                                            <i class="fas fa-eye" aria-hidden="true"></i>
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div class="form-field">
+                                    <label for="confirm_password">Confirmar contraseña</label>
+                                    <div class="input-control password-control">
+                                        <i class="fas fa-shield-halved" aria-hidden="true"></i>
+                                        <input type="password" id="confirm_password" name="confirm_password" minlength="6" autocomplete="new-password" required>
+                                        <button type="button" class="password-toggle" data-target="confirm_password" aria-label="Mostrar contraseña">
+                                            <i class="fas fa-eye" aria-hidden="true"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="password-status" id="passwordStatus" aria-live="polite">
+                                <span class="password-meter"><span id="passwordMeterBar"></span></span>
+                                <span id="passwordStatusText">Mínimo 6 caracteres</span>
+                            </div>
+
+                            <div class="form-actions">
+                                <button type="submit" class="primary-button" id="btnGuardarPassword">
+                                    <i class="fas fa-lock" aria-hidden="true"></i>
+                                    Actualizar contraseña
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </section>
             </div>
         </div>
     </main>
 
-    <form id="uploadFotoForm" method="POST" enctype="multipart/form-data" style="display: none;">
-        <input type="file" id="foto_input" name="foto_perfil" accept="image/*">
-    </form>
+    <input type="file" id="foto_input" accept="image/jpeg,image/png,image/webp" hidden>
 
     <script>
-    // Función para mostrar/ocultar contraseña
-    function togglePasswordVisibility(inputId) {
-        const input = document.getElementById(inputId);
-        const button = input.nextElementSibling;
-        const icon = button.querySelector('i');
-        
-        if (input.type === 'password') {
-            input.type = 'text';
-            icon.classList.remove('fa-eye');
-            icon.classList.add('fa-eye-slash');
-        } else {
-            input.type = 'password';
-            icon.classList.remove('fa-eye-slash');
-            icon.classList.add('fa-eye');
+    const profileEndpoint = 'mi_perfil.php';
+
+    function escapeHtml(value) {
+        return String(value ?? '').replace(/[&<>'"]/g, character => ({
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            "'": '&#039;',
+            '"': '&quot;'
+        }[character]));
+    }
+
+    async function enviarFormulario(formData) {
+        const response = await fetch(profileEndpoint, {
+            method: 'POST',
+            body: formData,
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        });
+
+        const text = await response.text();
+        let data;
+
+        try {
+            data = JSON.parse(text);
+        } catch (error) {
+            throw new Error('El servidor devolvió una respuesta no válida.');
         }
-    }
 
-    // Función para detectar correctamente el navegador
-    function detectarNavegador() {
-        const ua = navigator.userAgent;
-        if (ua.indexOf('Chrome') > -1 && ua.indexOf('Edg') === -1) return 'Chrome';
-        if (ua.indexOf('Firefox') > -1) return 'Firefox';
-        if (ua.indexOf('Safari') > -1 && ua.indexOf('Chrome') === -1) return 'Safari';
-        if (ua.indexOf('Edg') > -1) return 'Edge';
-        if (ua.indexOf('Opera') > -1 || ua.indexOf('OPR') > -1) return 'Opera';
-        return 'Desconocido';
-    }
-
-    // Variables para el medidor de fortaleza
-    let newPass = document.getElementById('new_password');
-    let confirmPass = document.getElementById('confirm_password');
-    let matchIndicator = document.getElementById('password-match-indicator');
-
-    function actualizarFortaleza() {
-        if (!newPass) return;
-        
-        const val = newPass.value;
-        const strengthBar = document.getElementById('strength-bar');
-        const hint = document.getElementById('password-hint');
-        let strength = 0;
-        let hintText = '';
-        
-        if (val.length >= 6) strength++;
-        if (val.length >= 10) strength++;
-        if (/[A-Z]/.test(val)) strength++;
-        if (/[0-9]/.test(val)) strength++;
-        if (/[^A-Za-z0-9]/.test(val)) strength++;
-        
-        if (val.length === 0) {
-            strengthBar.className = 'password-strength-bar';
-            strengthBar.style.width = '0%';
-            hintText = 'Mínimo 6 caracteres';
-        } else if (strength <= 1) {
-            strengthBar.className = 'password-strength-bar strength-weak';
-            hintText = 'Contraseña débil';
-        } else if (strength <= 3) {
-            strengthBar.className = 'password-strength-bar strength-medium';
-            hintText = 'Contraseña media';
-        } else {
-            strengthBar.className = 'password-strength-bar strength-strong';
-            hintText = 'Contraseña fuerte';
+        if (!response.ok || !data.success) {
+            throw new Error(data.message || 'No fue posible completar la operación.');
         }
-        hint.textContent = hintText;
-        
-        // Verificar coincidencia
-        verificarCoincidencia();
+
+        return data;
     }
 
-    function verificarCoincidencia() {
-        if (confirmPass && newPass && matchIndicator) {
-            const newVal = newPass.value;
-            const confirmVal = confirmPass.value;
-            
-            if (confirmVal.length > 0) {
-                if (newVal === confirmVal) {
-                    matchIndicator.innerHTML = '<i class="fas fa-check-circle"></i> Las contraseñas coinciden';
-                    matchIndicator.className = 'password-match valid';
-                } else {
-                    matchIndicator.innerHTML = '<i class="fas fa-times-circle"></i> Las contraseñas no coinciden';
-                    matchIndicator.className = 'password-match invalid';
-                }
-            } else {
-                matchIndicator.innerHTML = '';
-            }
-        }
-    }
-
-    // Agregar event listeners
-    if (newPass) {
-        newPass.removeEventListener('input', actualizarFortaleza);
-        newPass.addEventListener('input', actualizarFortaleza);
-    }
-    
-    if (confirmPass) {
-        confirmPass.removeEventListener('input', verificarCoincidencia);
-        confirmPass.addEventListener('input', verificarCoincidencia);
-    }
-
-    function cambiarPagina(pagina) {
-        const urlParams = new URLSearchParams(window.location.search);
-        const orden = urlParams.get('orden') || 'desc';
-        window.location.href = 'mi_perfil.php?page=' + pagina + '&orden=' + orden;
-    }
-
-    function cambiarOrden() {
-        const urlParams = new URLSearchParams(window.location.search);
-        const pagina = urlParams.get('page') || 1;
-        const ordenActual = urlParams.get('orden') || 'desc';
-        const nuevoOrden = ordenActual === 'desc' ? 'asc' : 'desc';
-        window.location.href = 'mi_perfil.php?page=' + pagina + '&orden=' + nuevoOrden;
-    }
-
-    function cambiarFotoPerfil() {
-        Swal.fire({
-            title: 'Cambiar foto de perfil',
-            text: 'Selecciona una imagen para tu perfil (JPG, PNG, WEBP - máximo 10MB)',
-            input: 'file',
-            inputAttributes: {
-                'accept': 'image/jpeg,image/jpg,image/png,image/webp',
-                'aria-label': 'Selecciona tu foto'
-            },
-            showCancelButton: true,
-            confirmButtonText: 'Subir foto',
-            cancelButtonText: 'Cancelar',
-            confirmButtonColor: '#3b82f6',
-            cancelButtonColor: '#ef4444',
-            preConfirm: (file) => {
-                if (!file) {
-                    Swal.showValidationMessage('Selecciona una imagen');
-                    return false;
-                }
-                if (file.size > 10 * 1024 * 1024) {
-                    Swal.showValidationMessage('La imagen no puede superar los 10MB');
-                    return false;
-                }
-                const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
-                if (!validTypes.includes(file.type)) {
-                    Swal.showValidationMessage('Solo se permiten JPG, PNG o WEBP');
-                    return false;
-                }
-                return file;
-            }
-        }).then((result) => {
-            if (result.isConfirmed && result.value) {
-                const formData = new FormData();
-                formData.append('foto_perfil', result.value);
-                
-                Swal.fire({
-                    title: 'Subiendo foto...',
-                    allowOutsideClick: false,
-                    didOpen: () => Swal.showLoading()
-                });
-                
-                fetch('mi_perfil.php', {
-                    method: 'POST',
-                    body: formData
-                })
-                .then(response => response.text())
-                .then(() => {
-                    Swal.fire({
-                        icon: 'success',
-                        title: '¡Foto actualizada!',
-                        text: 'Tu foto de perfil ha sido actualizada',
-                        confirmButtonColor: '#3b82f6'
-                    }).then(() => {
-                        location.reload();
-                    });
-                })
-                .catch(() => {
-                    Swal.fire({
-                        icon: 'error',
-                        title: 'Error',
-                        text: 'No se pudo subir la imagen',
-                        confirmButtonColor: '#ef4444'
-                    });
-                });
-            }
+    function mostrarExito(message) {
+        return Swal.fire({
+            icon: 'success',
+            title: 'Listo',
+            text: message,
+            showConfirmButton: false,
+            timer: 1800,
+            timerProgressBar: true
         });
     }
 
-    function actualizarPerfil() {
-        const nombre = document.getElementById('nombre').value;
-        const email = document.getElementById('email').value;
-        
-        if (!nombre || !email) {
-            Swal.fire({
-                icon: 'error',
-                title: 'Campos incompletos',
-                text: 'Nombre y email son obligatorios',
-                confirmButtonColor: '#ef4444'
-            });
-            return;
-        }
-        
-        const emailRegex = /^[^\s@]+@([^\s@.,]+\.)+[^\s@.,]{2,}$/;
-        if (!emailRegex.test(email)) {
-            Swal.fire({
-                icon: 'error',
-                title: 'Email inválido',
-                text: 'Ingresa un correo electrónico válido',
-                confirmButtonColor: '#ef4444'
-            });
-            return;
-        }
-        
-        Swal.fire({
-            title: 'Actualizar perfil',
-            text: '¿Deseas guardar los cambios?',
-            icon: 'question',
-            showCancelButton: true,
-            confirmButtonText: 'Sí, guardar',
-            cancelButtonText: 'Cancelar',
-            confirmButtonColor: '#3b82f6',
-            cancelButtonColor: '#ef4444'
-        }).then((result) => {
-            if (result.isConfirmed) {
-                const formData = new FormData();
-                formData.append('action', 'update_profile');
-                formData.append('nombre', nombre);
-                formData.append('email', email);
-                
-                Swal.fire({
-                    title: 'Guardando...',
-                    allowOutsideClick: false,
-                    didOpen: () => Swal.showLoading()
-                });
-                
-                fetch('mi_perfil.php', {
-                    method: 'POST',
-                    body: formData
-                })
-                .then(response => response.text())
-                .then(() => {
-                    Swal.fire({
-                        icon: 'success',
-                        title: '¡Perfil actualizado!',
-                        text: 'Tus datos han sido guardados',
-                        confirmButtonColor: '#3b82f6'
-                    }).then(() => {
-                        location.reload();
-                    });
-                })
-                .catch(() => {
-                    Swal.fire({
-                        icon: 'error',
-                        title: 'Error',
-                        text: 'No se pudieron guardar los cambios',
-                        confirmButtonColor: '#ef4444'
-                    });
-                });
-            }
-        });
-    }
-
-    function cambiarPassword() {
-        const newPassValue = document.getElementById('new_password').value;
-        const confirmValue = document.getElementById('confirm_password').value;
-        
-        if (!newPassValue || !confirmValue) {
-            Swal.fire({
-                icon: 'error',
-                title: 'Campos incompletos',
-                text: 'Todos los campos son obligatorios',
-                confirmButtonColor: '#ef4444'
-            });
-            return;
-        }
-        
-        if (newPassValue !== confirmValue) {
-            Swal.fire({
-                icon: 'error',
-                title: 'Contraseñas no coinciden',
-                text: 'La nueva contraseña y su confirmación deben ser iguales',
-                confirmButtonColor: '#ef4444'
-            });
-            return;
-        }
-        
-        if (newPassValue.length < 6) {
-            Swal.fire({
-                icon: 'error',
-                title: 'Contraseña débil',
-                text: 'La contraseña debe tener al menos 6 caracteres',
-                confirmButtonColor: '#ef4444'
-            });
-            return;
-        }
-        
-        Swal.fire({
-            title: 'Cambiar contraseña',
-            text: '¿Estás seguro de que deseas cambiar tu contraseña?',
-            icon: 'question',
-            showCancelButton: true,
-            confirmButtonText: 'Sí, cambiar',
-            cancelButtonText: 'Cancelar',
-            confirmButtonColor: '#3b82f6',
-            cancelButtonColor: '#ef4444'
-        }).then((result) => {
-            if (result.isConfirmed) {
-                const formData = new FormData();
-                formData.append('action', 'update_password');
-                formData.append('new_password', newPassValue);
-                formData.append('confirm_password', confirmValue);
-                
-                Swal.fire({
-                    title: 'Actualizando...',
-                    allowOutsideClick: false,
-                    didOpen: () => Swal.showLoading()
-                });
-                
-                fetch('mi_perfil.php', {
-                    method: 'POST',
-                    body: formData
-                })
-                .then(response => response.text())
-                .then(() => {
-                    Swal.fire({
-                        icon: 'success',
-                        title: '¡Contraseña actualizada!',
-                        text: 'Tu contraseña ha sido cambiada exitosamente',
-                        confirmButtonColor: '#3b82f6'
-                    }).then(() => {
-                        document.getElementById('new_password').value = '';
-                        document.getElementById('confirm_password').value = '';
-                        if (matchIndicator) matchIndicator.innerHTML = '';
-                        // Resetear barra de fortaleza
-                        const strengthBar = document.getElementById('strength-bar');
-                        if (strengthBar) {
-                            strengthBar.className = 'password-strength-bar';
-                            strengthBar.style.width = '0%';
-                        }
-                        const hint = document.getElementById('password-hint');
-                        if (hint) hint.textContent = 'Mínimo 6 caracteres';
-                    });
-                })
-                .catch(() => {
-                    Swal.fire({
-                        icon: 'error',
-                        title: 'Error',
-                        text: 'No se pudo cambiar la contraseña',
-                        confirmButtonColor: '#ef4444'
-                    });
-                });
-            }
-        });
-    }
-
-    function exportarActividad() {
-        Swal.fire({
-            title: 'Exportar Actividad',
-            text: 'Selecciona el formato para exportar tu actividad',
-            icon: 'question',
-            showCancelButton: true,
-            showDenyButton: true,
-            confirmButtonText: 'PDF',
-            denyButtonText: 'CSV',
-            cancelButtonText: 'Cancelar',
-            confirmButtonColor: '#3b82f6',
-            denyButtonColor: '#10b981',
-            cancelButtonColor: '#ef4444'
-        }).then((result) => {
-            if (result.isConfirmed) {
-                window.open('exportar_actividad.php?format=pdf', '_blank');
-            } else if (result.isDenied) {
-                window.open('exportar_actividad.php?format=csv', '_blank');
-            }
-        });
-    }
-
-    function verSesiones() {
-        const ahora = new Date();
-        const fechaSesion = ahora.toLocaleString('es-MX');
-        const navegador = detectarNavegador();
-        const sistemaOperativo = navigator.platform;
-        
-        Swal.fire({
-            title: 'Información de Sesión',
-            html: `
-                <div style="text-align: left;">
-                    <div style="background: #f8fafc; padding: 12px; border-radius: 10px; margin-bottom: 15px;">
-                        <p><strong><i class="fas fa-laptop"></i> Sesión actual</strong></p>
-                        <p style="font-size: 0.85rem; color: #64748b;">Navegador: ${navegador}</p>
-                        <p style="font-size: 0.85rem; color: #64748b;">Sistema operativo: ${sistemaOperativo}</p>
-                        <p style="font-size: 0.85rem; color: #64748b;">Inicio de sesión: ${fechaSesion}</p>
-                    </div>
-                    <div style="background: #fef3c7; padding: 12px; border-radius: 10px;">
-                        <p><i class="fas fa-info-circle"></i> <strong>Consejo de seguridad</strong></p>
-                        <p style="font-size: 0.8rem; color: #92400e;">Para mayor seguridad, cierra sesión cuando termines de usar el sistema y no compartas tus credenciales.</p>
-                    </div>
-                </div>
-            `,
-            icon: 'info',
+    function mostrarError(message) {
+        return Swal.fire({
+            icon: 'error',
+            title: 'No se pudo guardar',
+            text: message,
             confirmButtonText: 'Entendido',
-            confirmButtonColor: '#3b82f6'
+            confirmButtonColor: '#1e3a8a'
         });
     }
+
+    function setButtonLoading(button, loading, loadingText = 'Guardando...') {
+        if (!button) return;
+
+        if (loading) {
+            button.dataset.originalHtml = button.innerHTML;
+            button.disabled = true;
+            button.innerHTML = `<i class="fas fa-circle-notch fa-spin"></i>${escapeHtml(loadingText)}`;
+        } else {
+            button.disabled = false;
+            button.innerHTML = button.dataset.originalHtml || button.innerHTML;
+        }
+    }
+
+    document.querySelectorAll('.settings-tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+            const target = tab.dataset.tab;
+
+            document.querySelectorAll('.settings-tab').forEach(item => {
+                const active = item === tab;
+                item.classList.toggle('active', active);
+                item.setAttribute('aria-selected', active ? 'true' : 'false');
+            });
+
+            document.querySelectorAll('.settings-panel').forEach(panel => {
+                const active = panel.dataset.panel === target;
+                panel.classList.toggle('active', active);
+                panel.hidden = !active;
+            });
+        });
+    });
+
+    document.querySelectorAll('.password-toggle').forEach(button => {
+        button.addEventListener('click', () => {
+            const input = document.getElementById(button.dataset.target);
+            const icon = button.querySelector('i');
+            const mostrar = input.type === 'password';
+
+            input.type = mostrar ? 'text' : 'password';
+            icon.classList.toggle('fa-eye', !mostrar);
+            icon.classList.toggle('fa-eye-slash', mostrar);
+            button.setAttribute('aria-label', mostrar ? 'Ocultar contraseña' : 'Mostrar contraseña');
+        });
+    });
+
+    const newPassword = document.getElementById('new_password');
+    const confirmPassword = document.getElementById('confirm_password');
+    const passwordMeterBar = document.getElementById('passwordMeterBar');
+    const passwordStatus = document.getElementById('passwordStatus');
+    const passwordStatusText = document.getElementById('passwordStatusText');
+
+    function actualizarEstadoPassword() {
+        const password = newPassword.value;
+        const confirm = confirmPassword.value;
+        let score = 0;
+
+        if (password.length >= 6) score++;
+        if (password.length >= 10) score++;
+        if (/[A-Z]/.test(password) && /[a-z]/.test(password)) score++;
+        if (/\d/.test(password)) score++;
+        if (/[^A-Za-z0-9]/.test(password)) score++;
+
+        const percentage = password.length === 0 ? 0 : Math.max(20, Math.min(100, score * 20));
+        passwordMeterBar.style.width = `${percentage}%`;
+
+        passwordStatus.classList.remove('weak', 'medium', 'strong', 'match-error', 'match-success');
+
+        if (password.length === 0) {
+            passwordStatusText.textContent = 'Mínimo 6 caracteres';
+            return;
+        }
+
+        if (confirm.length > 0 && password !== confirm) {
+            passwordStatus.classList.add('match-error');
+            passwordStatusText.textContent = 'Las contraseñas no coinciden';
+            return;
+        }
+
+        if (confirm.length > 0 && password === confirm) {
+            passwordStatus.classList.add('match-success');
+            passwordStatusText.textContent = 'Las contraseñas coinciden';
+            return;
+        }
+
+        if (score <= 1) {
+            passwordStatus.classList.add('weak');
+            passwordStatusText.textContent = 'Contraseña débil';
+        } else if (score <= 3) {
+            passwordStatus.classList.add('medium');
+            passwordStatusText.textContent = 'Contraseña aceptable';
+        } else {
+            passwordStatus.classList.add('strong');
+            passwordStatusText.textContent = 'Contraseña segura';
+        }
+    }
+
+    newPassword.addEventListener('input', actualizarEstadoPassword);
+    confirmPassword.addEventListener('input', actualizarEstadoPassword);
+
+    document.getElementById('profileForm').addEventListener('submit', async event => {
+        event.preventDefault();
+
+        const nombre = document.getElementById('nombre').value.trim();
+        const email = document.getElementById('email').value.trim();
+        const button = document.getElementById('btnGuardarPerfil');
+
+        if (!nombre || !email) {
+            await mostrarError('Completa el nombre y el correo electrónico.');
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append('action', 'update_profile');
+        formData.append('nombre', nombre);
+        formData.append('email', email);
+
+        try {
+            setButtonLoading(button, true);
+            const data = await enviarFormulario(formData);
+            document.getElementById('profile-name-display').textContent = data.nombre;
+            document.getElementById('profile-email-display').textContent = data.email;
+            await mostrarExito(data.message);
+        } catch (error) {
+            await mostrarError(error.message);
+        } finally {
+            setButtonLoading(button, false);
+        }
+    });
+
+    document.getElementById('passwordForm').addEventListener('submit', async event => {
+        event.preventDefault();
+
+        const password = newPassword.value;
+        const confirm = confirmPassword.value;
+        const button = document.getElementById('btnGuardarPassword');
+
+        if (password.length < 6) {
+            await mostrarError('La contraseña debe tener al menos 6 caracteres.');
+            return;
+        }
+
+        if (password !== confirm) {
+            await mostrarError('Las contraseñas no coinciden.');
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append('action', 'update_password');
+        formData.append('new_password', password);
+        formData.append('confirm_password', confirm);
+
+        try {
+            setButtonLoading(button, true, 'Actualizando...');
+            const data = await enviarFormulario(formData);
+            event.currentTarget.reset();
+            actualizarEstadoPassword();
+            await mostrarExito(data.message);
+        } catch (error) {
+            await mostrarError(error.message);
+        } finally {
+            setButtonLoading(button, false);
+        }
+    });
+
+    const fotoInput = document.getElementById('foto_input');
+    const avatarImage = document.getElementById('avatar-img');
+
+    function abrirSelectorFoto() {
+        fotoInput.value = '';
+        fotoInput.click();
+    }
+
+    document.getElementById('btnCambiarFoto').addEventListener('click', abrirSelectorFoto);
+    document.getElementById('btnCambiarFotoTexto').addEventListener('click', abrirSelectorFoto);
+
+    avatarImage.addEventListener('error', () => {
+        avatarImage.src = avatarImage.dataset.fallback;
+    });
+
+    fotoInput.addEventListener('change', async () => {
+        const file = fotoInput.files?.[0];
+        if (!file) return;
+
+        const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
+        if (!allowedTypes.includes(file.type)) {
+            await mostrarError('Solo se permiten imágenes JPG, PNG o WEBP.');
+            return;
+        }
+
+        if (file.size > 10 * 1024 * 1024) {
+            await mostrarError('La imagen no puede superar los 10 MB.');
+            return;
+        }
+
+        const photoButtons = [
+            document.getElementById('btnCambiarFoto'),
+            document.getElementById('btnCambiarFotoTexto')
+        ];
+        photoButtons.forEach(button => button.disabled = true);
+        document.querySelector('.profile-avatar-wrap').classList.add('uploading');
+
+        const formData = new FormData();
+        formData.append('action', 'update_photo');
+        formData.append('foto_perfil', file);
+
+        try {
+            const data = await enviarFormulario(formData);
+            avatarImage.src = `${data.avatar_url}?v=${Date.now()}`;
+            await mostrarExito(data.message);
+        } catch (error) {
+            await mostrarError(error.message);
+        } finally {
+            photoButtons.forEach(button => button.disabled = false);
+            document.querySelector('.profile-avatar-wrap').classList.remove('uploading');
+        }
+    });
     </script>
 </body>
 </html>

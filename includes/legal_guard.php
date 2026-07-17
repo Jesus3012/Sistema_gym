@@ -447,8 +447,8 @@ function legal_get_documents($config)
 
 <h2>11. Modificaciones</h2>
 <p>
-    Cuando exista un cambio material se incrementará la versión o cambiará
-    la huella del documento, y se solicitará una nueva aceptación.
+    Cuando exista un cambio material se incrementará la versión del
+    documento y se solicitará una nueva aceptación.
 </p>
 
 <div class="legal-document-note">
@@ -655,19 +655,19 @@ function legal_acceptance_is_current($acceptance, $documents)
         return false;
     }
 
+    /*
+     * La aceptación se invalida únicamente cuando cambia la versión
+     * oficial del aviso o de los términos.
+     *
+     * Los hashes siguen guardándose como evidencia del contenido
+     * aceptado, pero cambios normales en nombre, correo, teléfono,
+     * dirección o logo del gimnasio ya no obligan a aceptar de nuevo.
+     */
     return
         (string) ($acceptance['aviso_version'] ?? '')
-            === (string) $documents['aviso']['version']
+            === (string) ($documents['aviso']['version'] ?? '')
         && (string) ($acceptance['terminos_version'] ?? '')
-            === (string) $documents['terminos']['version']
-        && hash_equals(
-            (string) $documents['aviso']['hash'],
-            (string) ($acceptance['aviso_hash'] ?? '')
-        )
-        && hash_equals(
-            (string) $documents['terminos']['hash'],
-            (string) ($acceptance['terminos_hash'] ?? '')
-        );
+            === (string) ($documents['terminos']['version'] ?? '');
 }
 
 function legal_save_acceptance($db, $userId, $documents)

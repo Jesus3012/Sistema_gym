@@ -1191,3 +1191,23 @@ body {
         font-size: 1.4rem;
     }
 }
+
+/* Estados discretos para acciones fuera de plazo */
+.btn-cancelar-disabled {
+    border-color: #d9e1eb;
+    color: #8792a2;
+    background: #f2f4f7;
+}
+
+.btn-plazo-bloqueado {
+    cursor: help;
+    opacity: .78;
+}
+
+.btn-plazo-bloqueado:hover {
+    transform: none !important;
+    filter: none !important;
+    border-color: #c8d1dd;
+    color: #667085;
+    background: #eef1f5;
+}

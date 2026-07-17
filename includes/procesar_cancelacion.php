@@ -1,99 +1,307 @@
 <?php
 // Archivo: includes/procesar_cancelacion.php
-// Cancelar venta y devolver stock
+// Cancela una venta local y, cuando corresponde,
+// ejecuta primero el reembolso en Mercado Pago Point.
 
 session_start();
-header('Content-Type: application/json');
+header('Content-Type: application/json; charset=utf-8');
+
+function responderCancelacion(bool $success, string $message, array $extra = []): void
+{
+    echo json_encode(
+        array_merge([
+            'success' => $success,
+            'message' => $message,
+        ], $extra),
+        JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+    );
+    exit();
+}
 
 if (!isset($_SESSION['user_id'])) {
-    echo json_encode(['success' => false, 'message' => 'No autorizado']);
-    exit();
+    responderCancelacion(false, 'No autorizado');
 }
 
-// Permitir tanto admin como recepcionista
-if ($_SESSION['user_rol'] !== 'admin' && $_SESSION['user_rol'] !== 'recepcionista') {
-    echo json_encode(['success' => false, 'message' => 'No tienes permiso para cancelar ventas']);
-    exit();
+if (
+    !isset($_SESSION['user_rol']) ||
+    !in_array($_SESSION['user_rol'], ['admin', 'recepcionista'], true)
+) {
+    responderCancelacion(
+        false,
+        'No tienes permiso para cancelar ventas'
+    );
 }
 
-require_once '../config/database.php';
+require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/mercadopago_service.php';
+require_once __DIR__ . '/devoluciones_config.php';
 
 $database = new Database();
 $conn = $database->getConnection();
 
-$data = json_decode(file_get_contents('php://input'), true);
-$venta_id = isset($data['venta_id']) ? (int)$data['venta_id'] : 0;
-
-if (!$venta_id) {
-    echo json_encode(['success' => false, 'message' => 'ID de venta inválido']);
-    exit();
+if (!$conn instanceof mysqli) {
+    responderCancelacion(
+        false,
+        'No fue posible conectar con la base de datos'
+    );
 }
+
+$conn->set_charset('utf8mb4');
+
+$input = json_decode(file_get_contents('php://input'), true);
+
+if (!is_array($input)) {
+    responderCancelacion(false, 'La solicitud JSON no es válida');
+}
+
+$ventaId = isset($input['venta_id'])
+    ? (int) $input['venta_id']
+    : 0;
+
+if ($ventaId <= 0) {
+    responderCancelacion(false, 'ID de venta inválido');
+}
+
+$transaccionIniciada = false;
 
 try {
     $conn->begin_transaction();
-    
-    // Verificar que la venta existe y está completada
-    $query_check = "SELECT estado FROM ventas WHERE id = ?";
-    $stmt_check = $conn->prepare($query_check);
-    $stmt_check->bind_param("i", $venta_id);
-    $stmt_check->execute();
-    $venta = $stmt_check->get_result()->fetch_assoc();
-    
+    $transaccionIniciada = true;
+
+    /*
+     * Bloquear la venta para impedir dos cancelaciones simultáneas.
+     */
+    $stmtVenta = $conn->prepare(
+        "SELECT id, estado, metodo_pago, total
+         FROM ventas
+         WHERE id = ?
+         LIMIT 1
+         FOR UPDATE"
+    );
+
+    if (!$stmtVenta) {
+        throw new RuntimeException(
+            'No se pudo preparar la consulta de la venta: ' .
+            $conn->error
+        );
+    }
+
+    $stmtVenta->bind_param('i', $ventaId);
+    $stmtVenta->execute();
+    $venta = $stmtVenta->get_result()->fetch_assoc();
+    $stmtVenta->close();
+
     if (!$venta) {
-        throw new Exception("Venta no encontrada");
+        throw new RuntimeException('Venta no encontrada');
     }
-    
+
     if ($venta['estado'] === 'cancelada') {
-        throw new Exception("La venta ya está cancelada");
+        throw new RuntimeException('La venta ya está cancelada');
     }
-    
-    // Obtener detalles de la venta
-    $query_detalles = "SELECT producto_id, cantidad FROM detalle_ventas WHERE venta_id = ?";
-    $stmt = $conn->prepare($query_detalles);
-    $stmt->bind_param("i", $venta_id);
-    $stmt->execute();
-    $detalles = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
-    
+
+    if ($venta['estado'] !== 'completada') {
+        throw new RuntimeException(
+            'Solo se pueden cancelar ventas completadas'
+        );
+    }
+
+    $plazoOperacion = devoluciones_validar_plazo_venta(
+        $conn,
+        $ventaId,
+        'cancelacion'
+    );
+
+    $stmtDetalles = $conn->prepare(
+        "SELECT producto_id, cantidad
+         FROM detalle_ventas
+         WHERE venta_id = ?
+         FOR UPDATE"
+    );
+
+    if (!$stmtDetalles) {
+        throw new RuntimeException(
+            'No se pudo preparar la consulta de productos: ' .
+            $conn->error
+        );
+    }
+
+    $stmtDetalles->bind_param('i', $ventaId);
+    $stmtDetalles->execute();
+    $detalles = $stmtDetalles
+        ->get_result()
+        ->fetch_all(MYSQLI_ASSOC);
+    $stmtDetalles->close();
+
     if (empty($detalles)) {
-        throw new Exception("No se encontraron productos en esta venta");
+        throw new RuntimeException(
+            'No se encontraron productos en esta venta'
+        );
     }
-    
-    // Devolver stock
+
+    /*
+     * Para tarjeta ejecuta el reembolso real antes de cambiar la venta.
+     * Para efectivo o transferencia devuelve null.
+     *
+     * null significa reembolso total. Si ya hubo devoluciones parciales,
+     * el servicio debe devolver únicamente el saldo todavía disponible.
+     */
+    $reembolsoMp = mp_refund_sale_if_needed(
+        $conn,
+        $ventaId,
+        null
+    );
+
+    $stmtStock = $conn->prepare(
+        "UPDATE productos
+         SET stock = stock + ?
+         WHERE id = ?"
+    );
+
+    if (!$stmtStock) {
+        throw new RuntimeException(
+            'No se pudo preparar la devolución de stock: ' .
+            $conn->error
+        );
+    }
+
     foreach ($detalles as $detalle) {
-        $query_update = "UPDATE productos SET stock = stock + ? WHERE id = ?";
-        $stmt_update = $conn->prepare($query_update);
-        $stmt_update->bind_param("ii", $detalle['cantidad'], $detalle['producto_id']);
-        if (!$stmt_update->execute()) {
-            throw new Exception("Error al devolver stock del producto ID: " . $detalle['producto_id']);
+        $cantidad = (int) $detalle['cantidad'];
+        $productoId = (int) $detalle['producto_id'];
+
+        $stmtStock->bind_param(
+            'ii',
+            $cantidad,
+            $productoId
+        );
+
+        if (!$stmtStock->execute()) {
+            $error = $stmtStock->error;
+            $stmtStock->close();
+
+            throw new RuntimeException(
+                'Error al devolver stock del producto ID ' .
+                $productoId . ': ' . $error
+            );
         }
     }
-    
-    // Actualizar estado de la venta
-    $query_update_venta = "UPDATE ventas SET estado = 'cancelada' WHERE id = ?";
-    $stmt_update = $conn->prepare($query_update_venta);
-    $stmt_update->bind_param("i", $venta_id);
-    if (!$stmt_update->execute()) {
-        throw new Exception("Error al actualizar el estado de la venta");
+
+    $stmtStock->close();
+
+    $stmtActualizarVenta = $conn->prepare(
+        "UPDATE ventas
+         SET estado = 'cancelada'
+         WHERE id = ?"
+    );
+
+    if (!$stmtActualizarVenta) {
+        throw new RuntimeException(
+            'No se pudo preparar la cancelación de la venta: ' .
+            $conn->error
+        );
     }
-    
-    // Verificar si existe la tabla ventas_modificaciones
-    $check_table = $conn->query("SHOW TABLES LIKE 'ventas_modificaciones'");
-    if ($check_table->num_rows > 0) {
-        // Registrar modificación
-        $query_modificacion = "INSERT INTO ventas_modificaciones 
-                               (venta_id, usuario_id, tipo_modificacion, descripcion, fecha_modificacion) 
-                               VALUES (?, ?, 'cancelacion', 'Venta cancelada', NOW())";
-        $stmt_mod = $conn->prepare($query_modificacion);
-        $stmt_mod->bind_param("ii", $venta_id, $_SESSION['user_id']);
-        $stmt_mod->execute();
+
+    $stmtActualizarVenta->bind_param('i', $ventaId);
+
+    if (!$stmtActualizarVenta->execute()) {
+        $error = $stmtActualizarVenta->error;
+        $stmtActualizarVenta->close();
+
+        throw new RuntimeException(
+            'Error al actualizar el estado de la venta: ' . $error
+        );
     }
-    
+
+    $stmtActualizarVenta->close();
+
+    $tablaModificaciones = $conn->query(
+        "SHOW TABLES LIKE 'ventas_modificaciones'"
+    );
+
+    if (
+        $tablaModificaciones &&
+        $tablaModificaciones->num_rows > 0
+    ) {
+        $stmtModificacion = $conn->prepare(
+            "INSERT INTO ventas_modificaciones (
+                venta_id,
+                usuario_id,
+                tipo_modificacion,
+                descripcion,
+                monto_devuelto,
+                fecha_modificacion
+             ) VALUES (
+                ?,
+                ?,
+                'cancelacion',
+                ?,
+                ?,
+                NOW()
+             )"
+        );
+
+        if (!$stmtModificacion) {
+            throw new RuntimeException(
+                'No se pudo preparar el historial de cancelación: ' .
+                $conn->error
+            );
+        }
+
+        $usuarioId = (int) $_SESSION['user_id'];
+        $montoCancelado = round((float) $venta['total'], 2);
+        $descripcion = is_array($reembolsoMp)
+            ? 'Venta cancelada y reembolsada en Mercado Pago'
+            : 'Venta cancelada';
+
+        $stmtModificacion->bind_param(
+            'iisd',
+            $ventaId,
+            $usuarioId,
+            $descripcion,
+            $montoCancelado
+        );
+
+        if (!$stmtModificacion->execute()) {
+            $error = $stmtModificacion->error;
+            $stmtModificacion->close();
+
+            throw new RuntimeException(
+                'No se pudo registrar la cancelación: ' . $error
+            );
+        }
+
+        $stmtModificacion->close();
+    }
+
     $conn->commit();
-    
-    echo json_encode(['success' => true, 'message' => 'Venta cancelada correctamente']);
-    
-} catch (Exception $e) {
-    $conn->rollback();
-    echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+    $transaccionIniciada = false;
+
+    $mensaje = 'Venta cancelada correctamente';
+
+    if (is_array($reembolsoMp)) {
+        $mensaje .= ' y reembolsada en Mercado Pago';
+    }
+
+    responderCancelacion(true, $mensaje, [
+        'reembolso_mercadopago' => $reembolsoMp !== null,
+        'refund_id' => is_array($reembolsoMp)
+            ? ($reembolsoMp['refund_id'] ?? null)
+            : null,
+        'refund_status' => is_array($reembolsoMp)
+            ? ($reembolsoMp['refund_status'] ?? null)
+            : null,
+        'monto_reembolsado' => is_array($reembolsoMp)
+            ? ($reembolsoMp['amount'] ?? null)
+            : null,
+    ]);
+} catch (Throwable $error) {
+    if ($transaccionIniciada) {
+        $conn->rollback();
+    }
+
+    error_log(
+        'Error procesar_cancelacion venta ' .
+        $ventaId . ': ' . $error->getMessage()
+    );
+
+    responderCancelacion(false, $error->getMessage());
 }
-?>

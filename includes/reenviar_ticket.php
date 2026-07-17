@@ -48,9 +48,6 @@ if (!$conn) {
     exit();
 }
 
-/**
- * Consulta la configuración SMTP vigente en cada reenvío.
- */
 function obtenerConfiguracionCorreoSMTP(mysqli $conn): array
 {
     $result = $conn->query(
@@ -71,70 +68,253 @@ function obtenerConfiguracionCorreoSMTP(mysqli $conn): array
     );
 
     if (!$result || $result->num_rows === 0) {
-        throw new RuntimeException(
-            'No se encontró la configuración de correo con id = 1.'
-        );
+        throw new RuntimeException('No se encontró la configuración de correo con id = 1.');
     }
 
     $config = $result->fetch_assoc();
 
     if ((int) ($config['activo'] ?? 0) !== 1) {
-        throw new RuntimeException(
-            'El envío de correo está desactivado en Configuración.'
-        );
+        throw new RuntimeException('El envío de correo está desactivado en Configuración.');
     }
 
     $config['host'] = trim((string) ($config['host'] ?? ''));
     $config['puerto'] = (int) ($config['puerto'] ?? 0);
-    $config['smtp_auth'] =
-        (int) ($config['smtp_auth'] ?? 0) === 1;
-    $config['usuario'] =
-        trim((string) ($config['usuario'] ?? ''));
-    $config['password_smtp'] =
-        (string) ($config['password_smtp'] ?? '');
-    $config['remitente_email'] =
-        trim((string) ($config['remitente_email'] ?? ''));
-    $config['remitente_nombre'] =
-        trim((string) ($config['remitente_nombre'] ?? ''));
+    $config['smtp_auth'] = (int) ($config['smtp_auth'] ?? 0) === 1;
+    $config['usuario'] = trim((string) ($config['usuario'] ?? ''));
+    $config['password_smtp'] = (string) ($config['password_smtp'] ?? '');
+    $config['remitente_email'] = trim((string) ($config['remitente_email'] ?? ''));
+    $config['remitente_nombre'] = trim((string) ($config['remitente_nombre'] ?? ''));
 
     if ($config['host'] === '') {
         throw new RuntimeException('El host SMTP está vacío.');
     }
 
     if ($config['puerto'] < 1 || $config['puerto'] > 65535) {
-        throw new RuntimeException(
-            'El puerto SMTP configurado no es válido.'
-        );
+        throw new RuntimeException('El puerto SMTP configurado no es válido.');
     }
 
-    if (
-        $config['smtp_auth']
-        && (
-            $config['usuario'] === ''
-            || $config['password_smtp'] === ''
-        )
-    ) {
-        throw new RuntimeException(
-            'El usuario o la contraseña SMTP están incompletos.'
-        );
+    if ($config['smtp_auth'] && ($config['usuario'] === '' || $config['password_smtp'] === '')) {
+        throw new RuntimeException('El usuario o la contraseña SMTP están incompletos.');
     }
 
     if ($config['remitente_email'] === '') {
         $config['remitente_email'] = $config['usuario'];
     }
 
-    if (
-        !filter_var(
-            $config['remitente_email'],
-            FILTER_VALIDATE_EMAIL
-        )
-    ) {
-        throw new RuntimeException(
-            'El correo remitente configurado no es válido.'
-        );
+    if (!filter_var($config['remitente_email'], FILTER_VALIDATE_EMAIL)) {
+        throw new RuntimeException('El correo remitente configurado no es válido.');
     }
 
     return $config;
+}
+
+function getLogoUrlAbsoluta($ruta_relativa): string
+{
+    if (empty($ruta_relativa)) {
+        return '';
+    }
+
+    $protocol = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https://' : 'http://';
+    $host = $_SERVER['HTTP_HOST'] ?? '';
+    if ($host === '') {
+        return '';
+    }
+
+    return $protocol . $host . '/' . ltrim((string) $ruta_relativa, '/');
+}
+
+function resolverRutaLogoLocal($ruta_relativa): string
+{
+    if (empty($ruta_relativa)) {
+        return '';
+    }
+
+    $ruta_relativa = ltrim((string) $ruta_relativa, '/');
+    $candidatas = [
+        dirname(__DIR__) . '/' . $ruta_relativa,
+        __DIR__ . '/../' . $ruta_relativa,
+        dirname(__DIR__, 2) . '/' . $ruta_relativa,
+    ];
+
+    foreach ($candidatas as $ruta) {
+        if (is_file($ruta)) {
+            return $ruta;
+        }
+    }
+
+    return '';
+}
+
+function formatearFechaTicket(?string $fecha): string
+{
+    if (empty($fecha)) {
+        return date('d/m/Y, h:i a');
+    }
+
+    $timestamp = strtotime($fecha);
+    if (!$timestamp) {
+        return (string) $fecha;
+    }
+
+    $formateada = date('d/m/Y, h:i a', $timestamp);
+    return str_replace(['am', 'pm'], ['a.m.', 'p.m.'], $formateada);
+}
+
+function metodoPagoBonito(array $venta): string
+{
+    $metodo = strtolower(trim((string) ($venta['metodo_pago'] ?? '')));
+    $tipoTarjeta = strtolower(trim((string) ($venta['tipo_tarjeta'] ?? '')));
+
+    if ($metodo === 'tarjeta') {
+        if ($tipoTarjeta === 'credito') {
+            return 'Tarjeta de crédito';
+        }
+        if ($tipoTarjeta === 'debito') {
+            return 'Tarjeta de débito';
+        }
+        return 'Tarjeta';
+    }
+
+    if ($metodo === 'transferencia') {
+        return 'Transferencia';
+    }
+
+    if ($metodo === 'efectivo') {
+        return 'Efectivo';
+    }
+
+    return ucfirst($metodo !== '' ? $metodo : 'Efectivo');
+}
+
+function pdfLineaPunteada(FPDF $pdf): void
+{
+    $pdf->SetFont('Courier', '', 8);
+    $pdf->Cell(0, 3, str_repeat('.', 62), 0, 1, 'C');
+}
+
+function pdfCampo(FPDF $pdf, string $label, string $value): void
+{
+    $pdf->SetFont('Courier', '', 10);
+    $pdf->Cell(34, 5.5, utf8_decode($label . ':'), 0, 0, 'L');
+    $pdf->Cell(0, 5.5, utf8_decode($value), 0, 1, 'R');
+}
+
+function generarPDFTicketVenta(
+    int $venta_id,
+    array $detalles,
+    array $venta,
+    string $gym_nombre,
+    string $gym_logo,
+    string $gym_telefono = '',
+    string $gym_email = '',
+    string $gym_direccion = ''
+): string {
+    $pdf = new FPDF('P', 'mm', [80, 210]);
+    $pdf->SetAutoPageBreak(true, 8);
+    $pdf->SetMargins(6, 6, 6);
+    $pdf->AddPage();
+
+    $logoPath = resolverRutaLogoLocal($gym_logo);
+    if ($logoPath !== '') {
+        try {
+            $pdf->Image($logoPath, 30, 8, 20);
+            $pdf->Ln(20);
+        } catch (Throwable $e) {
+            $pdf->Ln(5);
+        }
+    } else {
+        $pdf->Ln(5);
+    }
+
+    $pdf->SetFont('Arial', 'B', 10);
+    $pdf->Cell(0, 6, utf8_decode($gym_nombre), 0, 1, 'C');
+
+    if ($gym_email !== '') {
+        $pdf->SetFont('Arial', '', 7.5);
+        $pdf->Cell(0, 4, utf8_decode($gym_email), 0, 1, 'C');
+    }
+    if ($gym_direccion !== '') {
+        $pdf->SetFont('Arial', '', 7);
+        $pdf->MultiCell(0, 3.6, utf8_decode($gym_direccion), 0, 'C');
+    }
+
+    $pdf->Ln(2);
+    $pdf->SetFont('Courier', '', 10);
+    $pdf->Cell(0, 5, utf8_decode('Ticket de venta #' . str_pad((string) $venta_id, 8, '0', STR_PAD_LEFT)), 0, 1, 'C');
+    $pdf->Cell(0, 5, utf8_decode(formatearFechaTicket($venta['fecha_venta'] ?? null)), 0, 1, 'C');
+    $pdf->Ln(1);
+
+    pdfLineaPunteada($pdf);
+    $pdf->Ln(1);
+
+    foreach ($detalles as $detalle) {
+        $nombreProducto = trim((string) ($detalle['producto_nombre'] ?? 'Producto'));
+        $cantidad = (float) ($detalle['cantidad'] ?? 0);
+        $precioUnitario = (float) ($detalle['precio_unitario'] ?? 0);
+        $subtotal = (float) ($detalle['subtotal'] ?? 0);
+
+        $cantidadTexto = (floor($cantidad) == $cantidad) ? (string) (int) $cantidad : number_format($cantidad, 2);
+
+        $pdf->SetFont('Courier', 'B', 12);
+        $pdf->Cell(48, 6, utf8_decode($nombreProducto . ' x' . $cantidadTexto), 0, 0, 'L');
+        $pdf->Cell(20, 6, '$' . number_format($subtotal, 2), 0, 1, 'R');
+
+        $pdf->SetFont('Courier', '', 9);
+        $pdf->Cell(0, 4.5, '$' . number_format($precioUnitario, 2) . ' por unidad', 0, 1, 'L');
+        $pdf->Ln(1.5);
+    }
+
+    pdfLineaPunteada($pdf);
+    $pdf->Ln(2);
+
+    $pdf->SetFont('Courier', 'B', 13);
+    $pdf->Cell(35, 7, 'TOTAL', 0, 0, 'L');
+    $pdf->Cell(0, 7, '$' . number_format((float) ($venta['total'] ?? 0), 2), 0, 1, 'R');
+    $pdf->Ln(1);
+
+    pdfCampo($pdf, 'Método', metodoPagoBonito($venta));
+
+    if (isset($venta['monto_recibido']) && $venta['monto_recibido'] !== null && $venta['monto_recibido'] !== '') {
+        $montoRecibido = (float) $venta['monto_recibido'];
+        $pdfCampoRecibido = '$' . number_format($montoRecibido, 2);
+        pdfCampo($pdf, 'Recibido', $pdfCampoRecibido);
+
+        $cambio = $montoRecibido - (float) ($venta['total'] ?? 0);
+        if ($cambio < 0) {
+            $cambio = 0;
+        }
+        pdfCampo($pdf, 'Cambio', '$' . number_format($cambio, 2));
+    }
+
+    $estadoVenta = trim((string) ($venta['estado'] ?? ''));
+    if ($estadoVenta === '') {
+        $estadoVenta = 'Completada';
+    } else {
+        $estadoVenta = ucfirst($estadoVenta);
+    }
+    pdfCampo($pdf, 'Estado', $estadoVenta);
+
+    $pdf->Ln(1);
+    pdfLineaPunteada($pdf);
+    $pdf->Ln(2);
+
+    if (!empty(trim((string) ($venta['cliente_nombre'] ?? '')))) {
+        $pdf->SetFont('Courier', '', 9.5);
+        $pdf->MultiCell(0, 4.8, utf8_decode('Cliente: ' . trim((string) $venta['cliente_nombre'])), 0, 'L');
+    }
+
+    if (!empty(trim((string) ($venta['usuario_nombre'] ?? '')))) {
+        $pdf->SetFont('Courier', '', 9.5);
+        $pdf->MultiCell(0, 4.8, utf8_decode('Atendió: ' . trim((string) $venta['usuario_nombre'])), 0, 'L');
+    }
+
+    $pdf->Ln(6);
+    $pdf->SetFont('Courier', '', 12);
+    $pdf->Cell(0, 6, utf8_decode('Gracias por tu compra'), 0, 1, 'C');
+    $pdf->SetFont('Courier', '', 8.5);
+    $pdf->MultiCell(0, 4.2, utf8_decode('Conserva este ticket para cualquier aclaración.'), 0, 'C');
+
+    return $pdf->Output('S');
 }
 
 // Obtener datos de la venta
@@ -155,7 +335,6 @@ if (!$venta) {
     exit();
 }
 
-// Obtener detalles
 $query_detalles = "SELECT dv.*, p.nombre as producto_nombre 
                    FROM detalle_ventas dv
                    LEFT JOIN productos p ON dv.producto_id = p.id
@@ -165,83 +344,28 @@ $stmt->bind_param("i", $venta_id);
 $stmt->execute();
 $detalles = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
 
-// Obtener configuración del gimnasio
 $query_config = "SELECT nombre, logo, telefono, email, direccion FROM configuracion_gimnasio WHERE id = 1";
 $result_config = $conn->query($query_config);
-$config = $result_config->fetch_assoc();
+$config = $result_config ? $result_config->fetch_assoc() : [];
 $gym_nombre = $config['nombre'] ?? 'EGO GYM';
 $gym_logo = $config['logo'] ?? '';
 $gym_email = $config['email'] ?? 'egogym@gmail.com';
 $gym_telefono = $config['telefono'] ?? '';
 $gym_direccion = $config['direccion'] ?? '';
 
-// Función para obtener URL absoluta del logo
-function getLogoUrlAbsoluta($ruta_relativa) {
-    if (empty($ruta_relativa)) {
-        return '';
-    }
-    $protocol = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 'https://' : 'http://';
-    $host = $_SERVER['HTTP_HOST'];
-    $base_url = $protocol . $host . '/';
-    $ruta_limpia = ltrim($ruta_relativa, '/');
-    return $base_url . $ruta_limpia;
-}
-
-// Generar PDF del ticket
-function generarPDFTicketVenta($venta_id, $detalles, $venta, $gym_nombre, $gym_logo) {
-    $pdf = new FPDF('P', 'mm', array(80, 200));
-    $pdf->AddPage();
-    $pdf->SetFont('Courier', '', 10);
-
-    // Logo
-    if (!empty($gym_logo) && file_exists('../' . $gym_logo)) {
-        $pdf->Image('../' . $gym_logo, 25, 5, 30);
-        $pdf->Ln(30);
-    } else {
-        $pdf->Ln(10);
-    }
-
-    // Encabezado
-    $pdf->SetFont('Courier', 'B', 12);
-    $pdf->Cell(0, 6, utf8_decode($gym_nombre), 0, 1, 'C');
-    $pdf->SetFont('Courier', '', 9);
-    $pdf->Cell(0, 5, 'Ticket de Venta #' . $venta_id, 0, 1, 'C');
-    $pdf->Cell(0, 5, date('d/m/Y H:i:s', strtotime($venta['fecha_venta'])), 0, 1, 'C');
-    $pdf->Ln(3);
-    $pdf->Line(5, $pdf->GetY(), 75, $pdf->GetY());
-    $pdf->Ln(3);
-
-    // Productos
-    foreach ($detalles as $detalle) {
-        $pdf->SetFont('Courier', 'B', 10);
-        $pdf->Cell(0, 5, utf8_decode($detalle['producto_nombre']) . ' x' . $detalle['cantidad'], 0, 1, 'L');
-        $pdf->SetFont('Courier', '', 10);
-        $pdf->Cell(65, 5, '', 0, 0);
-        $pdf->Cell(0, 5, '$' . number_format($detalle['subtotal'], 2), 0, 1, 'R');
-        $pdf->Ln(2);
-    }
-
-    $pdf->Line(5, $pdf->GetY(), 75, $pdf->GetY());
-    $pdf->Ln(3);
-    
-    // Total
-    $pdf->SetFont('Courier', 'B', 11);
-    $pdf->Cell(50, 7, 'TOTAL', 0, 0, 'L');
-    $pdf->Cell(0, 7, '$' . number_format($venta['total'], 2), 0, 1, 'R');
-
-    $pdf->SetY(-15);
-    $pdf->SetFont('Courier', 'I', 8);
-    $pdf->Cell(0, 5, 'Gracias por su compra', 0, 1, 'C');
-
-    return $pdf->Output('S');
-}
-
-$pdf_content = generarPDFTicketVenta($venta_id, $detalles, $venta, $gym_nombre, $gym_logo);
+$pdf_content = generarPDFTicketVenta(
+    $venta_id,
+    $detalles,
+    $venta,
+    $gym_nombre,
+    $gym_logo,
+    $gym_telefono,
+    $gym_email,
+    $gym_direccion
+);
 $logo_url_absoluta = getLogoUrlAbsoluta($gym_logo);
 
-// Generar HTML del email
-$asunto = "Ticket de Venta #$venta_id - " . htmlspecialchars($gym_nombre);
-
+$asunto = 'Ticket de Venta #' . str_pad((string) $venta_id, 8, '0', STR_PAD_LEFT) . ' - ' . htmlspecialchars($gym_nombre);
 $cuerpo_html = '
 <!DOCTYPE html>
 <html>
@@ -249,143 +373,48 @@ $cuerpo_html = '
     <meta charset="UTF-8">
     <title>Ticket de Venta - ' . htmlspecialchars($gym_nombre) . '</title>
     <style>
-        body {
-            font-family: "Segoe UI", Arial, sans-serif;
-            background-color: #f0f2f5;
-            margin: 0;
-            padding: 20px;
-        }
-        .container {
-            max-width: 600px;
-            margin: 0 auto;
-            background: white;
-            border-radius: 12px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-            overflow: hidden;
-        }
-        .header {
-            background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%);
-            color: white;
-            padding: 25px;
-            text-align: center;
-        }
-        .logo {
-            max-width: 80px;
-            max-height: 80px;
-            margin-bottom: 15px;
-            border-radius: 50%;
-            background: white;
-            padding: 8px;
-            object-fit: contain;
-        }
-        .header h1 {
-            margin: 0;
-            font-size: 24px;
-        }
-        .content {
-            padding: 30px;
-        }
-        .greeting {
-            font-size: 18px;
-            color: #1e3a8a;
-            margin-bottom: 15px;
-        }
-        .message {
-            color: #555;
-            line-height: 1.6;
-            margin-bottom: 25px;
-        }
-        .ticket-info {
-            background: #f8fafc;
-            border-radius: 10px;
-            padding: 20px;
-            margin: 20px 0;
-            border-left: 4px solid #1e3a8a;
-        }
-        .info-row {
-            display: flex;
-            justify-content: space-between;
-            padding: 10px 0;
-            border-bottom: 1px solid #e2e8f0;
-        }
-        .info-row:last-child {
-            border-bottom: none;
-        }
-        .label {
-            font-weight: 600;
-            color: #475569;
-        }
-        .value {
-            color: #1e293b;
-            font-weight: 500;
-        }
-        .total {
-            background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%);
-            color: white;
-            padding: 20px;
-            border-radius: 10px;
-            text-align: center;
-            margin: 20px 0;
-        }
-        .total .amount {
-            font-size: 32px;
-            font-weight: bold;
-        }
-        .footer {
-            background: #f8fafc;
-            padding: 20px;
-            text-align: center;
-            font-size: 12px;
-            color: #64748b;
-        }
+        body{font-family:Segoe UI,Arial,sans-serif;background:#f1f5f9;margin:0;padding:24px;color:#334155}
+        .container{max-width:620px;margin:0 auto;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 10px 30px rgba(15,23,42,.08)}
+        .header{padding:28px 24px 20px;text-align:center;background:linear-gradient(180deg,#ffffff 0%,#f8fafc 100%);border-bottom:1px solid #e2e8f0}
+        .logo{max-width:74px;max-height:74px;object-fit:contain;margin-bottom:12px}
+        .title{font-size:26px;font-weight:800;color:#1e293b;margin:0 0 6px}
+        .subtitle{font-size:14px;color:#64748b;margin:0}
+        .content{padding:24px}
+        .hello{font-size:18px;font-weight:700;color:#1e3a8a;margin-bottom:10px}
+        .text{font-size:14px;line-height:1.65;color:#475569;margin-bottom:18px}
+        .info{background:#f8fafc;border:1px solid #e2e8f0;border-radius:14px;padding:16px 18px;margin:20px 0}
+        .row{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid #e2e8f0}
+        .row:last-child{border-bottom:none}
+        .label{font-weight:700;color:#64748b}.value{font-weight:700;color:#1e293b;text-align:right}
+        .total{background:#1e3a8a;color:#fff;border-radius:14px;padding:18px;text-align:center;margin:20px 0}
+        .total small{display:block;opacity:.9;margin-bottom:6px}.amount{font-size:32px;font-weight:800}
+        .note{margin-top:20px;background:#eff6ff;border:1px solid #bfdbfe;color:#1d4ed8;border-radius:12px;padding:14px 16px;font-size:13px}
+        .footer{padding:18px 24px;background:#f8fafc;text-align:center;font-size:12px;color:#64748b}
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            ' . ($logo_url_absoluta ? '<img src="' . $logo_url_absoluta . '" alt="Logo" class="logo">' : '<div style="width:80px;height:80px;margin:0 auto 15px;background:rgba(255,255,255,0.2);border-radius:50%;display:flex;align-items:center;justify-content:center;"><span style="font-size:40px;">🏋️</span></div>') . '
-            <h1>' . htmlspecialchars($gym_nombre) . '</h1>
+            ' . ($logo_url_absoluta ? '<img src="' . $logo_url_absoluta . '" alt="Logo" class="logo">' : '') . '
+            <h1 class="title">' . htmlspecialchars($gym_nombre) . '</h1>
+            <p class="subtitle">Te compartimos el ticket de tu compra.</p>
         </div>
         <div class="content">
-            <div class="greeting">Hola, ' . htmlspecialchars($venta['cliente_nombre'] ?? 'Cliente') . '!</div>
-            <div class="message">
-                Adjunto encontrarás el ticket de tu compra realizada el día ' . date('d/m/Y H:i:s', strtotime($venta['fecha_venta'])) . '.
+            <div class="hello">Hola, ' . htmlspecialchars(trim((string) ($venta['cliente_nombre'] ?? 'Cliente')) ?: 'Cliente') . '.</div>
+            <div class="text">Adjunto encontrarás el ticket en PDF de tu compra realizada el ' . htmlspecialchars(formatearFechaTicket($venta['fecha_venta'] ?? null)) . '.</div>
+            <div class="info">
+                <div class="row"><span class="label">Ticket</span><span class="value">#' . str_pad((string) $venta_id, 8, '0', STR_PAD_LEFT) . '</span></div>
+                <div class="row"><span class="label">Fecha</span><span class="value">' . htmlspecialchars(formatearFechaTicket($venta['fecha_venta'] ?? null)) . '</span></div>
+                <div class="row"><span class="label">Método de pago</span><span class="value">' . htmlspecialchars(metodoPagoBonito($venta)) . '</span></div>
             </div>
-            
-            <div class="ticket-info">
-                <div class="info-row">
-                    <span class="label">Ticket #:</span>
-                    <span class="value">' . str_pad($venta_id, 8, '0', STR_PAD_LEFT) . '</span>
-                </div>
-                <div class="info-row">
-                    <span class="label">Fecha:</span>
-                    <span class="value">' . date('d/m/Y H:i:s', strtotime($venta['fecha_venta'])) . '</span>
-                </div>
-                <div class="info-row">
-                    <span class="label">Método de pago:</span>
-                    <span class="value">' . ucfirst($venta['metodo_pago']) . '</span>
-                </div>
-            </div>
-            
-            <div class="total">
-                <div>TOTAL PAGADO</div>
-                <div class="amount">$ ' . number_format($venta['total'], 2) . '</div>
-            </div>
-            
-            <div style="text-align: center; margin-top: 20px;">
-                <p style="font-size: 13px; color: #666;">
-                    <strong>Adjunto a este correo encontrarás tu ticket en formato PDF.</strong>
-                </p>
-            </div>
+            <div class="total"><small>Total pagado</small><div class="amount">$ ' . number_format((float) ($venta['total'] ?? 0), 2) . '</div></div>
+            <div class="note"><strong>Importante:</strong> en este correo se adjunta tu ticket en formato PDF para que puedas guardarlo o imprimirlo cuando lo necesites.</div>
         </div>
-        <div class="footer">
-            <p>&copy; ' . date('Y') . ' ' . htmlspecialchars($gym_nombre) . ' - Todos los derechos reservados</p>
-        </div>
+        <div class="footer">&copy; ' . date('Y') . ' ' . htmlspecialchars($gym_nombre) . '</div>
     </div>
 </body>
 </html>';
 
-// Enviar correo usando configuracion_correo, registro id = 1.
 $mail = null;
 
 try {
@@ -404,10 +433,7 @@ try {
         $mail->Password = (string) $configCorreo['password_smtp'];
     }
 
-    $cifrado = strtolower(
-        trim((string) ($configCorreo['cifrado'] ?? ''))
-    );
-
+    $cifrado = strtolower(trim((string) ($configCorreo['cifrado'] ?? '')));
     if (in_array($cifrado, ['ssl', 'smtps'], true)) {
         $mail->SMTPSecure = PHPMailer::ENCRYPTION_SMTPS;
     } elseif (in_array($cifrado, ['tls', 'starttls'], true)) {
@@ -417,9 +443,7 @@ try {
         $mail->SMTPAutoTLS = false;
     }
 
-    $verificarSsl =
-        (int) ($configCorreo['verificar_ssl'] ?? 0) === 1;
-
+    $verificarSsl = (int) ($configCorreo['verificar_ssl'] ?? 0) === 1;
     $mail->SMTPOptions = [
         'ssl' => [
             'verify_peer' => $verificarSsl,
@@ -428,71 +452,36 @@ try {
         ]
     ];
 
-    $nombreRemitente = trim(
-        (string) ($configCorreo['remitente_nombre'] ?? '')
-    );
-
+    $nombreRemitente = trim((string) ($configCorreo['remitente_nombre'] ?? ''));
     if ($nombreRemitente === '') {
         $nombreRemitente = $gym_nombre;
     }
 
-    $mail->setFrom(
-        (string) $configCorreo['remitente_email'],
-        $nombreRemitente
-    );
-
-    $mail->addAddress(
-        $email,
-        trim((string) ($venta['cliente_nombre'] ?? '')) ?: 'Cliente'
-    );
-
-    $mail->addStringAttachment(
-        $pdf_content,
-        'ticket_venta_' . $venta_id . '.pdf',
-        'base64',
-        'application/pdf'
-    );
-
+    $mail->setFrom((string) $configCorreo['remitente_email'], $nombreRemitente);
+    $mail->addAddress($email, trim((string) ($venta['cliente_nombre'] ?? '')) ?: 'Cliente');
+    $mail->addStringAttachment($pdf_content, 'ticket_venta_' . $venta_id . '.pdf', 'base64', 'application/pdf');
     $mail->isHTML(true);
     $mail->Subject = $asunto;
     $mail->Body = $cuerpo_html;
-    $mail->AltBody = html_entity_decode(
-        strip_tags($cuerpo_html),
-        ENT_QUOTES | ENT_HTML5,
-        'UTF-8'
-    );
-
+    $mail->AltBody = html_entity_decode(strip_tags($cuerpo_html), ENT_QUOTES | ENT_HTML5, 'UTF-8');
     $mail->send();
 
     echo json_encode([
         'success' => true,
         'message' => 'Ticket enviado correctamente a ' . $email
     ], JSON_UNESCAPED_UNICODE);
-
 } catch (Throwable $e) {
     $detalle = trim((string) $e->getMessage());
-
-    if (
-        $mail instanceof PHPMailer
-        && trim((string) $mail->ErrorInfo) !== ''
-    ) {
+    if ($mail instanceof PHPMailer && trim((string) $mail->ErrorInfo) !== '') {
         $detalle = trim((string) $mail->ErrorInfo);
     }
 
-    error_log(
-        'Error al reenviar ticket #' .
-        $venta_id .
-        ': ' .
-        $detalle
-    );
+    error_log('Error al reenviar ticket #' . $venta_id . ': ' . $detalle);
 
     echo json_encode([
         'success' => false,
-        'message' => $detalle !== ''
-            ? 'No fue posible enviar el ticket: ' . $detalle
-            : 'No fue posible enviar el ticket.'
+        'message' => $detalle !== '' ? 'No fue posible enviar el ticket: ' . $detalle : 'No fue posible enviar el ticket.'
     ], JSON_UNESCAPED_UNICODE);
-
 } finally {
     if ($mail instanceof PHPMailer) {
         try {
@@ -501,5 +490,4 @@ try {
         }
     }
 }
-
 ?>

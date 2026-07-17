@@ -200,6 +200,8 @@ if ($sidebar_legal_activo) {
     $active_module = 'legal_acceptances';
 } elseif ($current_page === 'dashboard.php') {
     $active_module = 'dashboard';
+} elseif ($current_page === 'inventario.php') {
+    $active_module = 'inventory_overview';
 } elseif ($current_page === 'productos.php') {
     $active_module = 'products';
 } elseif ($current_page === 'ventas.php') {
@@ -394,6 +396,11 @@ if (
     $puede_ventas = $sidebar_puede('ventas');
     $puede_historial_ventas = $sidebar_puede('historial_ventas');
     $puede_corte_caja = $sidebar_puede('corte_caja');
+    $puede_inventario_resumen = in_array(
+        $user_rol,
+        ['admin', 'administrador'],
+        true
+    );
     $puede_productos = $sidebar_puede('productos');
     $puede_historial_stock = $sidebar_puede('historial_stock');
     $puede_clases = $sidebar_puede('clases');
@@ -406,14 +413,20 @@ if (
 
     $mostrar_grupo_socios = $puede_inscripciones || $puede_asistencias;
     $mostrar_grupo_ventas = $puede_ventas || $puede_historial_ventas || $puede_corte_caja;
-    $mostrar_grupo_inventario = $puede_productos || $puede_historial_stock;
+    $mostrar_grupo_inventario = $puede_inventario_resumen
+        || $puede_productos
+        || $puede_historial_stock;
     $mostrar_grupo_clases = $puede_clases || $puede_inscripciones_clases;
     $mostrar_grupo_admin = $puede_reportes
         || $puede_notificaciones
         || $puede_solicitudes
         || $puede_configuracion;
 
-    $grupo_inventario_activo = in_array($active_module, ['products', 'historial'], true);
+    $grupo_inventario_activo = in_array(
+        $active_module,
+        ['inventory_overview', 'products', 'historial'],
+        true
+    );
     $grupo_ventas_activo = in_array($active_module, ['ventas', 'historial_ventas', 'corte_caja'], true);
     $grupo_socios_activo = in_array($active_module, ['inscriptions', 'assistance'], true);
     $grupo_clases_activo = in_array($active_module, ['classes', 'clases_inscriptions'], true);
@@ -512,6 +525,17 @@ if (
                                 <a href="productos.php" class="nav-link <?php echo $active_module === 'products' ? 'active' : ''; ?>">
                                     <i class="fas fa-box"></i>
                                     <span class="nav-text">Productos</span>
+                                </a>
+                            </li>
+                        <?php endif; ?>
+                        <?php if ($puede_inventario_resumen): ?>
+                            <li>
+                                <a
+                                    href="inventario.php"
+                                    class="nav-link <?php echo $active_module === 'inventory_overview' ? 'active' : ''; ?>"
+                                >
+                                    <i class="fas fa-boxes-stacked"></i>
+                                    <span class="nav-text">Inventario</span>
                                 </a>
                             </li>
                         <?php endif; ?>
@@ -2473,81 +2497,107 @@ document.addEventListener('DOMContentLoaded', function () {
     const sidebar = document.getElementById('sidebar');
     if (!sidebar) return;
 
-    const groups = Array.from(sidebar.querySelectorAll('.nav-group'));
-    const toggles = Array.from(sidebar.querySelectorAll('.nav-group-toggle'));
+    const groups = Array.from(
+        sidebar.querySelectorAll('.nav-group')
+    );
+
+    const toggles = Array.from(
+        sidebar.querySelectorAll('.nav-group-toggle')
+    );
 
     function setGroupState(group, open) {
-        const toggle = group.querySelector(':scope > .nav-group-toggle');
+        const toggle = group.querySelector(
+            ':scope > .nav-group-toggle'
+        );
+
         group.classList.toggle('open', open);
 
         if (toggle) {
-            toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+            toggle.setAttribute(
+                'aria-expanded',
+                open ? 'true' : 'false'
+            );
         }
     }
 
-    function closeOtherGroups(currentGroup) {
+    function closeAllGroups(exceptGroup = null) {
         groups.forEach(function (group) {
-            if (group !== currentGroup) {
+            if (group !== exceptGroup) {
                 setGroupState(group, false);
             }
         });
+    }
+
+    /*
+     * El grupo abierto depende únicamente de la página actual.
+     * No se conserva en localStorage porque eso provocaba que,
+     * por ejemplo, Inventario siguiera desplegado en el dashboard.
+     */
+    try {
+        localStorage.removeItem('sidebarOpenGroup');
+    } catch (error) {
+        // El acordeón funciona aunque localStorage esté bloqueado.
     }
 
     toggles.forEach(function (toggle) {
         const group = toggle.closest('.nav-group');
         const label = toggle.querySelector('.nav-group-label');
 
+        if (!group) return;
+
         if (label) {
-            toggle.setAttribute('aria-label', label.textContent.trim());
-            toggle.setAttribute('title', label.textContent.trim());
+            const groupName = label.textContent.trim();
+            toggle.setAttribute('aria-label', groupName);
+            toggle.setAttribute('title', groupName);
         }
 
         toggle.addEventListener('click', function () {
             const willOpen = !group.classList.contains('open');
 
-            if (willOpen) {
-                closeOtherGroups(group);
-            }
-
+            closeAllGroups(willOpen ? group : null);
             setGroupState(group, willOpen);
-
-            try {
-                if (willOpen) {
-                    localStorage.setItem('sidebarOpenGroup', group.dataset.group || '');
-                } else {
-                    localStorage.removeItem('sidebarOpenGroup');
-                }
-            } catch (error) {
-                // El menú funciona aunque localStorage esté bloqueado.
-            }
         });
     });
 
-    const activeGroup = sidebar.querySelector('.nav-group .nav-link.active')?.closest('.nav-group');
+    const activeGroup = sidebar
+        .querySelector('.nav-group .nav-link.active')
+        ?.closest('.nav-group');
 
     if (activeGroup) {
-        closeOtherGroups(activeGroup);
+        closeAllGroups(activeGroup);
         setGroupState(activeGroup, true);
     } else {
-        try {
-            const savedGroup = localStorage.getItem('sidebarOpenGroup');
-            const savedElement = savedGroup
-                ? sidebar.querySelector('.nav-group[data-group="' + savedGroup + '"]')
-                : null;
-
-            if (savedElement) {
-                closeOtherGroups(savedElement);
-                setGroupState(savedElement, true);
-            }
-        } catch (error) {
-            // No se requiere persistencia para utilizar el acordeón.
-        }
+        /*
+         * Panel principal, Control de acceso, Aviso y términos,
+         * Mi perfil y cualquier enlace independiente deben mostrar
+         * todos los grupos cerrados.
+         */
+        closeAllGroups();
     }
 
-    sidebar.querySelectorAll('.nav-submenu .nav-link').forEach(function (link) {
+    /*
+     * Se cierran inmediatamente al pulsar un enlace independiente.
+     * Aunque la navegación tarde un instante, el menú ya no queda
+     * visualmente desplegado.
+     */
+    sidebar.querySelectorAll(
+        '.sidebar-menu > .nav-item > .nav-link'
+    ).forEach(function (link) {
+        link.addEventListener('click', function () {
+            closeAllGroups();
+        });
+    });
+
+    sidebar.querySelectorAll(
+        '.nav-submenu .nav-link'
+    ).forEach(function (link) {
         const text = link.querySelector('.nav-text');
+
         if (text) {
-            link.setAttribute('title', text.textContent.trim());
+            link.setAttribute(
+                'title',
+                text.textContent.trim()
+            );
         }
     });
 })();

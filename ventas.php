@@ -1,5 +1,10 @@
 <?php
+header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+header('Pragma: no-cache');
+header('Expires: 0');
+
 // Archivo: ventas.php
+// BUILD: FLUJO_RAPIDO_20260716_FINAL
 // Módulo de venta de productos
 
 // Asegurar que la sesión está iniciada
@@ -152,13 +157,18 @@ $result_clientes = $conn->query($query_clientes);
                         <div class="cliente-select">
                             <label><i class="fas fa-user"></i> Cliente (Opcional)</label>
                             <select id="clienteId">
-                                <option value="">Venta al público (sin cliente)</option>
+                                <option value="" data-email="">Venta al público (sin cliente)</option>
                                 <?php while ($cliente = $result_clientes->fetch_assoc()): ?>
-                                    <option value="<?php echo $cliente['id']; ?>">
+                                    <option
+                                        value="<?php echo (int) $cliente['id']; ?>"
+                                        data-email="<?php echo htmlspecialchars((string) ($cliente['email'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>">
                                         <?php echo htmlspecialchars($cliente['nombre'] . ' ' . $cliente['apellido']); ?>
                                     </option>
                                 <?php endwhile; ?>
                             </select>
+                            <small id="clienteCorreoEstado" style="display:block;margin-top:7px;color:#64748b;font-size:.76rem;line-height:1.35;">
+                                En ventas al público no se envía correo.
+                            </small>
                         </div>
                         <div class="carrito-total">
                             <div class="carrito-total-label">
@@ -470,52 +480,6 @@ $result_clientes = $conn->query($query_clientes);
         return resultado.value || null;
     }
 
-    async function solicitarMontoEfectivo(total) {
-        const resultado = await Swal.fire({
-            title: 'Pago en efectivo',
-            html: `
-                <div class="cash-summary">
-                    <span>Total a pagar</span>
-                    <strong>${formatMoney(total)}</strong>
-                </div>
-                <label class="swal-field-label" for="monto-recibido">Monto recibido</label>
-                <input type="number" id="monto-recibido" class="swal2-input swal-input-modern" value="${total.toFixed(2)}" min="${total.toFixed(2)}" step="0.01" inputmode="decimal">
-                <div id="cambio-preview" class="cash-change">Cambio: ${formatMoney(0)}</div>
-            `,
-            showCancelButton: true,
-            confirmButtonText: 'Aceptar',
-            cancelButtonText: 'Cancelar',
-            confirmButtonColor: '#2563eb',
-            customClass: { popup: 'swal-modern' },
-            didOpen: () => {
-                const input = document.getElementById('monto-recibido');
-                const preview = document.getElementById('cambio-preview');
-                const update = () => {
-                    const value = parseFloat(input.value) || 0;
-                    const change = value - total;
-                    preview.textContent = change >= 0
-                        ? `Cambio: ${formatMoney(change)}`
-                        : `Faltan: ${formatMoney(Math.abs(change))}`;
-                    preview.style.color = change >= 0 ? '#047857' : '#dc2626';
-                };
-                input.addEventListener('input', update);
-                input.focus();
-                input.select();
-                update();
-            },
-            preConfirm: () => {
-                const value = parseFloat(document.getElementById('monto-recibido').value);
-                if (!Number.isFinite(value) || value < total) {
-                    Swal.showValidationMessage('El monto debe ser mayor o igual al total.');
-                    return false;
-                }
-                return value;
-            }
-        });
-
-        return resultado.isConfirmed ? Number(resultado.value) : null;
-    }
-
     async function crearOrdenPoint(total, paymentType) {
         return fetchJson('api/mercadopago/crear_orden.php', {
             method: 'POST',
@@ -644,60 +608,50 @@ $result_clientes = $conn->query($query_clientes);
         });
     }
 
-    async function mostrarTicketVenta(result, contexto) {
-        const gymLogo = '<?php echo addslashes($gym_logo); ?>';
-        const gymNombre = '<?php echo addslashes($gym_nombre); ?>';
-        const { total, metodo, installments, montoRecibido, cambio, clienteId, clienteNombre } = contexto;
-        let logoHtml = gymLogo
-            ? `<img src="${gymLogo}" alt="${gymNombre}" style="max-width:60px;max-height:60px;margin-bottom:5px;">`
-            : '';
-        let ticketHtml = `
-            <div style="text-align:center;font-family:'Courier New',monospace;max-width:300px;margin:0 auto;">
-                ${logoHtml}
-                <div style="font-weight:bold;font-size:16px;">${gymNombre}</div>
-                <div style="font-size:11px;margin:3px 0;">Ticket de Venta #${result.venta_id}</div>
-                <div style="font-size:11px;margin:3px 0;">${new Date().toLocaleString()}</div>
-                <hr style="border:1px dashed #000;margin:8px 0;">
-        `;
+    async function enviarTicketCliente(ventaId, clienteEmail) {
+        if (!ventaId || !clienteEmail) {
+            return {
+                intentado: false,
+                enviado: false,
+                message: 'El cliente no tiene un correo electrónico registrado.'
+            };
+        }
 
-        carrito.forEach(item => {
-            ticketHtml += `
-                <div style="text-align:left;margin:5px 0;">
-                    <div style="font-weight:bold;">${item.nombre} x${item.cantidad}</div>
-                    <div style="text-align:right;">$${(item.precio * item.cantidad).toFixed(2)}</div>
-                </div>
-            `;
-        });
+        try {
+            const response = await fetch('includes/reenviar_ticket.php', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    venta_id: Number(ventaId),
+                    email: clienteEmail
+                })
+            });
 
-        ticketHtml += `
-                <hr style="border:1px dashed #000;margin:8px 0;">
-                <div style="display:flex;justify-content:space-between;margin:5px 0;"><strong>TOTAL</strong><strong>$${total.toFixed(2)}</strong></div>
-                <div style="display:flex;justify-content:space-between;margin:3px 0;"><span>Método:</span><span>${nombreMetodoPago(metodo, installments)}</span></div>
-                ${metodo === 'efectivo' ? `
-                    <div style="display:flex;justify-content:space-between;margin:3px 0;"><span>Recibido:</span><span>$${montoRecibido.toFixed(2)}</span></div>
-                    <div style="display:flex;justify-content:space-between;margin:3px 0;"><span>Cambio:</span><span>$${cambio.toFixed(2)}</span></div>
-                ` : ''}
-                ${clienteId ? `<div style="display:flex;justify-content:space-between;margin:3px 0;"><span>Cliente:</span><span>${clienteNombre}</span></div>` : ''}
-                ${result.mp_order_id ? `<div style="margin-top:6px;font-size:8px;color:#666;overflow-wrap:anywhere;">MP Order: ${result.mp_order_id}</div>` : ''}
-                <hr style="border:1px dashed #000;margin:8px 0;">
-                <div style="margin-top:8px;"><div>Gracias por su compra</div><div style="font-size:9px;color:#666;">Este ticket es su comprobante de pago</div></div>
-            </div>
-        `;
+            const text = await response.text();
+            let data;
 
-        const modal = await Swal.fire({
-            title: 'Venta completada',
-            html: ticketHtml,
-            icon: 'success',
-            width: '450px',
-            confirmButtonText: 'Descargar Ticket PDF',
-            showCancelButton: true,
-            cancelButtonText: 'Cerrar',
-            confirmButtonColor: '#3b82f6',
-            cancelButtonColor: '#94a3b8'
-        });
+            try {
+                data = JSON.parse(text);
+            } catch (error) {
+                throw new Error('El servidor no devolvió una respuesta válida al enviar el ticket.');
+            }
 
-        if (modal.isConfirmed && result.ticket_url) {
-            window.open(result.ticket_url, '_blank');
+            if (!response.ok || !data.success) {
+                throw new Error(data.message || 'No se pudo enviar el ticket por correo.');
+            }
+
+            return {
+                intentado: true,
+                enviado: true,
+                message: data.message || `Ticket enviado correctamente a ${clienteEmail}.`
+            };
+        } catch (error) {
+            console.error('Envío automático del ticket:', error);
+            return {
+                intentado: true,
+                enviado: false,
+                message: error.message || 'No se pudo enviar el ticket por correo.'
+            };
         }
     }
 
@@ -707,84 +661,242 @@ $result_clientes = $conn->query($query_clientes);
             return;
         }
 
+        const payButton = document.getElementById('btnPagar');
+        const payButtonOriginal = payButton.innerHTML;
         const clienteSelect = document.getElementById('clienteId');
         const clienteId = clienteSelect.value;
+        const clienteOption = clienteSelect.options[clienteSelect.selectedIndex];
         const clienteNombre = clienteId
-            ? clienteSelect.options[clienteSelect.selectedIndex].text
+            ? clienteOption.text.trim()
             : 'Venta al público';
+        const clienteEmail = clienteId
+            ? String(clienteOption.dataset.email || '').trim()
+            : '';
         const total = carrito.reduce((sum, item) => sum + item.precio * item.cantidad, 0);
+        const totalArticulos = carrito.reduce(
+            (sum, item) => sum + Number(item.cantidad || 0),
+            0
+        );
         const metodo = await seleccionarMetodoPago(total);
 
         if (!metodo) return;
 
         let installments = 1;
         let montoRecibido = total;
+        let cambio = 0;
         let mpPayment = null;
+        const esEfectivo = metodo === 'efectivo';
 
-        if (metodo === 'efectivo') {
-            const cash = await solicitarMontoEfectivo(total);
-            if (cash === null) return;
-            montoRecibido = cash;
-        }
-
-        const cambio = metodo === 'efectivo' ? montoRecibido - total : 0;
         const confirmacion = await Swal.fire({
             title: 'Confirmar venta',
+            width: '520px',
             html: `
-                <div class="confirm-total-card">
-                    <span>Total a cobrar</span>
-                    <strong>${formatMoney(total)}</strong>
-                </div>
-                <div class="confirm-list">
-                    <div class="confirm-row"><span>Método</span><strong>${nombreMetodoPago(metodo, installments)}</strong></div>
-                    <div class="confirm-row"><span>Productos</span><strong>${carrito.reduce((sum, item) => sum + Number(item.cantidad || 0), 0)} artículos</strong></div>
-                    ${clienteId ? `<div class="confirm-row"><span>Cliente</span><strong>${escapeHtml(clienteNombre)}</strong></div>` : ''}
-                    ${metodo === 'tarjeta_credito' ? `<div class="confirm-row"><span>Mensualidades</span><strong>Se seleccionan en la terminal</strong></div>` : ''}
+                <div style="font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;text-align:left;">
+                    ${esEfectivo ? `
+                        <div style="display:grid;gap:9px;margin-bottom:11px;">
+                            <div style="display:flex;align-items:center;justify-content:space-between;gap:18px;padding:13px 16px;border:1px solid #dbe3ef;border-radius:14px;background:#f8fafc;">
+                                <div>
+                                    <span style="display:block;font-size:.72rem;font-weight:800;letter-spacing:.04em;color:#64748b;">TOTAL A COBRAR</span>
+                                    <small style="display:block;margin-top:2px;color:#94a3b8;font-size:.72rem;">Importe de la venta</small>
+                                </div>
+                                <strong style="white-space:nowrap;color:#1e3a8a;font-size:clamp(1.55rem,5vw,2rem);line-height:1;">${formatMoney(total)}</strong>
+                            </div>
+
+                            <label for="confirm-monto-recibido" style="display:flex;align-items:center;justify-content:space-between;gap:18px;padding:12px 16px;border:2px solid #bfdbfe;border-radius:14px;background:#fff;cursor:text;">
+                                <div>
+                                    <span style="display:block;font-size:.72rem;font-weight:800;letter-spacing:.04em;color:#1e3a8a;">PAGÓ CON</span>
+                                    <small style="display:block;margin-top:2px;color:#64748b;font-size:.72rem;">Monto recibido</small>
+                                </div>
+                                <div style="display:flex;align-items:center;justify-content:flex-end;min-width:0;">
+                                    <span style="font-size:1.35rem;font-weight:900;color:#1e3a8a;line-height:1;">$</span>
+                                    <input
+                                        type="text"
+                                        id="confirm-monto-recibido"
+                                        value="${total.toFixed(2)}"
+                                        inputmode="decimal"
+                                        autocomplete="off"
+                                        autofocus
+                                        aria-label="Monto recibido"
+                                        style="width:145px;max-width:42vw;min-width:0;border:0;outline:0;background:transparent;color:#0f172a;text-align:right;font-size:clamp(1.45rem,5vw,1.85rem);font-weight:900;line-height:1;padding:0 0 0 5px;"
+                                    >
+                                </div>
+                            </label>
+
+                            <div id="confirm-cambio-card" style="padding:12px 16px;border-radius:14px;background:#ecfdf5;border:1px solid #a7f3d0;text-align:center;">
+                                <span id="confirm-cambio-label" style="display:block;font-size:.72rem;font-weight:900;letter-spacing:.04em;color:#047857;margin-bottom:2px;">CAMBIO A ENTREGAR</span>
+                                <strong id="confirm-cambio-valor" style="display:block;font-size:clamp(2rem,7vw,2.55rem);line-height:1.05;color:#047857;">${formatMoney(0)}</strong>
+                            </div>
+                        </div>
+                    ` : `
+                        <div style="display:flex;align-items:center;justify-content:space-between;gap:18px;padding:14px 17px;border:1px solid #dbe3ef;border-radius:14px;background:#f8fafc;margin-bottom:11px;">
+                            <div>
+                                <span style="display:block;font-size:.72rem;font-weight:800;letter-spacing:.04em;color:#64748b;">TOTAL A COBRAR</span>
+                                <small style="display:block;margin-top:2px;color:#94a3b8;font-size:.72rem;">Importe de la venta</small>
+                            </div>
+                            <strong style="white-space:nowrap;color:#1e3a8a;font-size:clamp(1.65rem,5vw,2.1rem);line-height:1;">${formatMoney(total)}</strong>
+                        </div>
+                    `}
+
+                    <div style="border:1px solid #e2e8f0;border-radius:14px;overflow:hidden;background:#fff;">
+                        <div style="display:flex;justify-content:space-between;gap:16px;padding:10px 13px;border-bottom:1px solid #e2e8f0;font-size:.88rem;">
+                            <span style="color:#64748b;">Método</span>
+                            <strong style="color:#0f172a;text-align:right;">${nombreMetodoPago(metodo, installments)}</strong>
+                        </div>
+                        <div style="display:flex;justify-content:space-between;gap:16px;padding:10px 13px;${clienteId ? 'border-bottom:1px solid #e2e8f0;' : ''}font-size:.88rem;">
+                            <span style="color:#64748b;">Productos</span>
+                            <strong style="color:#0f172a;text-align:right;">${totalArticulos} ${totalArticulos === 1 ? 'artículo' : 'artículos'}</strong>
+                        </div>
+                        ${clienteId ? `
+                            <div style="display:flex;justify-content:space-between;gap:16px;padding:10px 13px;font-size:.88rem;">
+                                <span style="color:#64748b;">Cliente</span>
+                                <strong style="color:#0f172a;text-align:right;">${escapeHtml(clienteNombre)}</strong>
+                            </div>
+                        ` : ''}
+                    </div>
+
+                    ${clienteId && clienteEmail ? `
+                        <div style="margin-top:9px;padding:9px 11px;border-radius:11px;background:#eff6ff;color:#1d4ed8;font-size:.78rem;line-height:1.35;text-align:center;overflow-wrap:anywhere;">
+                            <i class="fas fa-envelope" style="margin-right:5px;"></i>
+                            El ticket se enviará automáticamente a <strong>${escapeHtml(clienteEmail)}</strong>
+                        </div>
+                    ` : ''}
+                    ${clienteId && !clienteEmail ? `
+                        <div style="margin-top:9px;padding:9px 11px;border-radius:11px;background:#fff7ed;color:#c2410c;font-size:.78rem;line-height:1.35;text-align:center;">
+                            <i class="fas fa-triangle-exclamation" style="margin-right:5px;"></i>
+                            Este cliente no tiene correo registrado.
+                        </div>
+                    ` : ''}
+                    ${metodo === 'tarjeta_credito' ? `
+                        <div style="margin-top:9px;font-size:.76rem;color:#64748b;text-align:center;">
+                            Las mensualidades disponibles se seleccionan en la terminal.
+                        </div>
+                    ` : ''}
                 </div>
             `,
-            icon: 'question',
             showCancelButton: true,
             confirmButtonText: metodo.startsWith('tarjeta_') ? 'Enviar a terminal' : 'Confirmar venta',
             cancelButtonText: 'Cancelar',
             confirmButtonColor: '#10b981',
             cancelButtonColor: '#dc2626',
-            customClass: { popup: 'swal-modern' }
+            focusConfirm: !esEfectivo,
+            customClass: { popup: 'swal-modern' },
+            didOpen: () => {
+                if (!esEfectivo) return;
+
+                const input = document.getElementById('confirm-monto-recibido');
+                const card = document.getElementById('confirm-cambio-card');
+                const label = document.getElementById('confirm-cambio-label');
+                const valueNode = document.getElementById('confirm-cambio-valor');
+
+                const actualizarCambio = () => {
+                    const recibido = Number.parseFloat(input.value.replace(',', '.')) || 0;
+                    const diferencia = recibido - total;
+                    const esValido = diferencia >= 0;
+
+                    label.textContent = esValido ? 'CAMBIO A ENTREGAR' : 'FALTA POR RECIBIR';
+                    valueNode.textContent = formatMoney(Math.abs(diferencia));
+                    card.style.background = esValido ? '#ecfdf5' : '#fef2f2';
+                    card.style.borderColor = esValido ? '#a7f3d0' : '#fecaca';
+                    label.style.color = esValido ? '#047857' : '#dc2626';
+                    valueNode.style.color = esValido ? '#047857' : '#dc2626';
+                };
+
+                input.addEventListener('input', () => {
+                    input.value = input.value.replace(/[^0-9.,]/g, '');
+                    actualizarCambio();
+                });
+                actualizarCambio();
+
+                // SweetAlert mueve el foco mientras termina su animación. Por eso
+                // mantenemos seleccionado el monto durante los primeros instantes,
+                // pero dejamos de hacerlo en cuanto el usuario empieza a escribir.
+                let usuarioYaEscribio = false;
+
+                const seleccionarMontoCompleto = () => {
+                    if (usuarioYaEscribio || !document.body.contains(input)) return;
+
+                    input.focus({ preventScroll: true });
+                    input.setSelectionRange(0, input.value.length);
+                };
+
+                input.addEventListener('keydown', event => {
+                    const teclasQueEscriben =
+                        event.key.length === 1 ||
+                        event.key === 'Backspace' ||
+                        event.key === 'Delete';
+
+                    if (teclasQueEscriben) usuarioYaEscribio = true;
+                });
+
+                input.addEventListener('input', () => {
+                    usuarioYaEscribio = true;
+                });
+
+                // Evita que el primer clic quite la selección antes de escribir.
+                input.addEventListener('pointerup', event => {
+                    if (usuarioYaEscribio) return;
+                    event.preventDefault();
+                    seleccionarMontoCompleto();
+                });
+
+                // Se repite porque el gestor de foco de SweetAlert puede ejecutarse
+                // después de didOpen y quitar la selección inicial.
+                [0, 80, 180, 320].forEach(delay => {
+                    window.setTimeout(seleccionarMontoCompleto, delay);
+                });
+            },
+            preConfirm: () => {
+                if (!esEfectivo) {
+                    return { montoRecibido: total, cambio: 0 };
+                }
+
+                const recibido = Number.parseFloat(
+                    document.getElementById('confirm-monto-recibido').value.replace(',', '.')
+                );
+
+                if (!Number.isFinite(recibido) || recibido < total) {
+                    Swal.showValidationMessage('El monto recibido debe ser mayor o igual al total.');
+                    return false;
+                }
+
+                return {
+                    montoRecibido: recibido,
+                    cambio: recibido - total
+                };
+            }
         });
 
         if (!confirmacion.isConfirmed) return;
 
+        montoRecibido = Number(confirmacion.value?.montoRecibido ?? total);
+        cambio = Number(confirmacion.value?.cambio ?? 0);
+
+        payButton.disabled = true;
+        payButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Procesando venta...';
+
         try {
             if (metodo === 'tarjeta_debito' || metodo === 'tarjeta_credito') {
-                Swal.fire({
-                    title: 'Creando orden',
-                    text: 'Enviando el cobro a la terminal Point.',
-                    allowOutsideClick: false,
-                    didOpen: () => Swal.showLoading()
-                });
-
                 const paymentType = metodo === 'tarjeta_credito'
                     ? 'credit_card'
                     : 'debit_card';
                 const order = await crearOrdenPoint(total, paymentType);
                 mpPayment = await esperarPagoPoint(order);
 
-                if (!mpPayment) return;
+                if (!mpPayment) {
+                    payButton.innerHTML = payButtonOriginal;
+                    updateCartDisplay();
+                    return;
+                }
+
                 installments = Math.max(1, Number(mpPayment.installments || 1));
             }
-
-            Swal.fire({
-                title: 'Registrando venta',
-                text: 'Actualizando inventario, ticket y corte de caja.',
-                allowOutsideClick: false,
-                didOpen: () => Swal.showLoading()
-            });
 
             const payload = {
                 cliente_id: clienteId || null,
                 items: carrito,
                 total,
                 metodo_pago: metodo.startsWith('tarjeta_') ? 'tarjeta' : metodo,
-                monto_recibido: metodo === 'efectivo' ? montoRecibido : null,
+                monto_recibido: esEfectivo ? montoRecibido : null,
                 cliente_nombre: clienteNombre,
                 tipo_tarjeta: metodo.startsWith('tarjeta_')
                     ? (metodo === 'tarjeta_credito' ? 'credito' : 'debito')
@@ -800,23 +912,37 @@ $result_clientes = $conn->query($query_clientes);
             };
 
             const result = await registrarVentaLocal(payload);
-            result.mp_order_id = payload.mp_order_id;
 
-            await mostrarTicketVenta(result, {
-                total,
-                metodo,
-                installments,
-                montoRecibido,
-                cambio,
-                clienteId,
-                clienteNombre
-            });
+            if (clienteId && clienteEmail) {
+                const envioTicket = await enviarTicketCliente(result.venta_id, clienteEmail);
+
+                if (!envioTicket.enviado) {
+                    console.warn('La venta se registró, pero el ticket no pudo enviarse:', envioTicket.message);
+                }
+            }
 
             carrito = [];
             saveCart();
             updateCartDisplay();
-            location.reload();
+
+            await Swal.fire({
+                icon: 'success',
+                title: 'Venta exitosa',
+                text: 'La venta se completó correctamente.',
+                timer: 3000,
+                timerProgressBar: true,
+                showConfirmButton: false,
+                allowOutsideClick: false,
+                allowEscapeKey: false,
+                customClass: { popup: 'swal-modern' }
+            });
+
+            // Recarga la misma página para actualizar productos e inventario.
+            window.location.reload();
         } catch (error) {
+            payButton.innerHTML = payButtonOriginal;
+            updateCartDisplay();
+
             const paidMessage = mpPayment?.paid
                 ? ` El pago sí fue aprobado. No vuelvas a cobrar. Conserva la orden ${mpPayment.order_id} y corrige el registro local.`
                 : '';
@@ -851,6 +977,33 @@ $result_clientes = $conn->query($query_clientes);
     });
 
     document.getElementById('btnPagar').addEventListener('click', procesarVenta);
+
+    const clienteSelectCorreo = document.getElementById('clienteId');
+    const clienteCorreoEstado = document.getElementById('clienteCorreoEstado');
+
+    function actualizarEstadoCorreoCliente() {
+        const option = clienteSelectCorreo.options[clienteSelectCorreo.selectedIndex];
+        const clienteId = clienteSelectCorreo.value;
+        const email = String(option?.dataset?.email || '').trim();
+
+        if (!clienteId) {
+            clienteCorreoEstado.textContent = 'En ventas al público no se envía correo.';
+            clienteCorreoEstado.style.color = '#64748b';
+            return;
+        }
+
+        if (email) {
+            clienteCorreoEstado.textContent = `Al completar la venta, el ticket PDF se enviará a ${email}.`;
+            clienteCorreoEstado.style.color = '#047857';
+            return;
+        }
+
+        clienteCorreoEstado.textContent = 'Este cliente no tiene correo registrado; la venta se guardará sin envío.';
+        clienteCorreoEstado.style.color = '#c2410c';
+    }
+
+    clienteSelectCorreo.addEventListener('change', actualizarEstadoCorreoCliente);
+    actualizarEstadoCorreoCliente();
 
     const searchInput = document.getElementById('searchProducto');
     const clearSearchButton = document.getElementById('clearSearch');
