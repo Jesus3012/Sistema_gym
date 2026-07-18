@@ -133,6 +133,80 @@ $sidebar_sucursal_clave = trim((string) (
 ));
 $sidebar_sucursal_csrf = '';
 
+
+$sidebar_user_rol_base = strtolower(trim((string) (
+    $_SESSION['user_rol_base'] ?? $user_rol
+)));
+
+$sidebar_puede_vista_global = in_array(
+    $sidebar_user_rol_base,
+    ['admin', 'administrador'],
+    true
+);
+
+/*
+ * Dashboard e Inscripciones admiten una vista consolidada.
+ * La sucursal operativa permanece disponible para cobros y movimientos.
+ */
+$sidebar_paginas_globales = [
+    'dashboard.php',
+    'inscripciones.php',
+    'asistencias.php',
+];
+
+$sidebar_vista_solicitada = strtolower(trim((string) (
+    $_GET['vista'] ?? ''
+)));
+
+$sidebar_vista_global =
+    $sidebar_puede_vista_global
+    && in_array($current_page, $sidebar_paginas_globales, true)
+    && (
+        $sidebar_vista_solicitada === 'global'
+        || (
+            function_exists('sucursal_dashboard_vista_global')
+            && sucursal_dashboard_vista_global()
+        )
+    );
+
+$sidebar_global_urls = [
+    'dashboard.php' =>
+        'dashboard.php?vista=global',
+    'inscripciones.php' =>
+        'inscripciones.php?vista=global',
+    'asistencias.php' =>
+        'asistencias.php?vista=global',
+];
+
+$sidebar_sucursal_urls = [
+    'dashboard.php' =>
+        'dashboard.php?vista=sucursal',
+    'inscripciones.php' =>
+        'inscripciones.php?vista=sucursal',
+    'asistencias.php' =>
+        'asistencias.php?vista=sucursal',
+];
+
+$sidebar_contexto_titulos = [
+    'dashboard.php' => 'Vista del panel',
+    'inscripciones.php' =>
+        'Vista de inscripciones',
+    'asistencias.php' =>
+        'Vista de asistencias',
+];
+
+$sidebar_global_url =
+    $sidebar_global_urls[$current_page]
+    ?? 'dashboard.php?vista=global';
+
+$sidebar_retorno_sucursal_url =
+    $sidebar_sucursal_urls[$current_page]
+    ?? 'dashboard.php?vista=sucursal';
+
+$sidebar_contexto_titulo =
+    $sidebar_contexto_titulos[$current_page]
+    ?? 'Sucursal activa';
+
 if ($conn instanceof mysqli) {
     $conn->set_charset('utf8mb4');
 
@@ -149,6 +223,56 @@ if ($conn instanceof mysqli) {
         );
     }
 }
+
+
+$sidebar_sucursal_es_matriz = false;
+
+foreach ($sidebar_sucursales as $sidebarSucursalContexto) {
+    if (
+        (int) ($sidebarSucursalContexto['id'] ?? 0)
+        === $sidebar_sucursal_actual
+    ) {
+        $sidebar_sucursal_es_matriz =
+            (int) ($sidebarSucursalContexto['es_matriz'] ?? 0)
+            === 1;
+        break;
+    }
+}
+
+$sidebar_total_sedes = count($sidebar_sucursales);
+$sidebar_total_sedes_texto =
+    $sidebar_total_sedes === 1
+        ? '1 sede'
+        : $sidebar_total_sedes . ' sedes';
+
+$sidebar_contexto_nombre = $sidebar_vista_global
+    ? 'Todas las sucursales'
+    : ($sidebar_sucursal_nombre !== ''
+        ? $sidebar_sucursal_nombre
+        : 'Sucursal');
+
+$sidebar_contexto_detalle = $sidebar_vista_global
+    ? (
+        $current_page === 'inscripciones.php'
+            ? 'Inscripciones globales · ' . $sidebar_total_sedes_texto
+            : (
+                $current_page === 'asistencias.php'
+                    ? 'Asistencias globales · ' . $sidebar_total_sedes_texto
+                    : 'Estadísticas globales · ' . $sidebar_total_sedes_texto
+            )
+    )
+    : (
+        ($sidebar_sucursal_clave !== ''
+            ? $sidebar_sucursal_clave
+            : 'Sucursal')
+        . ($sidebar_sucursal_es_matriz
+            ? ' · Matriz'
+            : ' · Sucursal')
+    );
+
+$sidebar_contexto_valor = $sidebar_vista_global
+    ? 0
+    : $sidebar_sucursal_actual;
 
 $gym_nombre = 'Gimnasio';
 $gym_logo = '';
@@ -315,139 +439,23 @@ if (
 }
 ?>
 
-<link rel="stylesheet" href="css/navbar.css">
+<?php
+$sidebar_navbar_css = $sidebar_project_root
+    . DIRECTORY_SEPARATOR
+    . 'css'
+    . DIRECTORY_SEPARATOR
+    . 'navbar.css';
 
-<style>
-    .sidebar-branch-switcher {
-        margin: 0 12px 13px;
-        padding: 10px;
-        border: 1px solid #dce4ef;
-        border-radius: 12px;
-        background: #f8fafc;
-        color: #1f2937;
-    }
+$sidebar_navbar_version = is_file($sidebar_navbar_css)
+    ? (string) filemtime($sidebar_navbar_css)
+    : '1';
+?>
+<link
+    rel="stylesheet"
+    href="css/navbar.css?v=<?php echo htmlspecialchars($sidebar_navbar_version, ENT_QUOTES, 'UTF-8'); ?>"
+>
 
-    .sidebar-branch-heading {
-        display: flex;
-        align-items: center;
-        gap: 9px;
-        min-width: 0;
-    }
 
-    .sidebar-branch-icon {
-        display: grid;
-        flex: 0 0 34px;
-        width: 34px;
-        height: 34px;
-        place-items: center;
-        border-radius: 10px;
-        color: #1e3a8a;
-        background: #eaf0ff;
-        font-size: .78rem;
-    }
-
-    .sidebar-branch-copy {
-        min-width: 0;
-        flex: 1 1 auto;
-    }
-
-    .sidebar-branch-label,
-    .sidebar-branch-name,
-    .sidebar-branch-code {
-        display: block;
-    }
-
-    .sidebar-branch-label {
-        margin-bottom: 2px;
-        color: #64748b;
-        font-size: .58rem;
-        font-weight: 850;
-        letter-spacing: .055em;
-        text-transform: uppercase;
-    }
-
-    .sidebar-branch-name {
-        overflow: hidden;
-        color: #1f2937;
-        font-size: .72rem;
-        font-weight: 800;
-        white-space: nowrap;
-        text-overflow: ellipsis;
-    }
-
-    .sidebar-branch-code {
-        margin-top: 2px;
-        color: #64748b;
-        font-size: .56rem;
-        font-weight: 700;
-    }
-
-    .sidebar-branch-select-wrap {
-        position: relative;
-        margin-top: 9px;
-    }
-
-    .sidebar-branch-select {
-        width: 100%;
-        min-height: 38px;
-        padding: 7px 32px 7px 10px;
-        border: 1px solid #cfd9e7;
-        border-radius: 9px;
-        outline: none;
-        color: #1f2937;
-        background: #ffffff;
-        font-size: .68rem;
-        font-weight: 700;
-        cursor: pointer;
-        appearance: none;
-    }
-
-    .sidebar-branch-select:focus {
-        border-color: #1e3a8a;
-        box-shadow: 0 0 0 3px rgba(30, 58, 138, .10);
-    }
-
-    .sidebar-branch-select:disabled {
-        cursor: wait;
-        opacity: .65;
-    }
-
-    .sidebar-branch-select-chevron {
-        position: absolute;
-        right: 11px;
-        top: 50%;
-        color: #64748b;
-        font-size: .62rem;
-        pointer-events: none;
-        transform: translateY(-50%);
-    }
-
-    .sidebar-branch-loading {
-        display: none;
-        margin-top: 7px;
-        color: #64748b;
-        font-size: .58rem;
-        font-weight: 700;
-    }
-
-    .sidebar-branch-switcher.is-loading
-    .sidebar-branch-loading {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-    }
-
-    .sidebar.collapsed .sidebar-branch-switcher {
-        display: none;
-    }
-
-    @media (max-width: 768px) {
-        .sidebar-branch-switcher {
-            margin-right: 10px;
-            margin-left: 10px;
-        }
-    }
-</style>
 
 <!-- Botón Hamburguesa para móvil (solo visible en móvil) -->
 <button class="hamburger-mobile" id="hamburgerMobile" type="button" aria-label="Abrir menú lateral" aria-controls="sidebar" aria-expanded="false">
@@ -554,78 +562,187 @@ if (
         </div>
     </div>
 
-    <?php if ($sidebar_sucursal_actual > 0): ?>
+    <?php if ($sidebar_sucursales !== []): ?>
         <section
-            class="sidebar-branch-switcher"
+            class="sidebar-branch-switcher <?php echo $sidebar_vista_global ? 'is-global' : ''; ?>"
             id="sidebarBranchSwitcher"
-            aria-label="Sucursal activa"
+            aria-label="Contexto del dashboard"
         >
-            <div class="sidebar-branch-heading">
-                <span class="sidebar-branch-icon" aria-hidden="true">
-                    <i class="fas fa-building"></i>
+            <div class="sidebar-branch-kicker">
+                <span>
+                    <i class="fas fa-chart-simple"></i>
+                    <?php echo htmlspecialchars(
+                        $sidebar_contexto_titulo,
+                        ENT_QUOTES,
+                        'UTF-8'
+                    ); ?>
                 </span>
 
-                <span class="sidebar-branch-copy">
-                    <span class="sidebar-branch-label">
-                        Sucursal activa
-                    </span>
-                    <strong class="sidebar-branch-name">
+                <span class="sidebar-branch-live" aria-hidden="true"></span>
+            </div>
+
+            <button
+                type="button"
+                class="sidebar-branch-trigger"
+                id="sidebarBranchTrigger"
+                aria-haspopup="true"
+                aria-expanded="false"
+                aria-controls="sidebarBranchMenu"
+            >
+                <span class="sidebar-branch-trigger-icon">
+                    <i class="fas <?php echo $sidebar_vista_global ? 'fa-chart-pie' : 'fa-building'; ?>"></i>
+                </span>
+
+                <span class="sidebar-branch-trigger-copy">
+                    <strong>
                         <?php echo htmlspecialchars(
-                            $sidebar_sucursal_nombre,
+                            $sidebar_contexto_nombre,
                             ENT_QUOTES,
                             'UTF-8'
                         ); ?>
                     </strong>
 
-                    <?php if ($sidebar_sucursal_clave !== ''): ?>
-                        <span class="sidebar-branch-code">
-                            <?php echo htmlspecialchars(
-                                $sidebar_sucursal_clave,
-                                ENT_QUOTES,
-                                'UTF-8'
-                            ); ?>
-                        </span>
-                    <?php endif; ?>
+                    <small>
+                        <?php echo htmlspecialchars(
+                            $sidebar_contexto_detalle,
+                            ENT_QUOTES,
+                            'UTF-8'
+                        ); ?>
+                    </small>
                 </span>
-            </div>
 
-            <?php if (count($sidebar_sucursales) > 1): ?>
-                <div class="sidebar-branch-select-wrap">
-                    <select
-                        id="sidebarSucursalSelect"
-                        class="sidebar-branch-select"
-                        aria-label="Cambiar sucursal activa"
+                <i class="fas fa-chevron-down sidebar-branch-trigger-chevron"></i>
+            </button>
+
+            <div
+                class="sidebar-branch-menu"
+                id="sidebarBranchMenu"
+                role="menu"
+                aria-label="Seleccionar vista o sucursal"
+            >
+                <?php if ($sidebar_puede_vista_global): ?>
+                    <button
+                        type="button"
+                        class="sidebar-branch-option <?php echo $sidebar_vista_global ? 'active' : ''; ?>"
+                        data-sucursal-id="0"
+                        data-dashboard-url="<?php echo htmlspecialchars(
+                            $sidebar_global_url,
+                            ENT_QUOTES,
+                            'UTF-8'
+                        ); ?>"
+                        role="menuitem"
                     >
-                        <?php foreach ($sidebar_sucursales as $sidebarSucursal): ?>
-                            <option
-                                value="<?php echo (int) $sidebarSucursal['id']; ?>"
-                                <?php echo
-                                    (int) $sidebarSucursal['id']
-                                    === $sidebar_sucursal_actual
-                                        ? 'selected'
-                                        : '';
+                        <span class="sidebar-branch-option-icon global">
+                            <i class="fas fa-chart-pie"></i>
+                        </span>
+
+                        <span class="sidebar-branch-option-copy">
+                            <strong>Todas las sucursales</strong>
+                            <small>
+                                <?php
+                                if ($current_page === 'inscripciones.php') {
+                                    echo 'Inscripciones de todas las sucursales';
+                                } elseif ($current_page === 'asistencias.php') {
+                                    echo 'Actividad de todas las sucursales';
+                                } else {
+                                    echo 'Estadísticas globales del gimnasio';
+                                }
                                 ?>
-                            >
+                            </small>
+                        </span>
+
+                        <?php if ($sidebar_vista_global): ?>
+                            <i class="fas fa-check sidebar-branch-option-check"></i>
+                        <?php endif; ?>
+                    </button>
+
+                    <div class="sidebar-branch-menu-label">
+                        Sucursales operativas
+                    </div>
+                <?php endif; ?>
+
+                <?php foreach ($sidebar_sucursales as $sidebarSucursal): ?>
+                    <?php
+                    $sidebarOpcionActiva =
+                        !$sidebar_vista_global
+                        && (int) $sidebarSucursal['id']
+                            === $sidebar_sucursal_actual;
+                    ?>
+
+                    <button
+                        type="button"
+                        class="sidebar-branch-option <?php echo $sidebarOpcionActiva ? 'active' : ''; ?>"
+                        data-sucursal-id="<?php echo (int) $sidebarSucursal['id']; ?>"
+                        role="menuitem"
+                    >
+                        <span class="sidebar-branch-option-icon">
+                            <i class="fas fa-building"></i>
+                        </span>
+
+                        <span class="sidebar-branch-option-copy">
+                            <strong>
                                 <?php echo htmlspecialchars(
                                     (string) $sidebarSucursal['nombre'],
                                     ENT_QUOTES,
                                     'UTF-8'
                                 ); ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
+                            </strong>
 
-                    <i
-                        class="fas fa-chevron-down sidebar-branch-select-chevron"
-                        aria-hidden="true"
-                    ></i>
-                </div>
+                            <small>
+                                <?php echo htmlspecialchars(
+                                    (string) $sidebarSucursal['clave'],
+                                    ENT_QUOTES,
+                                    'UTF-8'
+                                ); ?>
+                                <?php if ((int) ($sidebarSucursal['es_matriz'] ?? 0) === 1): ?>
+                                    · Matriz
+                                <?php endif; ?>
+                            </small>
+                        </span>
 
-                <span class="sidebar-branch-loading" aria-live="polite">
-                    <i class="fas fa-spinner fa-spin" aria-hidden="true"></i>
-                    Cambiando sucursal...
-                </span>
-            <?php endif; ?>
+                        <?php if ($sidebarOpcionActiva): ?>
+                            <i class="fas fa-check sidebar-branch-option-check"></i>
+                        <?php endif; ?>
+                    </button>
+                <?php endforeach; ?>
+            </div>
+
+            <div class="sidebar-branch-context-note">
+                <?php if ($sidebar_vista_global): ?>
+                    <i class="fas fa-chart-column"></i>
+                    <?php
+                    if ($current_page === 'inscripciones.php') {
+                        echo 'Listado consolidado de';
+                    } elseif ($current_page === 'asistencias.php') {
+                        echo 'Actividad consolidada de';
+                    } else {
+                        echo 'Estadísticas consolidadas de';
+                    }
+                    ?>
+                    <strong>
+                        <?php echo htmlspecialchars(
+                            $sidebar_total_sedes_texto,
+                            ENT_QUOTES,
+                            'UTF-8'
+                        ); ?>
+                    </strong>
+                <?php else: ?>
+                    <i class="fas fa-location-dot"></i>
+                    Vista de
+                    <strong>
+                        <?php echo $sidebar_sucursal_es_matriz
+                            ? 'sucursal matriz'
+                            : 'sucursal'; ?>
+                    </strong>
+                <?php endif; ?>
+            </div>
+
+            <div class="sidebar-branch-loading" aria-live="polite">
+                <i class="fas fa-spinner fa-spin"></i>
+                <?php echo $current_page === 'asistencias.php'
+                    ? 'Actualizando asistencias...'
+                    : 'Actualizando estadísticas...'; ?>
+            </div>
         </section>
     <?php endif; ?>
 
@@ -929,87 +1046,176 @@ if (
     </div>
 </aside>
 
-<?php if (count($sidebar_sucursales) > 1 && $sidebar_sucursal_csrf !== ''): ?>
+<?php if ($sidebar_sucursal_csrf !== '' && $sidebar_sucursales !== []): ?>
 <script>
 (function () {
-    const select = document.getElementById('sidebarSucursalSelect');
-    const switcher = document.getElementById('sidebarBranchSwitcher');
+    const switcher = document.getElementById(
+        'sidebarBranchSwitcher'
+    );
+    const trigger = document.getElementById(
+        'sidebarBranchTrigger'
+    );
+    const menu = document.getElementById(
+        'sidebarBranchMenu'
+    );
 
-    if (!select || !switcher) {
+    if (!switcher || !trigger || !menu) {
         return;
     }
 
-    let valorActual = select.value;
+    const options = Array.from(
+        menu.querySelectorAll('[data-sucursal-id]')
+    );
 
-    select.addEventListener('change', async function () {
-        const nuevaSucursal = select.value;
+    let currentValue = <?php echo json_encode(
+        (string) $sidebar_contexto_valor,
+        JSON_HEX_TAG
+        | JSON_HEX_APOS
+        | JSON_HEX_AMP
+        | JSON_HEX_QUOT
+    ); ?>;
 
-        if (nuevaSucursal === valorActual) {
+    const returnAfterBranchChange = <?php echo json_encode(
+        $sidebar_retorno_sucursal_url,
+        JSON_HEX_TAG
+        | JSON_HEX_APOS
+        | JSON_HEX_AMP
+        | JSON_HEX_QUOT
+    ); ?>;
+
+    let changing = false;
+
+    function setOpen(open) {
+        switcher.classList.toggle('is-open', open);
+        trigger.setAttribute(
+            'aria-expanded',
+            open ? 'true' : 'false'
+        );
+    }
+
+    trigger.addEventListener('click', function () {
+        if (changing) {
             return;
         }
 
-        select.disabled = true;
-        switcher.classList.add('is-loading');
+        setOpen(!switcher.classList.contains('is-open'));
+    });
 
-        const body = new URLSearchParams({
-            sucursal_id: nuevaSucursal,
-            csrf: <?php echo json_encode(
-                $sidebar_sucursal_csrf,
-                JSON_HEX_TAG
-                | JSON_HEX_APOS
-                | JSON_HEX_AMP
-                | JSON_HEX_QUOT
-            ); ?>
-        });
-
-        try {
-            const response = await fetch(
-                'api/cambiar_sucursal.php',
-                {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type':
-                            'application/x-www-form-urlencoded; charset=UTF-8',
-                        'X-Requested-With': 'XMLHttpRequest'
-                    },
-                    credentials: 'same-origin',
-                    body: body.toString()
-                }
+    options.forEach(function (option) {
+        option.addEventListener('click', async function () {
+            const newValue = String(
+                option.getAttribute('data-sucursal-id') || ''
             );
 
-            const data = await response.json();
+            if (changing || newValue === '') {
+                return;
+            }
 
-            if (!response.ok || !data.ok) {
-                throw new Error(
-                    data.mensaje
-                    || 'No fue posible cambiar de sucursal.'
+            if (newValue === currentValue) {
+                setOpen(false);
+                return;
+            }
+
+            changing = true;
+            switcher.classList.add('is-loading');
+            setOpen(false);
+
+            trigger.disabled = true;
+            options.forEach(function (item) {
+                item.disabled = true;
+            });
+
+            /*
+             * La vista global se resuelve directamente en dashboard.php.
+             * Esto evita depender de una petición AJAX previa para guardar
+             * el estado antes de recalcular las estadísticas.
+             */
+            if (newValue === '0') {
+                const globalUrl = option.getAttribute(
+                    'data-dashboard-url'
+                ) || 'dashboard.php?vista=global';
+
+                window.location.assign(globalUrl);
+                return;
+            }
+
+            const body = new URLSearchParams({
+                sucursal_id: newValue,
+                csrf: <?php echo json_encode(
+                    $sidebar_sucursal_csrf,
+                    JSON_HEX_TAG
+                    | JSON_HEX_APOS
+                    | JSON_HEX_AMP
+                    | JSON_HEX_QUOT
+                ); ?>
+            });
+
+            try {
+                const response = await fetch(
+                    'api/cambiar_sucursal.php',
+                    {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type':
+                                'application/x-www-form-urlencoded; charset=UTF-8',
+                            'X-Requested-With': 'XMLHttpRequest'
+                        },
+                        credentials: 'same-origin',
+                        body: body.toString()
+                    }
                 );
-            }
 
-            valorActual = nuevaSucursal;
-            window.location.replace(
-                data.redirect || 'dashboard.php'
-            );
-        } catch (error) {
-            select.value = valorActual;
-            select.disabled = false;
-            switcher.classList.remove('is-loading');
+                const data = await response.json();
 
-            const mensaje = error instanceof Error
-                ? error.message
-                : 'No fue posible cambiar de sucursal.';
+                if (!response.ok || !data.ok) {
+                    throw new Error(
+                        data.mensaje
+                        || 'No fue posible cambiar la vista.'
+                    );
+                }
 
-            if (typeof Swal !== 'undefined') {
-                Swal.fire({
-                    icon: 'error',
-                    title: 'Cambio no realizado',
-                    text: mensaje,
-                    confirmButtonText: 'Entendido',
-                    confirmButtonColor: '#1e3a8a'
+                currentValue = newValue;
+                window.location.replace(
+                    returnAfterBranchChange
+                );
+            } catch (error) {
+                changing = false;
+                trigger.disabled = false;
+                switcher.classList.remove('is-loading');
+
+                options.forEach(function (item) {
+                    item.disabled = false;
                 });
-            } else {
-                alert(mensaje);
+
+                const message = error instanceof Error
+                    ? error.message
+                    : 'No fue posible cambiar la vista.';
+
+                if (typeof Swal !== 'undefined') {
+                    Swal.fire({
+                        icon: 'error',
+                        title: 'Cambio no realizado',
+                        text: message,
+                        confirmButtonText: 'Entendido',
+                        confirmButtonColor: '#1e3a8a'
+                    });
+                } else {
+                    alert(message);
+                }
             }
+        });
+    });
+
+    document.addEventListener('click', function (event) {
+        if (!switcher.contains(event.target)) {
+            setOpen(false);
+        }
+    });
+
+    document.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape') {
+            setOpen(false);
+            trigger.focus();
         }
     });
 })();

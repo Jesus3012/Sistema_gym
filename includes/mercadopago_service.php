@@ -60,6 +60,14 @@ function mp_save_order(
     int $requestedInstallments,
     int $usuarioId
 ): array {
+    $sucursalId = (int) ($_SESSION['sucursal_id'] ?? 0);
+
+    if ($sucursalId <= 0) {
+        throw new RuntimeException(
+            'No existe una sucursal operativa activa para guardar la orden.'
+        );
+    }
+
     $data = mp_normalize_order($order);
 
     if ($data['order_id'] === '' || $data['external_reference'] === '') {
@@ -77,6 +85,7 @@ function mp_save_order(
     ) ? $data['installments_cost'] : 'unknown';
 
     $sql = "INSERT INTO mercadopago_operaciones (
+                sucursal_id,
                 venta_id,
                 usuario_id,
                 external_reference,
@@ -98,7 +107,7 @@ function mp_save_order(
                 created_at,
                 updated_at
             ) VALUES (
-                NULL, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW()
+                ?, NULL, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW()
             )
             ON DUPLICATE KEY UPDATE
                 payment_id = COALESCE(NULLIF(VALUES(payment_id), ''), payment_id),
@@ -123,7 +132,8 @@ function mp_save_order(
     }
 
     $stmt->bind_param(
-        'isssssisdddssssss',
+        'iisssssisdddssssss',
+        $sucursalId,
         $usuarioId,
         $data['external_reference'],
         $data['order_id'],
@@ -359,6 +369,7 @@ function mp_refund_sale_if_needed(
                 v.metodo_pago,
                 v.total,
                 m.id AS mp_operacion_id,
+                m.sucursal_id AS mp_sucursal_id,
                 m.order_id,
                 m.payment_id,
                 m.amount,
@@ -453,6 +464,7 @@ function mp_refund_sale_if_needed(
 
     $insert = $conn->prepare(
         "INSERT INTO mercadopago_reembolsos (
+            sucursal_id,
             mercadopago_operacion_id,
             venta_id,
             refund_id,
@@ -465,7 +477,7 @@ function mp_refund_sale_if_needed(
             raw_response_json,
             created_at,
             updated_at
-        ) VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+        ) VALUES (?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
         ON DUPLICATE KEY UPDATE
             status = VALUES(status),
             raw_response_json = VALUES(raw_response_json),
@@ -479,8 +491,17 @@ function mp_refund_sale_if_needed(
     $tipo = $amountToRefund === null ? 'total' : 'parcial';
     $raw = mp_json($response);
     $operationId = (int) $row['mp_operacion_id'];
+    $refundSucursalId = (int) ($row['mp_sucursal_id'] ?? 0);
+
+    if ($refundSucursalId <= 0) {
+        throw new RuntimeException(
+            'La operación de Mercado Pago no tiene sucursal válida.'
+        );
+    }
+
     $insert->bind_param(
-        'iissssdsss',
+        'iiissssdsss',
+        $refundSucursalId,
         $operationId,
         $ventaId,
         $refundId,

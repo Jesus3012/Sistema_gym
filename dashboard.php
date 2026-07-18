@@ -1,45 +1,151 @@
 <?php
-date_default_timezone_set('America/Mexico_City');
-// dashboard.php
-require_once 'includes/auth_check.php';
-require_once 'config/database.php';
+// Archivo: dashboard.php
+// Dashboard por sucursal con vista global para administradores.
 
-// Obtener el rol del usuario desde la sesión
-$user_rol = $_SESSION['user_rol'] ?? '';
-$user_id = $_SESSION['user_id'];
-$user_name = $_SESSION['user_name'];
+/*
+ * El auth_guard valida la sesión, el usuario, el rol efectivo y la
+ * sucursal operativa antes de cargar el dashboard.
+ */
+require_once __DIR__ . '/includes/auth_guard.php';
+require_once __DIR__ . '/config/database.php';
 
-// Verificar si el usuario necesita cambiar la contraseña
-$require_password_change = false;
+date_default_timezone_set(
+    (string) (
+        $_SESSION['sucursal_zona_horaria']
+        ?? 'America/Mexico_City'
+    )
+);
+
+$user_rol = strtolower(trim((string) ($_SESSION['user_rol'] ?? '')));
+
+if ($user_rol === 'administrador') {
+    $user_rol = 'admin';
+}
+
+$user_id = (int) ($_SESSION['user_id'] ?? 0);
+$user_name = (string) ($_SESSION['user_name'] ?? 'Usuario');
+$sucursal_id = (int) ($_SESSION['sucursal_id'] ?? 0);
+$sucursal_nombre = trim((string) ($_SESSION['sucursal_nombre'] ?? 'Sucursal'));
+
+/* Evita que el JavaScript del temporizador reciba un valor vacío. */
+if (empty($_SESSION['login_time'])) {
+    $_SESSION['login_time'] = time();
+}
+
+if ($user_id <= 0 || $sucursal_id <= 0) {
+    header('Location: login.php?error=sesion_requerida');
+    exit();
+}
 
 $database = new Database();
 $db = $database->getConnection();
 
-// Verificar conexión
-if (!$db) {
-    die("Error de conexión a la base de datos");
+if (!$db instanceof mysqli) {
+    die('Error de conexión a la base de datos');
 }
 
-// Consultar si el usuario requiere cambio de contraseña
-$query = "SELECT password_change_required, estado FROM usuarios WHERE id = ?";
-$stmt = $db->prepare($query);
-$stmt->bind_param("i", $user_id);
-$stmt->execute();
-$result = $stmt->get_result();
+$db->set_charset('utf8mb4');
 
-if ($result->num_rows > 0) {
-    $user_data = $result->fetch_assoc();
-    $require_password_change = ($user_data['password_change_required'] == 1);
-    
-    if ($user_data['estado'] == 'inactivo') {
+/**
+ * Ejecuta una consulta preparada y devuelve todas las filas.
+ * Compatible con PHP 7 y PHP 8.
+ */
+function dashboardConsultarFilas(
+    mysqli $db,
+    string $sql,
+    string $tipos = '',
+    array $parametros = []
+): array {
+    $stmt = $db->prepare($sql);
+
+    if (!$stmt) {
+        throw new RuntimeException(
+            'No fue posible preparar la consulta del dashboard: ' . $db->error
+        );
+    }
+
+    if ($tipos !== '' && $parametros !== []) {
+        $argumentos = [$tipos];
+
+        foreach ($parametros as $indice => $valor) {
+            $argumentos[] = &$parametros[$indice];
+        }
+
+        call_user_func_array([$stmt, 'bind_param'], $argumentos);
+    }
+
+    if (!$stmt->execute()) {
+        $detalle = $stmt->error;
+        $stmt->close();
+
+        throw new RuntimeException(
+            'No fue posible ejecutar la consulta del dashboard: ' . $detalle
+        );
+    }
+
+    $resultado = $stmt->get_result();
+    $filas = [];
+
+    if ($resultado) {
+        while ($fila = $resultado->fetch_assoc()) {
+            $filas[] = $fila;
+        }
+    }
+
+    $stmt->close();
+
+    return $filas;
+}
+
+/** Devuelve un solo valor de una consulta preparada. */
+function dashboardConsultarValor(
+    mysqli $db,
+    string $sql,
+    string $campo,
+    string $tipos = '',
+    array $parametros = [],
+    $predeterminado = 0
+) {
+    $filas = dashboardConsultarFilas(
+        $db,
+        $sql,
+        $tipos,
+        $parametros
+    );
+
+    if ($filas === [] || !array_key_exists($campo, $filas[0])) {
+        return $predeterminado;
+    }
+
+    return $filas[0][$campo] ?? $predeterminado;
+}
+
+// Verificar si el usuario necesita cambiar la contraseña.
+$require_password_change = false;
+
+$usuarioFilas = dashboardConsultarFilas(
+    $db,
+    "SELECT password_change_required, estado
+     FROM usuarios
+     WHERE id = ?
+     LIMIT 1",
+    'i',
+    [$user_id]
+);
+
+if ($usuarioFilas !== []) {
+    $usuario = $usuarioFilas[0];
+    $require_password_change =
+        (int) ($usuario['password_change_required'] ?? 0) === 1;
+
+    if (strtolower((string) ($usuario['estado'] ?? '')) !== 'activo') {
         session_destroy();
-        header("Location: login.php?error=usuario_inactivo");
+        header('Location: login.php?error=usuario_inactivo');
         exit();
     }
 }
-$stmt->close();
 
-// Mensajes de cambio de contraseña
+// Mensajes de cambio de contraseña.
 if (isset($_SESSION['password_change_success'])) {
     echo "<script>
         document.addEventListener('DOMContentLoaded', function() {
@@ -51,33 +157,40 @@ if (isset($_SESSION['password_change_success'])) {
             });
         });
     </script>";
+
     unset($_SESSION['password_change_success']);
 }
 
 if (isset($_SESSION['password_change_error'])) {
+    $mensajePassword = json_encode(
+        (string) $_SESSION['password_change_error'],
+        JSON_UNESCAPED_UNICODE
+        | JSON_HEX_TAG
+        | JSON_HEX_APOS
+        | JSON_HEX_AMP
+        | JSON_HEX_QUOT
+    );
+
     echo "<script>
         document.addEventListener('DOMContentLoaded', function() {
             Swal.fire({
                 icon: 'error',
                 title: 'Error',
-                text: '" . $_SESSION['password_change_error'] . "',
+                text: {$mensajePassword},
                 confirmButtonColor: '#003366'
             });
         });
     </script>";
+
     unset($_SESSION['password_change_error']);
 }
 
-// ============================================
-// CONSULTAS SEGÚN EL ROL
-// ============================================
-
-// --- Variables base ---
+// Variables consumidas por la vista original.
 $total_clientes = 0;
 $total_inscripciones = 0;
 $total_productos = 0;
 $total_clases = 0;
-$ingresos_mes = 0;
+$ingresos_mes = 0.0;
 $asistencias_hoy = 0;
 $todos_clientes = [];
 $ultimos_clientes = [];
@@ -87,288 +200,510 @@ $todas_inscripciones = [];
 $vencimientos_proximos = 0;
 $todas_clases = [];
 $proximas_clases = [];
+$alumnos_entrenador = [];
 $labels = [];
 $datos = [];
 
-// ========== ADMIN: Dashboard completo ==========
-if ($user_rol == 'admin') {
-    // Totales
-    $query = "SELECT COUNT(*) as total FROM clientes WHERE estado = 'activo'";
-    $result = $db->query($query);
-    $total_clientes = ($result && $result->num_rows > 0) ? $result->fetch_assoc()['total'] : 0;
+$esAdmin = $user_rol === 'admin';
+$esRecepcionista = $user_rol === 'recepcionista';
+$esEntrenador = $user_rol === 'entrenador';
 
-    $query = "SELECT COUNT(*) as total FROM inscripciones WHERE estado = 'activa'";
-    $result = $db->query($query);
-    $total_inscripciones = ($result && $result->num_rows > 0) ? $result->fetch_assoc()['total'] : 0;
+/*
+ * La vista global se puede activar directamente con:
+ * dashboard.php?vista=global
+ *
+ * También se conserva en sesión para que una recarga normal del dashboard
+ * no pierda el consolidado. Al elegir una sede concreta, el API limpia
+ * esta bandera y redirige con vista=sucursal.
+ */
+$rolBaseDashboard = strtolower(trim((string) (
+    $_SESSION['user_rol_base'] ?? $user_rol
+)));
 
-    $query = "SELECT COUNT(*) as total FROM productos WHERE estado = 'activo'";
-    $result = $db->query($query);
-    $total_productos = ($result && $result->num_rows > 0) ? $result->fetch_assoc()['total'] : 0;
+$puedeVistaGlobalDashboard = in_array(
+    $rolBaseDashboard,
+    ['admin', 'administrador'],
+    true
+);
 
-    $query = "SELECT COUNT(*) as total FROM clases WHERE estado = 'activa'";
-    $result = $db->query($query);
-    $total_clases = ($result && $result->num_rows > 0) ? $result->fetch_assoc()['total'] : 0;
+$vistaSolicitadaDashboard = strtolower(trim((string) (
+    $_GET['vista'] ?? ''
+)));
 
-    // Ingresos del mes
-    $query = "SELECT SUM(monto) as total FROM pagos WHERE MONTH(fecha_pago) = MONTH(CURDATE()) AND YEAR(fecha_pago) = YEAR(CURDATE()) AND estado = 'completado'";
-    $result = $db->query($query);
-    $ingresos_mes = ($result && $result->num_rows > 0) ? ($result->fetch_assoc()['total'] ?? 0) : 0;
-
-    // Asistencias hoy
-    $query = "SELECT COUNT(*) as total FROM asistencias WHERE fecha = CURDATE()";
-    $result = $db->query($query);
-    $asistencias_hoy = ($result && $result->num_rows > 0) ? ($result->fetch_assoc()['total'] ?? 0) : 0;
-
-    // Clientes
-    $query = "SELECT id, nombre, apellido, telefono, email, fecha_registro FROM clientes ORDER BY fecha_registro DESC";
-    $result = $db->query($query);
-    if ($result && $result->num_rows > 0) {
-        while ($row = $result->fetch_assoc()) {
-            $todos_clientes[] = $row;
-        }
+if ($vistaSolicitadaDashboard === 'global') {
+    if ($puedeVistaGlobalDashboard) {
+        $_SESSION['dashboard_vista_global'] = 1;
+    } else {
+        unset($_SESSION['dashboard_vista_global']);
     }
-    $ultimos_clientes = $todos_clientes;
-
-    // Productos
-    $query = "SELECT p.id, p.nombre, p.descripcion, p.stock, p.stock_minimo, p.precio_venta, c.nombre as categoria 
-              FROM productos p 
-              LEFT JOIN categorias_productos c ON p.categoria_id = c.id 
-              WHERE p.estado = 'activo' 
-              ORDER BY p.nombre ASC";
-    $result = $db->query($query);
-    if ($result && $result->num_rows > 0) {
-        while ($row = $result->fetch_assoc()) {
-            $todos_productos[] = $row;
-        }
-    }
-
-    // Stock bajo
-    $query = "SELECT p.id, p.nombre, p.stock, p.stock_minimo, c.nombre as categoria 
-              FROM productos p 
-              LEFT JOIN categorias_productos c ON p.categoria_id = c.id 
-              WHERE p.stock <= p.stock_minimo AND p.estado = 'activo' 
-              ORDER BY p.stock ASC";
-    $result = $db->query($query);
-    if ($result && $result->num_rows > 0) {
-        while ($row = $result->fetch_assoc()) {
-            $productos_bajo_stock[] = $row;
-        }
-    }
-
-    // Inscripciones
-    $query = "SELECT i.id, c.nombre as cliente_nombre, c.apellido as cliente_apellido, 
-              p.nombre as plan_nombre, i.fecha_inicio, i.fecha_fin, i.precio_pagado, i.estado
-              FROM inscripciones i 
-              JOIN clientes c ON i.cliente_id = c.id 
-              JOIN planes p ON i.plan_id = p.id 
-              WHERE i.estado = 'activa' 
-              ORDER BY i.fecha_fin ASC";
-    $result = $db->query($query);
-    if ($result && $result->num_rows > 0) {
-        while ($row = $result->fetch_assoc()) {
-            $todas_inscripciones[] = $row;
-        }
-    }
-
-    // Vencimientos próximos
-    $query = "SELECT COUNT(*) as total FROM inscripciones i 
-              WHERE i.fecha_fin BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY) 
-              AND i.estado = 'activa'";
-    $result = $db->query($query);
-    $vencimientos_proximos = ($result && $result->num_rows > 0) ? ($result->fetch_assoc()['total'] ?? 0) : 0;
-
-    // Clases
-    $query = "SELECT c.id, c.nombre, c.descripcion, c.horario, c.instructor, 
-              c.cupo_maximo, c.cupo_actual, c.duracion_minutos, c.estado
-              FROM clases c 
-              WHERE c.estado = 'activa' 
-              ORDER BY c.horario ASC";
-    $result = $db->query($query);
-    if ($result && $result->num_rows > 0) {
-        while ($row = $result->fetch_assoc()) {
-            $todas_clases[] = $row;
-        }
-    }
-    $proximas_clases = $todas_clases;
-
-    // Gráfico ingresos (últimos 6 meses)
-    $query = "SELECT 
-                DATE_FORMAT(fecha_pago, '%Y-%m') as mes,
-                SUM(monto) as total 
-              FROM pagos 
-              WHERE fecha_pago >= DATE_SUB(CURDATE(), INTERVAL 5 MONTH)
-              AND estado = 'completado'
-              GROUP BY DATE_FORMAT(fecha_pago, '%Y-%m')
-              ORDER BY mes ASC";
-    $result = $db->query($query);
-    $ingresos_por_mes = [];
-    if ($result && $result->num_rows > 0) {
-        while ($row = $result->fetch_assoc()) {
-            $ingresos_por_mes[$row['mes']] = $row['total'];
-        }
-    }
-    for ($i = 5; $i >= 0; $i--) {
-        $fecha = date('Y-m', strtotime("-$i months"));
-        $labels[] = date('M Y', strtotime("-$i months"));
-        $datos[] = isset($ingresos_por_mes[$fecha]) ? (float)$ingresos_por_mes[$fecha] : 0;
-    }
+} elseif (in_array(
+    $vistaSolicitadaDashboard,
+    ['sucursal', 'local'],
+    true
+)) {
+    unset($_SESSION['dashboard_vista_global']);
 }
 
-// ========== RECEPCIONISTA: Dashboard atención al cliente ==========
-elseif ($user_rol == 'recepcionista') {
-    // Totales
-    $query = "SELECT COUNT(*) as total FROM clientes WHERE estado = 'activo'";
-    $result = $db->query($query);
-    $total_clientes = ($result && $result->num_rows > 0) ? $result->fetch_assoc()['total'] : 0;
+$vista_global_dashboard =
+    $puedeVistaGlobalDashboard
+    && !empty($_SESSION['dashboard_vista_global']);
 
-    $query = "SELECT COUNT(*) as total FROM inscripciones WHERE estado = 'activa'";
-    $result = $db->query($query);
-    $total_inscripciones = ($result && $result->num_rows > 0) ? $result->fetch_assoc()['total'] : 0;
+$total_sucursales_global = 0;
 
-    $query = "SELECT COUNT(*) as total FROM productos WHERE estado = 'activo'";
-    $result = $db->query($query);
-    $total_productos = ($result && $result->num_rows > 0) ? $result->fetch_assoc()['total'] : 0;
+$dashboard_contexto_nombre = $vista_global_dashboard
+    ? 'Todas las sucursales'
+    : $sucursal_nombre;
 
-    $query = "SELECT COUNT(*) as total FROM clases WHERE estado = 'activa'";
-    $result = $db->query($query);
-    $total_clases = ($result && $result->num_rows > 0) ? $result->fetch_assoc()['total'] : 0;
+$dashboard_contexto_clave = $vista_global_dashboard
+    ? 'GLOBAL'
+    : (string) ($_SESSION['sucursal_clave'] ?? '');
 
-    // Asistencias hoy
-    $query = "SELECT COUNT(*) as total FROM asistencias WHERE fecha = CURDATE()";
-    $result = $db->query($query);
-    $asistencias_hoy = ($result && $result->num_rows > 0) ? ($result->fetch_assoc()['total'] ?? 0) : 0;
+$dashboard_contexto_storage = $vista_global_dashboard
+    ? 'global'
+    : (string) $sucursal_id;
 
-    // Clientes
-    $query = "SELECT id, nombre, apellido, telefono, email, fecha_registro FROM clientes ORDER BY fecha_registro DESC";
-    $result = $db->query($query);
-    if ($result && $result->num_rows > 0) {
-        while ($row = $result->fetch_assoc()) {
-            $todos_clientes[] = $row;
-        }
+/*
+ * La bienvenida se controla por inicio de sesión, no por sucursal.
+ * Así cambiar de sede o entrar a la vista global no vuelve a mostrarla.
+ */
+$dashboard_bienvenida_storage_key =
+    'welcomeAlertShown_'
+    . $user_id
+    . '_login_'
+    . (int) ($_SESSION['login_time'] ?? 0);
+
+$sucursal_es_matriz_dashboard = false;
+
+try {
+    if (!$vista_global_dashboard) {
+        $sucursal_es_matriz_dashboard =
+            (int) dashboardConsultarValor(
+                $db,
+                "SELECT es_matriz
+                 FROM sucursales
+                 WHERE id = ?
+                 LIMIT 1",
+                'es_matriz',
+                'i',
+                [$sucursal_id],
+                0
+            ) === 1;
     }
-    $ultimos_clientes = $todos_clientes;
+    if ($vista_global_dashboard) {
+        $total_sucursales_global = (int) dashboardConsultarValor(
+            $db,
+            "SELECT COUNT(*) AS total
+             FROM sucursales
+             WHERE estado = 'activa'",
+            'total',
+            '',
+            [],
+            0
+        );
 
-    // Productos
-    $query = "SELECT p.id, p.nombre, p.descripcion, p.stock, p.stock_minimo, p.precio_venta, c.nombre as categoria 
-              FROM productos p 
-              LEFT JOIN categorias_productos c ON p.categoria_id = c.id 
-              WHERE p.estado = 'activo' 
-              ORDER BY p.nombre ASC";
-    $result = $db->query($query);
-    if ($result && $result->num_rows > 0) {
-        while ($row = $result->fetch_assoc()) {
-            $todos_productos[] = $row;
+        /* Socios únicos de todo el gimnasio. */
+        $todos_clientes = dashboardConsultarFilas(
+            $db,
+            "SELECT
+                c.id,
+                c.nombre,
+                c.apellido,
+                c.telefono,
+                c.email,
+                c.fecha_registro,
+                suc.nombre AS sucursal_nombre
+             FROM clientes c
+             LEFT JOIN sucursales suc
+                ON suc.id = c.sucursal_registro_id
+             WHERE c.estado = 'activo'
+             ORDER BY c.fecha_registro DESC"
+        );
+
+        /* Inscripciones únicas; no se duplican por acceso multisede. */
+        $todas_inscripciones = dashboardConsultarFilas(
+            $db,
+            "SELECT
+                i.id,
+                c.nombre AS cliente_nombre,
+                c.apellido AS cliente_apellido,
+                p.nombre AS plan_nombre,
+                i.fecha_inicio,
+                i.fecha_fin,
+                i.precio_pagado,
+                i.estado,
+                suc.nombre AS sucursal_nombre
+             FROM inscripciones i
+             INNER JOIN clientes c
+                ON c.id = i.cliente_id
+             INNER JOIN planes p
+                ON p.id = i.plan_id
+             LEFT JOIN sucursales suc
+                ON suc.id = i.sucursal_id
+             WHERE i.estado = 'activa'
+             ORDER BY i.fecha_fin ASC"
+        );
+
+        $vencimientos_proximos = (int) dashboardConsultarValor(
+            $db,
+            "SELECT COUNT(*) AS total
+             FROM inscripciones
+             WHERE estado = 'activa'
+               AND fecha_fin BETWEEN CURDATE()
+                   AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)",
+            'total'
+        );
+
+        $asistencias_hoy = (int) dashboardConsultarValor(
+            $db,
+            "SELECT COUNT(*) AS total
+             FROM asistencias
+             WHERE fecha = CURDATE()",
+            'total'
+        );
+
+        $todas_clases = dashboardConsultarFilas(
+            $db,
+            "SELECT
+                c.id,
+                c.nombre,
+                c.descripcion,
+                c.horario,
+                c.instructor,
+                c.cupo_maximo,
+                c.cupo_actual,
+                c.duracion_minutos,
+                c.estado,
+                suc.nombre AS sucursal_nombre
+             FROM clases c
+             LEFT JOIN sucursales suc
+                ON suc.id = c.sucursal_id
+             WHERE c.estado = 'activa'
+             ORDER BY c.horario ASC"
+        );
+
+        if ($esAdmin || $esRecepcionista) {
+            /*
+             * Un producto aparece una vez y el stock representa la suma
+             * existente en todas las sucursales activas.
+             */
+            $todos_productos = dashboardConsultarFilas(
+                $db,
+                "SELECT
+                    p.id,
+                    p.nombre,
+                    p.descripcion,
+                    SUM(inv.stock) AS stock,
+                    SUM(inv.stock_minimo) AS stock_minimo,
+                    CASE
+                        WHEN SUM(inv.stock) > 0 THEN
+                            SUM(inv.precio_venta * inv.stock)
+                            / SUM(inv.stock)
+                        ELSE MAX(inv.precio_venta)
+                    END AS precio_venta,
+                    categoria.nombre AS categoria
+                 FROM inventario_sucursales inv
+                 INNER JOIN productos p
+                    ON p.id = inv.producto_id
+                 INNER JOIN sucursales suc
+                    ON suc.id = inv.sucursal_id
+                   AND suc.estado = 'activa'
+                 LEFT JOIN categorias_productos categoria
+                    ON categoria.id = p.categoria_id
+                 WHERE inv.estado = 'activo'
+                   AND p.estado = 'activo'
+                 GROUP BY
+                    p.id,
+                    p.nombre,
+                    p.descripcion,
+                    categoria.nombre
+                 ORDER BY p.nombre ASC"
+            );
         }
-    }
 
-    // Stock bajo
-    $query = "SELECT p.id, p.nombre, p.stock, p.stock_minimo, c.nombre as categoria 
-              FROM productos p 
-              LEFT JOIN categorias_productos c ON p.categoria_id = c.id 
-              WHERE p.stock <= p.stock_minimo AND p.estado = 'activo' 
-              ORDER BY p.stock ASC";
-    $result = $db->query($query);
-    if ($result && $result->num_rows > 0) {
-        while ($row = $result->fetch_assoc()) {
-            $productos_bajo_stock[] = $row;
+        if ($esAdmin) {
+            $ingresos_mes = (float) dashboardConsultarValor(
+                $db,
+                "SELECT COALESCE(SUM(pag.monto), 0) AS total
+                 FROM pagos pag
+                 INNER JOIN sucursales suc_pago
+                    ON suc_pago.id = pag.sucursal_id
+                 WHERE MONTH(pag.fecha_pago) = MONTH(CURDATE())
+                   AND YEAR(pag.fecha_pago) = YEAR(CURDATE())
+                   AND pag.estado = 'completado'",
+                'total'
+            );
+
+            $ingresosFilas = dashboardConsultarFilas(
+                $db,
+                "SELECT
+                    DATE_FORMAT(pag.fecha_pago, '%Y-%m') AS mes,
+                    COALESCE(SUM(pag.monto), 0) AS total
+                 FROM pagos pag
+                 INNER JOIN sucursales suc_pago
+                    ON suc_pago.id = pag.sucursal_id
+                 WHERE pag.fecha_pago >= DATE_SUB(
+                        DATE_FORMAT(CURDATE(), '%Y-%m-01'),
+                        INTERVAL 5 MONTH
+                   )
+                   AND pag.estado = 'completado'
+                 GROUP BY DATE_FORMAT(pag.fecha_pago, '%Y-%m')
+                 ORDER BY mes ASC"
+            );
+        } else {
+            $ingresosFilas = [];
         }
-    }
+    } else {
+        /* Socios registrados o habilitados para la sucursal activa. */
+        $todos_clientes = dashboardConsultarFilas(
+            $db,
+            "SELECT
+                c.id,
+                c.nombre,
+                c.apellido,
+                c.telefono,
+                c.email,
+                c.fecha_registro
+             FROM clientes c
+             WHERE c.estado = 'activo'
+               AND (
+                    c.sucursal_registro_id = ?
+                    OR EXISTS (
+                        SELECT 1
+                        FROM inscripciones i_cliente
+                        LEFT JOIN inscripciones_sucursales is_cliente
+                            ON is_cliente.inscripcion_id = i_cliente.id
+                        WHERE i_cliente.cliente_id = c.id
+                          AND i_cliente.estado = 'activa'
+                          AND CURDATE() BETWEEN i_cliente.fecha_inicio
+                              AND i_cliente.fecha_fin
+                          AND (
+                               i_cliente.sucursal_id = ?
+                               OR is_cliente.sucursal_id = ?
+                          )
+                    )
+               )
+             ORDER BY c.fecha_registro DESC",
+            'iii',
+            [$sucursal_id, $sucursal_id, $sucursal_id]
+        );
 
-    // Inscripciones
-    $query = "SELECT i.id, c.nombre as cliente_nombre, c.apellido as cliente_apellido, 
-              p.nombre as plan_nombre, i.fecha_inicio, i.fecha_fin, i.precio_pagado, i.estado
-              FROM inscripciones i 
-              JOIN clientes c ON i.cliente_id = c.id 
-              JOIN planes p ON i.plan_id = p.id 
-              WHERE i.estado = 'activa' 
-              ORDER BY i.fecha_fin ASC";
-    $result = $db->query($query);
-    if ($result && $result->num_rows > 0) {
-        while ($row = $result->fetch_assoc()) {
-            $todas_inscripciones[] = $row;
-        }
-    }
+        $todas_inscripciones = dashboardConsultarFilas(
+            $db,
+            "SELECT DISTINCT
+                i.id,
+                c.nombre AS cliente_nombre,
+                c.apellido AS cliente_apellido,
+                p.nombre AS plan_nombre,
+                i.fecha_inicio,
+                i.fecha_fin,
+                i.precio_pagado,
+                i.estado
+             FROM inscripciones i
+             INNER JOIN clientes c
+                ON c.id = i.cliente_id
+             INNER JOIN planes p
+                ON p.id = i.plan_id
+             LEFT JOIN inscripciones_sucursales isuc
+                ON isuc.inscripcion_id = i.id
+               AND isuc.sucursal_id = ?
+             WHERE i.estado = 'activa'
+               AND (
+                    i.sucursal_id = ?
+                    OR isuc.sucursal_id = ?
+               )
+             ORDER BY i.fecha_fin ASC",
+            'iii',
+            [$sucursal_id, $sucursal_id, $sucursal_id]
+        );
 
-    // Vencimientos próximos
-    $query = "SELECT COUNT(*) as total FROM inscripciones i 
-              WHERE i.fecha_fin BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY) 
-              AND i.estado = 'activa'";
-    $result = $db->query($query);
-    $vencimientos_proximos = ($result && $result->num_rows > 0) ? ($result->fetch_assoc()['total'] ?? 0) : 0;
+        $vencimientos_proximos = (int) dashboardConsultarValor(
+            $db,
+            "SELECT COUNT(DISTINCT i.id) AS total
+             FROM inscripciones i
+             LEFT JOIN inscripciones_sucursales isuc
+                ON isuc.inscripcion_id = i.id
+               AND isuc.sucursal_id = ?
+             WHERE i.estado = 'activa'
+               AND i.fecha_fin BETWEEN CURDATE()
+                   AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)
+               AND (
+                    i.sucursal_id = ?
+                    OR isuc.sucursal_id = ?
+               )",
+            'total',
+            'iii',
+            [$sucursal_id, $sucursal_id, $sucursal_id]
+        );
 
-    // Clases
-    $query = "SELECT c.id, c.nombre, c.horario, c.instructor, 
-              c.cupo_maximo, c.cupo_actual, c.duracion_minutos
-              FROM clases c 
-              WHERE c.estado = 'activa' 
-              ORDER BY c.horario ASC";
-    $result = $db->query($query);
-    if ($result && $result->num_rows > 0) {
-        while ($row = $result->fetch_assoc()) {
-            $todas_clases[] = $row;
-        }
-    }
-    $proximas_clases = $todas_clases;
-}
+        $asistencias_hoy = (int) dashboardConsultarValor(
+            $db,
+            "SELECT COUNT(*) AS total
+             FROM asistencias
+             WHERE sucursal_id = ?
+               AND fecha = CURDATE()",
+            'total',
+            'i',
+            [$sucursal_id]
+        );
 
-// ========== ENTRENADOR: Dashboard de clases y alumnos ==========
-elseif ($user_rol == 'entrenador') {
-    // Totales de clientes e inscripciones
-    $query = "SELECT COUNT(*) as total FROM clientes WHERE estado = 'activo'";
-    $result = $db->query($query);
-    $total_clientes = ($result && $result->num_rows > 0) ? $result->fetch_assoc()['total'] : 0;
+        $todas_clases = dashboardConsultarFilas(
+            $db,
+            "SELECT
+                c.id,
+                c.nombre,
+                c.descripcion,
+                c.horario,
+                c.instructor,
+                c.cupo_maximo,
+                c.cupo_actual,
+                c.duracion_minutos,
+                c.estado
+             FROM clases c
+             WHERE c.sucursal_id = ?
+               AND c.estado = 'activa'
+             ORDER BY c.horario ASC",
+            'i',
+            [$sucursal_id]
+        );
 
-    $query = "SELECT COUNT(*) as total FROM inscripciones WHERE estado = 'activa'";
-    $result = $db->query($query);
-    $total_inscripciones = ($result && $result->num_rows > 0) ? $result->fetch_assoc()['total'] : 0;
+        if ($esEntrenador) {
+            $clasesDelEntrenador = [];
 
-    // Asistencias hoy
-    $query = "SELECT COUNT(*) as total FROM asistencias WHERE fecha = CURDATE()";
-    $result = $db->query($query);
-    $asistencias_hoy = ($result && $result->num_rows > 0) ? ($result->fetch_assoc()['total'] ?? 0) : 0;
+            foreach ($todas_clases as $clase) {
+                $instructor = trim(
+                    (string) ($clase['instructor'] ?? '')
+                );
 
-    // Clientes
-    $query = "SELECT id, nombre, apellido, telefono, email, fecha_registro FROM clientes ORDER BY fecha_registro DESC";
-    $result = $db->query($query);
-    if ($result && $result->num_rows > 0) {
-        while ($row = $result->fetch_assoc()) {
-            $todos_clientes[] = $row;
-        }
-    }
-    $ultimos_clientes = $todos_clientes;
-
-    // SOLO LAS CLASES QUE IMPARTE ESTE ENTRENADOR
-    $todas_clases = [];
-    $query = "SELECT c.id, c.nombre, c.descripcion, c.horario, c.instructor, 
-              c.cupo_maximo, c.cupo_actual, c.duracion_minutos, c.estado
-              FROM clases c 
-              WHERE c.estado = 'activa' 
-              ORDER BY c.horario ASC";
-    $result = $db->query($query);
-    if ($result && $result->num_rows > 0) {
-        while ($row = $result->fetch_assoc()) {
-            // Verificar si el instructor coincide con el nombre del usuario
-            if (stripos($row['instructor'], $user_name) !== false || stripos($user_name, $row['instructor']) !== false) {
-                $todas_clases[] = $row;
+                if (
+                    $instructor !== ''
+                    && (
+                        stripos($instructor, $user_name) !== false
+                        || stripos($user_name, $instructor) !== false
+                    )
+                ) {
+                    $clasesDelEntrenador[] = $clase;
+                }
             }
+
+            $todas_clases = $clasesDelEntrenador;
+        }
+
+        if ($esAdmin || $esRecepcionista) {
+            $todos_productos = dashboardConsultarFilas(
+                $db,
+                "SELECT
+                    p.id,
+                    p.nombre,
+                    p.descripcion,
+                    inv.stock,
+                    inv.stock_minimo,
+                    inv.precio_venta,
+                    categoria.nombre AS categoria
+                 FROM inventario_sucursales inv
+                 INNER JOIN productos p
+                    ON p.id = inv.producto_id
+                 LEFT JOIN categorias_productos categoria
+                    ON categoria.id = p.categoria_id
+                 WHERE inv.sucursal_id = ?
+                   AND inv.estado = 'activo'
+                   AND p.estado = 'activo'
+                 ORDER BY p.nombre ASC",
+                'i',
+                [$sucursal_id]
+            );
+        }
+
+        if ($esAdmin) {
+            $ingresos_mes = (float) dashboardConsultarValor(
+                $db,
+                "SELECT COALESCE(SUM(monto), 0) AS total
+                 FROM pagos
+                 WHERE sucursal_id = ?
+                   AND MONTH(fecha_pago) = MONTH(CURDATE())
+                   AND YEAR(fecha_pago) = YEAR(CURDATE())
+                   AND estado = 'completado'",
+                'total',
+                'i',
+                [$sucursal_id]
+            );
+
+            $ingresosFilas = dashboardConsultarFilas(
+                $db,
+                "SELECT
+                    DATE_FORMAT(fecha_pago, '%Y-%m') AS mes,
+                    COALESCE(SUM(monto), 0) AS total
+                 FROM pagos
+                 WHERE sucursal_id = ?
+                   AND fecha_pago >= DATE_SUB(
+                        DATE_FORMAT(CURDATE(), '%Y-%m-01'),
+                        INTERVAL 5 MONTH
+                   )
+                   AND estado = 'completado'
+                 GROUP BY DATE_FORMAT(fecha_pago, '%Y-%m')
+                 ORDER BY mes ASC",
+                'i',
+                [$sucursal_id]
+            );
+        } else {
+            $ingresosFilas = [];
         }
     }
-    $total_clases = count($todas_clases);
+
+    $ultimos_clientes = $todos_clientes;
+    $total_clientes = count($todos_clientes);
+    $total_inscripciones = count($todas_inscripciones);
     $proximas_clases = $todas_clases;
-    
-    // Alumnos para el entrenador
-    $alumnos_entrenador = [];
-    $query = "SELECT id, nombre, apellido, telefono, email FROM clientes WHERE estado = 'activo' ORDER BY nombre ASC";
-    $result = $db->query($query);
-    if ($result && $result->num_rows > 0) {
-        while ($row = $result->fetch_assoc()) {
-            $alumnos_entrenador[] = $row;
+    $total_clases = count($todas_clases);
+    $total_productos = count($todos_productos);
+
+    foreach ($todos_productos as $producto) {
+        if (
+            (int) ($producto['stock'] ?? 0)
+            <= (int) ($producto['stock_minimo'] ?? 0)
+        ) {
+            $productos_bajo_stock[] = $producto;
         }
     }
+
+    usort(
+        $productos_bajo_stock,
+        static function (array $a, array $b): int {
+            return (int) ($a['stock'] ?? 0)
+                <=> (int) ($b['stock'] ?? 0);
+        }
+    );
+
+    if ($esAdmin) {
+        $ingresos_por_mes = [];
+
+        foreach ($ingresosFilas as $ingresoFila) {
+            $ingresos_por_mes[(string) $ingresoFila['mes']] =
+                (float) $ingresoFila['total'];
+        }
+
+        for ($i = 5; $i >= 0; $i--) {
+            $fecha = date('Y-m', strtotime("-{$i} months"));
+            $labels[] = date('M Y', strtotime("-{$i} months"));
+            $datos[] = isset($ingresos_por_mes[$fecha])
+                ? (float) $ingresos_por_mes[$fecha]
+                : 0.0;
+        }
+    }
+
+    if ($esEntrenador) {
+        $alumnos_entrenador = $todos_clientes;
+    }
+} catch (Throwable $dashboardError) {
+    error_log(
+        '[Dashboard multisucursal] ' . $dashboardError->getMessage()
+    );
+
+    die(
+        'No fue posible cargar los datos del dashboard. '
+        . 'Verifica que la migración multisucursal esté completa.'
+    );
 }
 
-// Incluir el sidebar
-include 'includes/sidebar.php';
 ?>
 
 <!DOCTYPE html>
@@ -376,7 +711,7 @@ include 'includes/sidebar.php';
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dashboard - Gym System</title>
+    <title>Dashboard - <?php echo htmlspecialchars($dashboard_contexto_nombre, ENT_QUOTES, 'UTF-8'); ?></title>
     
     <!-- Font Awesome -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -390,6 +725,8 @@ include 'includes/sidebar.php';
     <link rel="stylesheet" href="css/dashboard.css">
 </head>
 <body>
+    <?php include __DIR__ . '/includes/sidebar.php'; ?>
+
     <div class="main-content dashboard-page">
         <!-- Welcome Banner -->
         <div class="welcome-banner">
@@ -398,6 +735,30 @@ include 'includes/sidebar.php';
                     <h3>
                         <i class="fas fa-hand-wave"></i> ¡Bienvenido, <?php echo htmlspecialchars($user_name); ?>!
                     </h3>
+                    <div class="mb-2">
+                        <span class="badge badge-primary">
+                            <i class="fas <?php echo $vista_global_dashboard ? 'fa-chart-pie' : 'fa-building'; ?>"></i>
+
+                            <?php if ($vista_global_dashboard): ?>
+                                Vista global: Todas las sucursales
+                                (<?php echo (int) $total_sucursales_global; ?>
+                                <?php echo (int) $total_sucursales_global === 1
+                                    ? 'sede'
+                                    : 'sedes'; ?>)
+                            <?php else: ?>
+                                Sucursal:
+                                <?php echo htmlspecialchars(
+                                    $sucursal_nombre,
+                                    ENT_QUOTES,
+                                    'UTF-8'
+                                ); ?>
+
+                                <?php if ($sucursal_es_matriz_dashboard): ?>
+                                    · Matriz
+                                <?php endif; ?>
+                            <?php endif; ?>
+                        </span>
+                    </div>
                     <p class="access-time">
                         <i class="fas fa-clock"></i> 
                         Último acceso: <?php echo date('d/m/Y H:i:s', $_SESSION['login_time']); ?>
@@ -1976,7 +2337,7 @@ include 'includes/sidebar.php';
     
     // Función para actualizar el temporizador de sesión
     function actualizarTemporizador() {
-        const loginTime = <?php echo $_SESSION['login_time']; ?> * 1000;
+        const loginTime = <?php echo (int) ($_SESSION['login_time'] ?? time()); ?> * 1000;
         const maxSessionTime = 12 * 3600 * 1000;
         const now = new Date().getTime();
         const elapsed = now - loginTime;
@@ -2099,7 +2460,16 @@ include 'includes/sidebar.php';
         });
         
         // Mostrar alerta de bienvenida
-        const alertaMostradaStorage = sessionStorage.getItem('welcomeAlertShown_' + <?php echo $_SESSION['user_id']; ?>);
+        const bienvenidaStorageKey = <?php echo json_encode(
+            $dashboard_bienvenida_storage_key,
+            JSON_HEX_TAG
+            | JSON_HEX_APOS
+            | JSON_HEX_AMP
+            | JSON_HEX_QUOT
+        ); ?>;
+
+        const alertaMostradaStorage =
+            sessionStorage.getItem(bienvenidaStorageKey);
         
         if (!alertaMostradaStorage) {
             <?php if ($require_password_change): ?>
@@ -2122,7 +2492,7 @@ include 'includes/sidebar.php';
                 allowOutsideClick: false,
                 allowEscapeKey: false
             }).then(() => {
-                sessionStorage.setItem('welcomeAlertShown_' + <?php echo $_SESSION['user_id']; ?>, 'true');
+                sessionStorage.setItem(bienvenidaStorageKey, 'true');
                 showPasswordModal();
             });
             <?php else: ?>
@@ -2144,7 +2514,7 @@ include 'includes/sidebar.php';
                 allowOutsideClick: false,
                 allowEscapeKey: false
             }).then(() => {
-                sessionStorage.setItem('welcomeAlertShown_' + <?php echo $_SESSION['user_id']; ?>, 'true');
+                sessionStorage.setItem(bienvenidaStorageKey, 'true');
             });
             <?php endif; ?>
         } else if (<?php echo $require_password_change ? 'true' : 'false'; ?>) {
@@ -2167,7 +2537,16 @@ include 'includes/sidebar.php';
     // Para recepcionista y entrenador (sin gráfico)
     document.addEventListener('DOMContentLoaded', function() {
         // Mostrar alerta de bienvenida
-        const alertaMostradaStorage = sessionStorage.getItem('welcomeAlertShown_' + <?php echo $_SESSION['user_id']; ?>);
+        const bienvenidaStorageKey = <?php echo json_encode(
+            $dashboard_bienvenida_storage_key,
+            JSON_HEX_TAG
+            | JSON_HEX_APOS
+            | JSON_HEX_AMP
+            | JSON_HEX_QUOT
+        ); ?>;
+
+        const alertaMostradaStorage =
+            sessionStorage.getItem(bienvenidaStorageKey);
         
         if (!alertaMostradaStorage) {
             <?php if ($require_password_change): ?>
@@ -2190,7 +2569,7 @@ include 'includes/sidebar.php';
                 allowOutsideClick: false,
                 allowEscapeKey: false
             }).then(() => {
-                sessionStorage.setItem('welcomeAlertShown_' + <?php echo $_SESSION['user_id']; ?>, 'true');
+                sessionStorage.setItem(bienvenidaStorageKey, 'true');
                 showPasswordModal();
             });
             <?php else: ?>
@@ -2212,7 +2591,7 @@ include 'includes/sidebar.php';
                 allowOutsideClick: false,
                 allowEscapeKey: false
             }).then(() => {
-                sessionStorage.setItem('welcomeAlertShown_' + <?php echo $_SESSION['user_id']; ?>, 'true');
+                sessionStorage.setItem(bienvenidaStorageKey, 'true');
             });
             <?php endif; ?>
         } else if (<?php echo $require_password_change ? 'true' : 'false'; ?>) {
@@ -2234,7 +2613,9 @@ include 'includes/sidebar.php';
     <?php endif; ?>
     
     // Validación del formulario de cambio de contraseña
-    document.getElementById('changePasswordForm')?.addEventListener('submit', function(e) {
+    const changePasswordForm = document.getElementById('changePasswordForm');
+    if (changePasswordForm) {
+    changePasswordForm.addEventListener('submit', function(e) {
         const newPassword = document.getElementById('new_password').value;
         const confirmPassword = document.getElementById('confirm_password').value;
         const errorDiv = document.getElementById('passwordError');
@@ -2258,6 +2639,7 @@ include 'includes/sidebar.php';
         
         errorDiv.style.display = 'none';
     });
+    }
     </script>
 </body>
 </html>

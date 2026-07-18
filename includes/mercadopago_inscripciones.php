@@ -1,10 +1,15 @@
 <?php
+declare(strict_types=1);
 
 require_once __DIR__ . '/mercadopago_service.php';
 
 function mp_inscripcion_es_tarjeta(string $metodoPago): bool
 {
-    return in_array($metodoPago, ['tarjeta_debito', 'tarjeta_credito'], true);
+    return in_array(
+        $metodoPago,
+        ['tarjeta_debito', 'tarjeta_credito'],
+        true
+    );
 }
 
 function mp_inscripcion_tipo_tarjeta(string $metodoPago): string
@@ -17,20 +22,39 @@ function mp_inscripcion_tipo_tarjeta(string $metodoPago): string
         return 'credit_card';
     }
 
-    throw new InvalidArgumentException('El método no corresponde a una tarjeta Point.');
+    throw new InvalidArgumentException(
+        'El método no corresponde a una tarjeta Point.'
+    );
 }
 
 function mp_inscripcion_origen_valido(string $origen): string
 {
     if (!in_array($origen, ['inscripcion', 'renovacion'], true)) {
-        throw new InvalidArgumentException('Origen de operación Point no válido.');
+        throw new InvalidArgumentException(
+            'Origen de operación Point no válido.'
+        );
     }
 
     return $origen;
 }
 
-function mp_inscripcion_etiqueta_pago(string $metodoPago, int $mensualidades = 1): string
+function mp_inscripcion_sucursal_actual(): int
 {
+    $sucursalId = (int) ($_SESSION['sucursal_id'] ?? 0);
+
+    if ($sucursalId <= 0) {
+        throw new RuntimeException(
+            'No existe una sucursal operativa activa.'
+        );
+    }
+
+    return $sucursalId;
+}
+
+function mp_inscripcion_etiqueta_pago(
+    string $metodoPago,
+    int $mensualidades = 1
+): string {
     if ($metodoPago === 'tarjeta_debito') {
         return 'Tarjeta de débito';
     }
@@ -48,32 +72,32 @@ function mp_inscripcion_etiqueta_pago(string $metodoPago, int $mensualidades = 1
     return 'Efectivo';
 }
 
-/**
- * Marca una orden recién creada con el contexto local.
- * mp_save_order() sigue siendo el mismo que ya utiliza ventas.php.
- */
 function mp_marcar_origen_orden(
     mysqli $conn,
     string $orderId,
     string $origen
 ): void {
     $origen = mp_inscripcion_origen_valido($origen);
+    $sucursalId = mp_inscripcion_sucursal_actual();
 
     $stmt = $conn->prepare(
         "UPDATE mercadopago_operaciones
-         SET origen = ?, updated_at = NOW()
+         SET origen = ?,
+             updated_at = NOW()
          WHERE order_id = ?
+           AND sucursal_id = ?
            AND venta_id IS NULL
            AND pago_id IS NULL"
     );
 
     if (!$stmt) {
         throw new RuntimeException(
-            'No se pudo preparar el origen de la orden Point: ' . $conn->error
+            'No se pudo preparar el origen de la orden Point: ' .
+            $conn->error
         );
     }
 
-    $stmt->bind_param('ss', $origen, $orderId);
+    $stmt->bind_param('ssi', $origen, $orderId, $sucursalId);
     $stmt->execute();
 
     if ($stmt->affected_rows !== 1) {
@@ -87,13 +111,6 @@ function mp_marcar_origen_orden(
 }
 
 /**
- * Valida en el servidor que el pago:
- * - pertenece a esta aplicación;
- * - corresponde a inscripción o renovación;
- * - está procesado;
- * - tiene el monto y tipo de tarjeta correctos;
- * - todavía no ha sido utilizado.
- *
  * @return array<string,mixed>
  */
 function mp_validar_pago_inscripcion(
@@ -109,16 +126,23 @@ function mp_validar_pago_inscripcion(
         );
     }
 
+    $sucursalId = mp_inscripcion_sucursal_actual();
     $origenEsperado = mp_inscripcion_origen_valido($origenEsperado);
     $orderId = trim((string) ($input['mp_order_id'] ?? ''));
 
     if ($orderId === '') {
         throw new RuntimeException(
-            'Falta la orden de Mercado Pago para registrar el pago con tarjeta.'
+            'Falta la orden de Mercado Pago para registrar el pago.'
         );
     }
 
     $local = mp_get_local_operation($conn, $orderId, false);
+
+    if ((int) ($local['sucursal_id'] ?? 0) !== $sucursalId) {
+        throw new RuntimeException(
+            'La orden de Mercado Pago pertenece a otra sucursal.'
+        );
+    }
 
     if (!empty($local['venta_id'])) {
         throw new RuntimeException(
@@ -128,7 +152,7 @@ function mp_validar_pago_inscripcion(
 
     if (!empty($local['pago_id'])) {
         throw new RuntimeException(
-            'La orden de Mercado Pago ya fue utilizada en otra inscripción.'
+            'La orden ya fue utilizada en otra inscripción.'
         );
     }
 
@@ -143,15 +167,15 @@ function mp_validar_pago_inscripcion(
 
     if ($data['order_status'] !== 'processed') {
         throw new RuntimeException(
-            'La orden de Mercado Pago todavía no está procesada. Estado: ' .
-            ($data['order_status'] !== '' ? $data['order_status'] : 'desconocido')
+            'La orden todavía no está procesada. Estado: ' .
+            ($data['order_status'] ?: 'desconocido')
         );
     }
 
     if ($data['payment_status'] !== 'processed') {
         throw new RuntimeException(
-            'El pago de Mercado Pago todavía no está procesado. Estado: ' .
-            ($data['payment_status'] !== '' ? $data['payment_status'] : 'desconocido')
+            'El pago todavía no está procesado. Estado: ' .
+            ($data['payment_status'] ?: 'desconocido')
         );
     }
 
@@ -163,7 +187,7 @@ function mp_validar_pago_inscripcion(
 
     if (abs($data['amount'] - round($montoEsperado, 2)) > 0.01) {
         throw new RuntimeException(
-            'El monto cobrado en la terminal no coincide con el precio del plan. ' .
+            'El monto cobrado no coincide con el precio del plan. ' .
             'Mercado Pago: $' . number_format($data['amount'], 2) .
             ' | Plan: $' . number_format($montoEsperado, 2)
         );
@@ -176,28 +200,26 @@ function mp_validar_pago_inscripcion(
         $data['payment_type'] !== $tipoEsperado
     ) {
         throw new RuntimeException(
-            'El tipo de tarjeta procesado no coincide con el método seleccionado.'
+            'El tipo de tarjeta procesado no coincide con el seleccionado.'
         );
     }
 
-    $paymentIdRecibido = trim((string) ($input['mp_payment_id'] ?? ''));
+    $paymentIdRecibido = trim((string) (
+        $input['mp_payment_id'] ?? ''
+    ));
 
     if (
         $paymentIdRecibido !== '' &&
         $paymentIdRecibido !== $data['payment_id']
     ) {
         throw new RuntimeException(
-            'El identificador del pago no coincide con la orden de Mercado Pago.'
+            'El identificador del pago no coincide con la orden.'
         );
     }
 
     return $data;
 }
 
-/**
- * Vincula la orden con el pago local. El UPDATE condicional evita reutilizar
- * una misma orden en dos solicitudes concurrentes.
- */
 function mp_vincular_pago_inscripcion(
     mysqli $conn,
     string $orderId,
@@ -206,6 +228,7 @@ function mp_vincular_pago_inscripcion(
     string $origen
 ): void {
     $origen = mp_inscripcion_origen_valido($origen);
+    $sucursalId = mp_inscripcion_sucursal_actual();
 
     if ($orderId === '' || $inscripcionId <= 0 || $pagoId <= 0) {
         throw new InvalidArgumentException(
@@ -220,6 +243,7 @@ function mp_vincular_pago_inscripcion(
              origen = ?,
              updated_at = NOW()
          WHERE order_id = ?
+           AND sucursal_id = ?
            AND venta_id IS NULL
            AND pago_id IS NULL
            AND origen = ?"
@@ -227,16 +251,18 @@ function mp_vincular_pago_inscripcion(
 
     if (!$stmt) {
         throw new RuntimeException(
-            'No se pudo preparar el vínculo del pago Point: ' . $conn->error
+            'No se pudo preparar el vínculo del pago Point: ' .
+            $conn->error
         );
     }
 
     $stmt->bind_param(
-        'iisss',
+        'iissis',
         $inscripcionId,
         $pagoId,
         $origen,
         $orderId,
+        $sucursalId,
         $origen
     );
     $stmt->execute();
@@ -249,150 +275,4 @@ function mp_vincular_pago_inscripcion(
     }
 
     $stmt->close();
-}
-
-/**
- * Reembolso opcional. No debe ejecutarse automáticamente al cancelar una
- * inscripción, porque la membresía pudo haberse utilizado.
- *
- * @return array<string,mixed>
- */
-function mp_reembolsar_pago_inscripcion(
-    mysqli $conn,
-    string $orderId,
-    ?float $montoParcial = null
-): array {
-    $local = mp_get_local_operation($conn, $orderId, false);
-    $origen = (string) ($local['origen'] ?? '');
-
-    if (!in_array($origen, ['inscripcion', 'renovacion'], true)) {
-        throw new RuntimeException(
-            'La orden no corresponde a una inscripción o renovación.'
-        );
-    }
-
-    $inscripcionId = (int) ($local['inscripcion_id'] ?? 0);
-    $pagoId = (int) ($local['pago_id'] ?? 0);
-    $paymentId = (string) ($local['payment_id'] ?? '');
-
-    if ($inscripcionId <= 0 || $pagoId <= 0 || $paymentId === '') {
-        throw new RuntimeException(
-            'La operación no está vinculada correctamente con el pago local.'
-        );
-    }
-
-    $disponible = round(
-        (float) $local['amount'] - (float) $local['refunded_amount'],
-        2
-    );
-
-    if ($disponible <= 0) {
-        throw new RuntimeException(
-            'El pago ya fue reembolsado completamente.'
-        );
-    }
-
-    $monto = $montoParcial === null
-        ? null
-        : round($montoParcial, 2);
-
-    if ($monto !== null && ($monto <= 0 || $monto > $disponible + 0.01)) {
-        throw new RuntimeException(
-            'El monto del reembolso no es válido. Disponible: $' .
-            number_format($disponible, 2)
-        );
-    }
-
-    $refundCall = mp_refund_order($orderId, $paymentId, $monto);
-    $response = $refundCall['response'];
-    $refunds = $response['transactions']['refunds'] ?? [];
-    $latest = [];
-
-    if (is_array($refunds) && count($refunds) > 0) {
-        $candidate = end($refunds);
-        if (is_array($candidate)) {
-            $latest = $candidate;
-        }
-    }
-
-    $refundStatus = (string) ($latest['status'] ?? '');
-    $orderStatus = (string) ($response['status'] ?? '');
-
-    if ($refundStatus !== 'processed' && $orderStatus !== 'refunded') {
-        throw new RuntimeException(
-            'Mercado Pago recibió el reembolso, pero todavía no está procesado. ' .
-            'Estado: ' . ($refundStatus ?: $orderStatus ?: 'desconocido')
-        );
-    }
-
-    $refundAmount = round((float) (
-        $latest['amount'] ?? $monto ?? $disponible
-    ), 2);
-
-    $refundId = (string) ($latest['id'] ?? '');
-    $referenceId = isset($latest['reference_id'])
-        ? (string) $latest['reference_id']
-        : null;
-    $tipo = $monto === null ? 'total' : 'parcial';
-    $raw = mp_json($response);
-    $operationId = (int) $local['id'];
-
-    $insert = $conn->prepare(
-        "INSERT INTO mercadopago_reembolsos (
-            mercadopago_operacion_id,
-            venta_id,
-            inscripcion_id,
-            pago_id,
-            origen,
-            refund_id,
-            transaction_id,
-            reference_id,
-            tipo,
-            monto,
-            status,
-            idempotency_key,
-            raw_response_json,
-            created_at,
-            updated_at
-        ) VALUES (
-            ?, NULL, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, NOW(), NOW()
-        )
-        ON DUPLICATE KEY UPDATE
-            status = VALUES(status),
-            raw_response_json = VALUES(raw_response_json),
-            updated_at = NOW()"
-    );
-
-    if (!$insert) {
-        throw new RuntimeException(
-            'No se pudo preparar el registro del reembolso: ' . $conn->error
-        );
-    }
-
-    $insert->bind_param(
-        'iiisssssdsss',
-        $operationId,
-        $inscripcionId,
-        $pagoId,
-        $origen,
-        $refundId,
-        $paymentId,
-        $referenceId,
-        $tipo,
-        $refundAmount,
-        $refundStatus,
-        $refundCall['idempotency_key'],
-        $raw
-    );
-    $insert->execute();
-    $insert->close();
-
-    $actualizada = mp_update_order_safe($conn, $response);
-
-    return [
-        'refund_id' => $refundId,
-        'refund_status' => $refundStatus,
-        'amount' => $refundAmount,
-        'order' => $actualizada,
-    ];
 }

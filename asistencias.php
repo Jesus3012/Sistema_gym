@@ -1,19 +1,126 @@
 <?php
-date_default_timezone_set('America/Mexico_City');
-session_start();
-require_once 'config/database.php';
+declare(strict_types=1);
 
-if (!isset($_SESSION['user_id'])) {
-    header('Location: login.php');
-    exit;
-}
+require_once __DIR__ . '/includes/auth_guard.php';
+require_once __DIR__ . '/config/database.php';
+require_once __DIR__ . '/includes/sucursal_context.php';
+
+mysqli_report(
+    MYSQLI_REPORT_ERROR |
+    MYSQLI_REPORT_STRICT
+);
 
 $database = new Database();
 $conn = $database->getConnection();
 
+if (!$conn instanceof mysqli) {
+    die('No se pudo establecer la conexión con la base de datos.');
+}
+
+$conn->set_charset('utf8mb4');
+
+$usuario_id = (int) ($_SESSION['user_id'] ?? 0);
+$usuario_rol = strtolower(trim((string) (
+    $_SESSION['user_rol'] ?? ''
+)));
+$usuario_rol_base = strtolower(trim((string) (
+    $_SESSION['user_rol_base'] ?? $usuario_rol
+)));
+
+$sucursal_id = (int) ($_SESSION['sucursal_id'] ?? 0);
+$sucursal_nombre = trim((string) (
+    $_SESSION['sucursal_nombre'] ?? 'Sucursal'
+));
+$sucursal_clave = trim((string) (
+    $_SESSION['sucursal_clave'] ?? ''
+));
+
+$puede_vista_global = in_array(
+    $usuario_rol_base,
+    ['admin', 'administrador'],
+    true
+);
+
+$vista_solicitada = strtolower(trim((string) (
+    $_GET['vista'] ?? ''
+)));
+
+if (
+    $vista_solicitada === 'global'
+    && $puede_vista_global
+) {
+    sucursal_activar_vista_global(
+        $conn,
+        $usuario_id
+    );
+} elseif ($vista_solicitada === 'sucursal') {
+    sucursal_desactivar_vista_global();
+}
+
+$vista_global_asistencias =
+    $puede_vista_global
+    && sucursal_dashboard_vista_global();
+
+if ($sucursal_id <= 0) {
+    $_SESSION['error'] =
+        'Selecciona una sucursal operativa antes de abrir asistencias.';
+    header('Location: dashboard.php');
+    exit;
+}
+
+$stmtSucursal = $conn->prepare(
+    "SELECT
+        nombre,
+        clave,
+        es_matriz,
+        estado
+     FROM sucursales
+     WHERE id = ?
+     LIMIT 1"
+);
+$stmtSucursal->bind_param('i', $sucursal_id);
+$stmtSucursal->execute();
+$sucursal_actual = $stmtSucursal
+    ->get_result()
+    ->fetch_assoc();
+$stmtSucursal->close();
+
+if (
+    !is_array($sucursal_actual)
+    || ($sucursal_actual['estado'] ?? '') !== 'activa'
+) {
+    $_SESSION['error'] =
+        'La sucursal seleccionada está inactiva.';
+    header('Location: dashboard.php');
+    exit;
+}
+
+$sucursal_nombre = trim((string) (
+    $sucursal_actual['nombre'] ?? $sucursal_nombre
+));
+$sucursal_clave = trim((string) (
+    $sucursal_actual['clave'] ?? $sucursal_clave
+));
+$sucursal_es_matriz =
+    (int) ($sucursal_actual['es_matriz'] ?? 0) === 1;
+
+date_default_timezone_set(
+    (string) (
+        $_SESSION['sucursal_zona_horaria']
+        ?? 'America/Mexico_City'
+    )
+);
+
 $fecha_hoy = date('Y-m-d');
 $hora_actual = date('H:i:s');
-$usuario_id = $_SESSION['user_id'];
+
+/*
+ * En el consolidado solo se consulta información.
+ * Para registrar una entrada o salida debe elegirse una sede concreta,
+ * porque toda asistencia necesita un sucursal_id real.
+ */
+$registro_asistencia_habilitado =
+    !$vista_global_asistencias;
 ?>
 
 <!DOCTYPE html>
@@ -26,9 +133,89 @@ $usuario_id = $_SESSION['user_id'];
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css">
-    <link rel="stylesheet" href="css/asistencias.css?v=2.0.0">
+    <link rel="stylesheet" href="css/asistencias.css?v=<?php echo is_file(
+        __DIR__ . '/css/asistencias.css'
+    ) ? filemtime(__DIR__ . '/css/asistencias.css') : time(); ?>">
 
     <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+
+    <style>
+        .attendance-context {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            min-height: 31px;
+            margin-top: 10px;
+            padding: 0 11px;
+            border: 1px solid #bfd3fb;
+            border-radius: 8px;
+            color: #1e3a8a;
+            background: #eff6ff;
+            font-size: .76rem;
+            font-weight: 800;
+        }
+
+        .attendance-context.is-global {
+            border-color: #a7f3d0;
+            color: #047857;
+            background: #ecfdf5;
+        }
+
+        .global-readonly-notice {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            margin: 0 0 18px;
+            padding: 12px 14px;
+            border: 1px solid #bfdbfe;
+            border-radius: 10px;
+            color: #1e40af;
+            background: #eff6ff;
+            font-size: .84rem;
+            line-height: 1.45;
+        }
+
+        .global-readonly-notice i {
+            margin-top: 2px;
+        }
+
+        .attendance-branch-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            max-width: 120px;
+            padding: 5px 8px;
+            border: 1px solid #c7d7fe;
+            border-radius: 7px;
+            color: #1d4ed8;
+            background: #eff6ff;
+            font-size: .68rem;
+            font-weight: 850;
+            line-height: 1;
+            text-transform: uppercase;
+        }
+
+        .attendance-branch-chip span {
+            overflow: hidden;
+            white-space: nowrap;
+            text-overflow: ellipsis;
+        }
+
+        .qr-module.is-readonly {
+            opacity: .76;
+        }
+
+        .qr-module.is-readonly .qr-reader-shell {
+            pointer-events: none;
+        }
+
+        @media (max-width: 767.98px) {
+            .attendance-context {
+                width: 100%;
+                justify-content: center;
+            }
+        }
+    </style>
 </head>
 
 <body>
@@ -44,21 +231,67 @@ $usuario_id = $_SESSION['user_id'];
                         <i class="fas fa-qrcode"></i>
                         Registro de Asistencias
                     </h2>
-                    <p>Escanea el código del socio o registra la asistencia manualmente.</p>
+                    <p>
+                        <?php if ($vista_global_asistencias): ?>
+                            Consulta la actividad consolidada de todas las sucursales.
+                        <?php else: ?>
+                            Escanea el código del socio o registra su asistencia en esta sede.
+                        <?php endif; ?>
+                    </p>
+
+                    <span class="attendance-context <?php echo $vista_global_asistencias
+                        ? 'is-global'
+                        : ''; ?>">
+                        <i class="fas <?php echo $vista_global_asistencias
+                            ? 'fa-chart-pie'
+                            : 'fa-location-dot'; ?>"></i>
+
+                        <?php if ($vista_global_asistencias): ?>
+                            Todas las sucursales
+                        <?php else: ?>
+                            <?php echo htmlspecialchars(
+                                $sucursal_nombre,
+                                ENT_QUOTES,
+                                'UTF-8'
+                            ); ?>
+                            <?php if ($sucursal_es_matriz): ?>
+                                · Matriz
+                            <?php endif; ?>
+                        <?php endif; ?>
+                    </span>
                 </div>
 
                 <button
                     class="btn-manual"
                     type="button"
-                    data-bs-toggle="modal"
-                    data-bs-target="#modalRegistroManual"
+                    <?php if ($registro_asistencia_habilitado): ?>
+                        data-bs-toggle="modal"
+                        data-bs-target="#modalRegistroManual"
+                    <?php else: ?>
+                        disabled
+                        title="Selecciona una sucursal para registrar asistencias"
+                    <?php endif; ?>
                 >
                     <i class="fas fa-hand-pointer"></i>
                     Registro Manual
                 </button>
             </div>
 
-            <div class="qr-module">
+            <?php if ($vista_global_asistencias): ?>
+                <div class="global-readonly-notice">
+                    <i class="fas fa-circle-info"></i>
+                    <div>
+                        <strong>Vista consolidada.</strong>
+                        Aquí puedes consultar las asistencias de todas las sedes.
+                        Para escanear un QR o registrar una entrada/salida manual,
+                        selecciona una sucursal concreta en el sidebar.
+                    </div>
+                </div>
+            <?php endif; ?>
+
+            <div class="qr-module <?php echo $vista_global_asistencias
+                ? 'is-readonly'
+                : ''; ?>">
                 <div class="qr-header">
                     <div class="qr-icon-wrap" id="qrAnimation">
                         <i class="fas fa-qrcode"></i>
@@ -85,7 +318,13 @@ $usuario_id = $_SESSION['user_id'];
                 </div>
 
                 <div class="qr-controls">
-                    <button class="btn-qr btn-start" id="startCameraBtn">
+                    <button
+                        class="btn-qr btn-start"
+                        id="startCameraBtn"
+                        <?php echo $registro_asistencia_habilitado
+                            ? ''
+                            : 'disabled'; ?>
+                    >
                         <i class="fas fa-camera"></i> Iniciar cámara
                     </button>
 
@@ -112,7 +351,11 @@ $usuario_id = $_SESSION['user_id'];
                     <div class="stats-card">
                         <div class="stats-icon"><i class="fas fa-calendar-day"></i></div>
                         <div class="stats-number" id="totalAsistencias">0</div>
-                        <div class="stats-label">Asistencias hoy</div>
+                        <div class="stats-label">
+                            <?php echo $vista_global_asistencias
+                                ? 'Asistencias globales hoy'
+                                : 'Asistencias hoy'; ?>
+                        </div>
                     </div>
                 </div>
 
@@ -120,7 +363,7 @@ $usuario_id = $_SESSION['user_id'];
                     <div class="stats-card">
                         <div class="stats-icon"><i class="fas fa-users"></i></div>
                         <div class="stats-number" id="clientesActivos">0</div>
-                        <div class="stats-label">Clientes activos</div>
+                        <div class="stats-label">Socios con acceso</div>
                     </div>
                 </div>
 
@@ -136,7 +379,11 @@ $usuario_id = $_SESSION['user_id'];
                     <div class="stats-card">
                         <div class="stats-icon"><i class="fas fa-ban"></i></div>
                         <div class="stats-number" id="asistenciasDenegadas">0</div>
-                        <div class="stats-label">Accesos denegados</div>
+                        <div class="stats-label">
+                            <?php echo $vista_global_asistencias
+                                ? 'Denegados globales'
+                                : 'Accesos denegados'; ?>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -155,6 +402,9 @@ $usuario_id = $_SESSION['user_id'];
                             <tr>
                                 <th>Cliente</th>
                                 <th>Plan</th>
+                                <?php if ($vista_global_asistencias): ?>
+                                    <th>Sede</th>
+                                <?php endif; ?>
                                 <th>Días restantes</th>
                                 <th>Entrada</th>
                                 <th>Salida</th>
@@ -163,7 +413,7 @@ $usuario_id = $_SESSION['user_id'];
                         </thead>
                         <tbody id="tablaAsistencias">
                             <tr>
-                                <td colspan="6" class="text-center py-4">
+                                <td colspan="<?php echo $vista_global_asistencias ? 7 : 6; ?>" class="text-center py-4">
                                     <div class="spinner-border text-primary" role="status">
                                         <span class="visually-hidden">Cargando...</span>
                                     </div>
@@ -272,6 +522,10 @@ $usuario_id = $_SESSION['user_id'];
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 
     <script>
+        const vistaGlobalAsistencias = <?php echo $vista_global_asistencias
+            ? 'true'
+            : 'false'; ?>;
+
         let html5QrCode = null;
         let isScanning = false;
         let escaneoBloqueado = false;
@@ -400,6 +654,17 @@ $usuario_id = $_SESSION['user_id'];
                                     <br><small class="text-muted">${escapeHtml(a.telefono || 'Sin teléfono')}</small>
                                 </td>
                                 <td><span class="badge-plan ${badgeClass}">${escapeHtml(a.plan_nombre || 'Sin plan')}</span></td>
+                                ${vistaGlobalAsistencias ? `
+                                    <td>
+                                        <span
+                                            class="attendance-branch-chip"
+                                            title="${escapeHtml(a.sucursal_nombre || 'Sucursal')}"
+                                        >
+                                            <i class="fas fa-building"></i>
+                                            <span>${escapeHtml(a.sucursal_clave || 'SEDE')}</span>
+                                        </span>
+                                    </td>
+                                ` : ''}
                                 <td class="${diasClass}">${a.dias_restantes !== null ? a.dias_restantes + ' días' : 'N/A'}</td>
                                 <td>${escapeHtml(a.hora_entrada)}</td>
                                 <td>${escapeHtml(a.hora_salida || '--:--')}</td>
@@ -412,7 +677,7 @@ $usuario_id = $_SESSION['user_id'];
                 } else {
                     tbody.html(`
                         <tr>
-                            <td colspan="6" class="text-center py-5">
+                            <td colspan="${vistaGlobalAsistencias ? 7 : 6}" class="text-center py-5">
                                 <div class="empty-state-simple">
                                     <i class="fas fa-clipboard-list fa-4x mb-3" style="color: #cbd5e1;"></i>
                                     <h5 class="text-muted mb-2">No hay asistencias registradas hoy</h5>
@@ -433,6 +698,16 @@ $usuario_id = $_SESSION['user_id'];
         }
 
         async function iniciarLectorQR() {
+            if (vistaGlobalAsistencias) {
+                Swal.fire({
+                    icon: 'info',
+                    title: 'Selecciona una sucursal',
+                    text: 'El registro de asistencias requiere una sede concreta.',
+                    confirmButtonColor: '#1e3a8a'
+                });
+                return;
+            }
+
             if (isScanning) {
                 mostrarNotificacion('Info', 'El lector ya está activo', 'info');
                 return;
@@ -600,8 +875,16 @@ $usuario_id = $_SESSION['user_id'];
             console.log("Error de escaneo:", errorMessage);
         }
 
-        document.getElementById('startCameraBtn').addEventListener('click', iniciarLectorQR);
-        document.getElementById('stopCameraBtn').addEventListener('click', detenerLectorQR);
+        const startCameraBtn = document.getElementById('startCameraBtn');
+        const stopCameraBtn = document.getElementById('stopCameraBtn');
+
+        if (startCameraBtn) {
+            startCameraBtn.addEventListener('click', iniciarLectorQR);
+        }
+
+        if (stopCameraBtn) {
+            stopCameraBtn.addEventListener('click', detenerLectorQR);
+        }
 
         window.addEventListener('beforeunload', function() {
             if (html5QrCode && isScanning) {

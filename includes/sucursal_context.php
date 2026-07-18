@@ -124,6 +124,18 @@ function sucursal_buscar_asignada(
  */
 function sucursal_guardar_en_sesion(array $sucursal): void
 {
+    /*
+     * Conserva el rol general para validar funciones administrativas que
+     * no dependen del rol efectivo de una sede concreta.
+     */
+    if (empty($_SESSION['user_rol_base'])) {
+        $_SESSION['user_rol_base'] = (string) (
+            $_SESSION['user_rol']
+            ?? $sucursal['rol_efectivo']
+            ?? 'recepcionista'
+        );
+    }
+
     $_SESSION['sucursal_id'] = (int) $sucursal['id'];
     $_SESSION['sucursal_clave'] = (string) $sucursal['clave'];
     $_SESSION['sucursal_nombre'] = (string) $sucursal['nombre'];
@@ -189,6 +201,77 @@ function sucursal_inicializar_sesion(mysqli $db): array
 }
 
 /**
+ * Comprueba el rol general del usuario directamente desde la base de datos.
+ */
+function sucursal_usuario_es_administrador(
+    mysqli $db,
+    int $usuarioId
+): bool {
+    $sql = "
+        SELECT rol
+        FROM usuarios
+        WHERE id = ?
+          AND estado = 'activo'
+        LIMIT 1
+    ";
+
+    $stmt = $db->prepare($sql);
+
+    if (!$stmt) {
+        throw new RuntimeException(
+            'No fue posible validar el permiso administrativo.'
+        );
+    }
+
+    $stmt->bind_param('i', $usuarioId);
+    $stmt->execute();
+    $resultado = $stmt->get_result();
+    $fila = $resultado ? $resultado->fetch_assoc() : null;
+    $stmt->close();
+
+    $rol = strtolower(trim((string) ($fila['rol'] ?? '')));
+
+    return in_array(
+        $rol,
+        ['admin', 'administrador'],
+        true
+    );
+}
+
+/**
+ * Activa el resumen global del dashboard sin cambiar la sucursal operativa.
+ */
+function sucursal_activar_vista_global(
+    mysqli $db,
+    int $usuarioId
+): void {
+    if ($usuarioId <= 0) {
+        throw new InvalidArgumentException('Usuario no válido.');
+    }
+
+    if (!sucursal_usuario_es_administrador($db, $usuarioId)) {
+        throw new RuntimeException(
+            'No tienes permiso para consultar todas las sucursales.'
+        );
+    }
+
+    $_SESSION['dashboard_vista_global'] = 1;
+}
+
+/** Desactiva el resumen global y vuelve al contexto de la sede operativa. */
+function sucursal_desactivar_vista_global(): void
+{
+    unset($_SESSION['dashboard_vista_global']);
+}
+
+/** Indica si el dashboard está mostrando el consolidado de todas las sedes. */
+function sucursal_dashboard_vista_global(): bool
+{
+    return isset($_SESSION['dashboard_vista_global'])
+        && (int) $_SESSION['dashboard_vista_global'] === 1;
+}
+
+/**
  * Cambia la sede activa validando la relación usuario-sucursal.
  */
 function sucursal_cambiar_activa(
@@ -213,6 +296,7 @@ function sucursal_cambiar_activa(
     }
 
     sucursal_guardar_en_sesion($sucursal);
+    sucursal_desactivar_vista_global();
 
     // Evita reutilizar filtros, carritos o datos temporales de otra sede.
     unset(

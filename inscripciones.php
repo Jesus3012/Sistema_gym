@@ -1,9 +1,17 @@
 <?php
-date_default_timezone_set('America/Mexico_City');
+declare(strict_types=1);
+
+// Debe cargar primero la sesión, permisos y la sucursal operativa.
+require_once __DIR__ . '/includes/auth_guard.php';
+
+mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+date_default_timezone_set(
+    (string) ($_SESSION['sucursal_zona_horaria'] ?? 'America/Mexico_City')
+);
 
 // inscripciones.php
-session_start();
 require_once __DIR__ . '/config/database.php';
+require_once __DIR__ . '/includes/sucursal_context.php';
 require_once __DIR__ . '/includes/qr_helper.php'; // Incluir el helper de QR
 require_once __DIR__ . '/includes/correo_inscripciones.php'; // Correos de bienvenida y renovación
 require_once __DIR__ . '/includes/mercadopago_inscripciones.php'; // Validación y vínculo de pagos Point
@@ -27,9 +35,74 @@ if (!isset($_SESSION['user_id'])) {
 }
 
 // Obtener datos del usuario actual
-$usuario_id = $_SESSION['user_id'];
-$usuario_nombre = $_SESSION['user_name'];
-$usuario_rol = $_SESSION['user_rol'];
+$usuario_id = (int) $_SESSION['user_id'];
+$usuario_nombre = (string) ($_SESSION['user_name'] ?? '');
+$usuario_rol = strtolower(trim((string) ($_SESSION['user_rol'] ?? '')));
+$usuario_rol_base = strtolower(trim((string) (
+    $_SESSION['user_rol_base'] ?? $usuario_rol
+)));
+
+$sucursal_id = (int) ($_SESSION['sucursal_id'] ?? 0);
+$sucursal_nombre = trim((string) (
+    $_SESSION['sucursal_nombre'] ?? 'Sucursal'
+));
+
+$puede_ver_inscripciones_globales = in_array(
+    $usuario_rol_base,
+    ['admin', 'administrador'],
+    true
+);
+
+$vista_solicitada = strtolower(trim((string) (
+    $_GET['vista'] ?? ''
+)));
+
+/*
+ * La vista global conserva la sucursal operativa de la sesión.
+ * Únicamente cambia el alcance del listado de inscripciones.
+ */
+if (
+    $vista_solicitada === 'global'
+    && $puede_ver_inscripciones_globales
+    && function_exists('sucursal_activar_vista_global')
+) {
+    sucursal_activar_vista_global($conn, $usuario_id);
+} elseif (
+    $vista_solicitada === 'sucursal'
+    && function_exists('sucursal_desactivar_vista_global')
+) {
+    sucursal_desactivar_vista_global();
+}
+
+$vista_global_inscripciones =
+    $puede_ver_inscripciones_globales
+    && function_exists('sucursal_dashboard_vista_global')
+    && sucursal_dashboard_vista_global();
+
+if ($sucursal_id <= 0) {
+    $_SESSION['error'] =
+        'Selecciona una sucursal operativa antes de administrar inscripciones.';
+    header('Location: dashboard.php');
+    exit;
+}
+
+$stmtSucursal = $conn->prepare(
+    "SELECT estado
+     FROM sucursales
+     WHERE id = ?
+     LIMIT 1"
+);
+$stmtSucursal->bind_param('i', $sucursal_id);
+$stmtSucursal->execute();
+$sucursalActual = $stmtSucursal->get_result()->fetch_assoc();
+$stmtSucursal->close();
+
+if (!$sucursalActual || ($sucursalActual['estado'] ?? '') !== 'activa') {
+    $_SESSION['error'] =
+        'La sucursal seleccionada está inactiva y no permite nuevas operaciones.';
+    header('Location: dashboard.php');
+    exit;
+}
 
 // Procesar acciones
 $mensaje = '';
@@ -79,8 +152,21 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
             }
             
             // Obtener datos del plan
-            $stmt = $conn->prepare("SELECT duracion_dias, precio, nombre as plan_nombre FROM planes WHERE id = ? AND estado = 'activo'");
-            $stmt->bind_param("i", $plan_id);
+            $stmt = $conn->prepare(
+                "SELECT
+                    p.duracion_dias,
+                    ps.precio,
+                    p.nombre AS plan_nombre
+                 FROM planes p
+                 INNER JOIN planes_sucursales ps
+                    ON ps.plan_id = p.id
+                   AND ps.sucursal_id = ?
+                 WHERE p.id = ?
+                   AND p.estado = 'activo'
+                   AND ps.estado = 'activo'
+                 LIMIT 1"
+            );
+            $stmt->bind_param("ii", $sucursal_id, $plan_id);
             $stmt->execute();
             $result = $stmt->get_result();
             $plan = $result->fetch_assoc();
@@ -158,27 +244,122 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
             $conn->begin_transaction();
             
             // Insertar cliente (guardamos el código QR)
-            $stmt = $conn->prepare("INSERT INTO clientes (nombre, apellido, telefono, email, codigo_qr, estado) VALUES (?, ?, ?, ?, ?, 'activo')");
-            $stmt->bind_param("sssss", $nombre, $apellido, $telefono, $email, $codigo_qr);
+            $stmt = $conn->prepare(
+                "INSERT INTO clientes (
+                    sucursal_registro_id,
+                    nombre,
+                    apellido,
+                    telefono,
+                    email,
+                    codigo_qr,
+                    estado
+                 ) VALUES (?, ?, ?, ?, ?, ?, 'activo')"
+            );
+            $stmt->bind_param(
+                "isssss",
+                $sucursal_id,
+                $nombre,
+                $apellido,
+                $telefono,
+                $email,
+                $codigo_qr
+            );
             $stmt->execute();
             $cliente_id = $conn->insert_id;
             
             // Insertar inscripción
-            $stmt = $conn->prepare("INSERT INTO inscripciones (cliente_id, plan_id, fecha_inicio, fecha_fin, precio_pagado, estado) VALUES (?, ?, ?, ?, ?, 'activa')");
-            $stmt->bind_param("iisss", $cliente_id, $plan_id, $fecha_inicio, $fecha_fin, $precio_pagado);
+            $stmt = $conn->prepare(
+                "INSERT INTO inscripciones (
+                    sucursal_id,
+                    cliente_id,
+                    plan_id,
+                    fecha_inicio,
+                    fecha_fin,
+                    precio_pagado,
+                    estado
+                 ) VALUES (?, ?, ?, ?, ?, ?, 'activa')"
+            );
+            $stmt->bind_param(
+                "iiissd",
+                $sucursal_id,
+                $cliente_id,
+                $plan_id,
+                $fecha_inicio,
+                $fecha_fin,
+                $precio_pagado
+            );
             $stmt->execute();
-            $inscripcion_id = $conn->insert_id;
+            $inscripcion_id = (int) $conn->insert_id;
+
+            $stmt = $conn->prepare(
+            "INSERT IGNORE INTO inscripciones_sucursales (
+                inscripcion_id,
+                sucursal_id
+             )
+             SELECT ?, s.id
+             FROM sucursales s
+             WHERE s.estado = 'activa'"
+        );
+        $stmt->bind_param("i", $inscripcion_id);
+        $stmt->execute();
             
             // Insertar pago
             $fecha_actual_db = date('Y-m-d');
-            $stmt = $conn->prepare("INSERT INTO pagos (inscripcion_id, cliente_id, monto, fecha_pago, metodo_pago, referencia, estado) VALUES (?, ?, ?, ?, ?, ?, 'completado')");
-            $stmt->bind_param("iidsss", $inscripcion_id, $cliente_id, $precio_pagado, $fecha_actual_db, $metodo_pago, $referencia);
+            $stmt = $conn->prepare(
+                "INSERT INTO pagos (
+                    sucursal_id,
+                    inscripcion_id,
+                    cliente_id,
+                    monto,
+                    fecha_pago,
+                    metodo_pago,
+                    referencia,
+                    estado
+                 ) VALUES (?, ?, ?, ?, ?, ?, ?, 'completado')"
+            );
+            $stmt->bind_param(
+                "iiidsss",
+                $sucursal_id,
+                $inscripcion_id,
+                $cliente_id,
+                $precio_pagado,
+                $fecha_actual_db,
+                $metodo_pago,
+                $referencia
+            );
             $stmt->execute();
             $pago_id = (int) $conn->insert_id;
             
             // Registrar en historial_pagos
-            $stmt = $conn->prepare("INSERT INTO historial_pagos (inscripcion_id, cliente_id, monto, fecha_pago, metodo_pago, referencia, periodo_inicio, periodo_fin, plan_nombre, usuario_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-            $stmt->bind_param("iidssssssi", $inscripcion_id, $cliente_id, $precio_pagado, $fecha_actual_db, $metodo_pago, $referencia, $fecha_inicio, $fecha_fin, $plan['plan_nombre'], $usuario_id);
+            $stmt = $conn->prepare(
+                "INSERT INTO historial_pagos (
+                    sucursal_id,
+                    inscripcion_id,
+                    cliente_id,
+                    monto,
+                    fecha_pago,
+                    metodo_pago,
+                    referencia,
+                    periodo_inicio,
+                    periodo_fin,
+                    plan_nombre,
+                    usuario_id
+                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            );
+            $stmt->bind_param(
+                "iiidssssssi",
+                $sucursal_id,
+                $inscripcion_id,
+                $cliente_id,
+                $precio_pagado,
+                $fecha_actual_db,
+                $metodo_pago,
+                $referencia,
+                $fecha_inicio,
+                $fecha_fin,
+                $plan['plan_nombre'],
+                $usuario_id
+            );
             $stmt->execute();
 
             if (is_array($mp_pago_data)) {
@@ -251,8 +432,13 @@ $_SESSION['mensaje_exito'] = $mensaje_exito;
             header('Location: inscripciones.php');
             exit;
             
-        } catch (Exception $e) {
-            if (isset($conn)) $conn->rollback();
+        } catch (Throwable $e) {
+            if (isset($conn)) {
+                try {
+                    $conn->rollback();
+                } catch (Throwable $rollbackError) {
+                }
+            }
             $_SESSION['error'] = $e->getMessage();
             header('Location: inscripciones.php');
             exit;
@@ -297,8 +483,21 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
         }
         
         // Obtener datos del plan seleccionado
-        $stmt = $conn->prepare("SELECT duracion_dias, precio, nombre as plan_nombre FROM planes WHERE id = ? AND estado = 'activo'");
-        $stmt->bind_param("i", $plan_id);
+        $stmt = $conn->prepare(
+            "SELECT
+                p.duracion_dias,
+                ps.precio,
+                p.nombre AS plan_nombre
+             FROM planes p
+             INNER JOIN planes_sucursales ps
+                ON ps.plan_id = p.id
+               AND ps.sucursal_id = ?
+             WHERE p.id = ?
+               AND p.estado = 'activo'
+               AND ps.estado = 'activo'
+             LIMIT 1"
+        );
+        $stmt->bind_param("ii", $sucursal_id, $plan_id);
         $stmt->execute();
         $result = $stmt->get_result();
         $plan = $result->fetch_assoc();
@@ -316,15 +515,30 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
         // Obtener la inscripción y el estado real del cliente.
         // Esta validación del servidor evita renovar aunque alguien manipule el botón o el formulario.
         $stmt_ins = $conn->prepare(
-            "SELECT i.*, p.nombre AS plan_actual, p.duracion_dias AS duracion_actual,
-                    c.estado AS cliente_estado
+            "SELECT
+                i.*,
+                p.nombre AS plan_actual,
+                p.duracion_dias AS duracion_actual,
+                c.estado AS cliente_estado
              FROM inscripciones i
              INNER JOIN planes p ON i.plan_id = p.id
              INNER JOIN clientes c ON i.cliente_id = c.id
+             LEFT JOIN inscripciones_sucursales acceso
+                ON acceso.inscripcion_id = i.id
+               AND acceso.sucursal_id = ?
              WHERE i.id = ?
+               AND (
+                    i.sucursal_id = ?
+                    OR acceso.sucursal_id IS NOT NULL
+               )
              LIMIT 1"
         );
-        $stmt_ins->bind_param("i", $inscripcion_id);
+        $stmt_ins->bind_param(
+            "iii",
+            $sucursal_id,
+            $inscripcion_id,
+            $sucursal_id
+        );
         $stmt_ins->execute();
         $inscripcion_actual = $stmt_ins->get_result()->fetch_assoc();
 
@@ -399,20 +613,94 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
         $conn->begin_transaction();
         
         // ACTUALIZAR la inscripción existente con el NUEVO PLAN
-        $stmt = $conn->prepare("UPDATE inscripciones SET plan_id = ?, fecha_inicio = ?, fecha_fin = ?, precio_pagado = ?, estado = 'activa' WHERE id = ?");
-        $stmt->bind_param("isssi", $plan_id, $fecha_inicio, $fecha_fin, $precio_pagado, $inscripcion_id);
+        $stmt = $conn->prepare(
+            "UPDATE inscripciones
+             SET plan_id = ?,
+                 fecha_inicio = ?,
+                 fecha_fin = ?,
+                 precio_pagado = ?,
+                 estado = 'activa'
+             WHERE id = ?"
+        );
+        $stmt->bind_param(
+            "issdi",
+            $plan_id,
+            $fecha_inicio,
+            $fecha_fin,
+            $precio_pagado,
+            $inscripcion_id
+        );
+        $stmt->execute();
+
+        $stmt = $conn->prepare(
+            "INSERT IGNORE INTO inscripciones_sucursales (
+                inscripcion_id,
+                sucursal_id
+             )
+             SELECT ?, s.id
+             FROM sucursales s
+             WHERE s.estado = 'activa'"
+        );
+        $stmt->bind_param("i", $inscripcion_id);
         $stmt->execute();
         
         // Registrar el pago en la tabla pagos
         $fecha_actual = date('Y-m-d');
-        $stmt = $conn->prepare("INSERT INTO pagos (inscripcion_id, cliente_id, monto, fecha_pago, metodo_pago, referencia, estado) VALUES (?, ?, ?, ?, ?, ?, 'completado')");
-        $stmt->bind_param("iidsss", $inscripcion_id, $cliente_id, $precio_pagado, $fecha_actual, $metodo_pago, $referencia);
+        $stmt = $conn->prepare(
+            "INSERT INTO pagos (
+                sucursal_id,
+                inscripcion_id,
+                cliente_id,
+                monto,
+                fecha_pago,
+                metodo_pago,
+                referencia,
+                estado
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, 'completado')"
+        );
+        $stmt->bind_param(
+            "iiidsss",
+            $sucursal_id,
+            $inscripcion_id,
+            $cliente_id,
+            $precio_pagado,
+            $fecha_actual,
+            $metodo_pago,
+            $referencia
+        );
         $stmt->execute();
         $pago_id = (int) $conn->insert_id;
 
         // Registrar en historial_pagos
-        $stmt = $conn->prepare("INSERT INTO historial_pagos (inscripcion_id, cliente_id, monto, fecha_pago, metodo_pago, referencia, periodo_inicio, periodo_fin, plan_nombre, usuario_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-        $stmt->bind_param("iidssssssi", $inscripcion_id, $cliente_id, $precio_pagado, $fecha_actual, $metodo_pago, $referencia, $fecha_inicio, $fecha_fin, $plan['plan_nombre'], $usuario_id);
+        $stmt = $conn->prepare(
+            "INSERT INTO historial_pagos (
+                sucursal_id,
+                inscripcion_id,
+                cliente_id,
+                monto,
+                fecha_pago,
+                metodo_pago,
+                referencia,
+                periodo_inicio,
+                periodo_fin,
+                plan_nombre,
+                usuario_id
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        );
+        $stmt->bind_param(
+            "iiidssssssi",
+            $sucursal_id,
+            $inscripcion_id,
+            $cliente_id,
+            $precio_pagado,
+            $fecha_actual,
+            $metodo_pago,
+            $referencia,
+            $fecha_inicio,
+            $fecha_fin,
+            $plan['plan_nombre'],
+            $usuario_id
+        );
         $stmt->execute();
 
         if (is_array($mp_pago_data)) {
@@ -493,8 +781,13 @@ if (!empty($email_cliente)) {
         header('Location: inscripciones.php');
         exit;
         
-    } catch (Exception $e) {
-        if (isset($conn)) $conn->rollback();
+    } catch (Throwable $e) {
+        if (isset($conn)) {
+            try {
+                $conn->rollback();
+            } catch (Throwable $rollbackError) {
+            }
+        }
         if (isset($inscripcion_id)) {
             unset($_SESSION['last_renewal_' . $inscripcion_id]);
         }
@@ -506,44 +799,74 @@ if (!empty($email_cliente)) {
 
 // Cancelar inscripción
 if (isset($_GET['cancelar']) && is_numeric($_GET['cancelar'])) {
-    $id = $_GET['cancelar'];
-    
-    // Verificar si ya se procesó esta cancelación
-    if (isset($_SESSION['last_cancel_' . $id]) && $_SESSION['last_cancel_' . $id] > time() - 5) {
-        $_SESSION['error'] = 'Ya se está procesando esta cancelación';
+    $id = (int) $_GET['cancelar'];
+
+    if (
+        isset($_SESSION['last_cancel_' . $id]) &&
+        $_SESSION['last_cancel_' . $id] > time() - 5
+    ) {
+        $_SESSION['error'] = 'Ya se está procesando esta cancelación.';
         header('Location: inscripciones.php');
         exit;
     }
+
     $_SESSION['last_cancel_' . $id] = time();
-    
+
     try {
-        // Obtener el cliente_id antes de cancelar
-        $stmt = $conn->prepare("SELECT cliente_id FROM inscripciones WHERE id = ?");
+        $conn->begin_transaction();
+
+        $stmt = $conn->prepare(
+            "SELECT i.id
+             FROM inscripciones i
+             LEFT JOIN inscripciones_sucursales acceso
+                ON acceso.inscripcion_id = i.id
+               AND acceso.sucursal_id = ?
+             WHERE i.id = ?
+               AND (
+                    i.sucursal_id = ?
+                    OR acceso.sucursal_id IS NOT NULL
+               )
+             LIMIT 1
+             FOR UPDATE"
+        );
+        $stmt->bind_param("iii", $sucursal_id, $id, $sucursal_id);
+        $stmt->execute();
+        $inscripcion = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        if (!$inscripcion) {
+            throw new RuntimeException(
+                'La inscripción no pertenece a la sucursal activa.'
+            );
+        }
+
+        $stmt = $conn->prepare(
+            "UPDATE inscripciones
+             SET estado = 'cancelada'
+             WHERE id = ?"
+        );
         $stmt->bind_param("i", $id);
         $stmt->execute();
-        $result = $stmt->get_result();
-        $inscripcion = $result->fetch_assoc();
-        $cliente_id = $inscripcion['cliente_id'];
-        
-        $stmt = $conn->prepare("UPDATE inscripciones SET estado = 'cancelada' WHERE id = ?");
-        $stmt->bind_param("i", $id);
-        $stmt->execute();
-        
-        // Registrar cancelación en historial_pagos
-        $stmt = $conn->prepare("INSERT INTO historial_pagos (inscripcion_id, cliente_id, monto, fecha_pago, metodo_pago, referencia, periodo_inicio, periodo_fin, plan_nombre, usuario_id) VALUES (?, ?, 0, NOW(), NULL, NULL, NULL, NULL, 'CANCELACION', ?)");
-        $stmt->bind_param("iii", $id, $cliente_id, $usuario_id);
-        $stmt->execute();
-        
-        $_SESSION['mensaje_exito'] = 'Inscripción cancelada exitosamente';
-        
+        $stmt->close();
+
+        $conn->commit();
+
+        $_SESSION['mensaje_exito'] =
+            'Inscripción cancelada exitosamente.';
         unset($_SESSION['last_cancel_' . $id]);
-        
+
         header('Location: inscripciones.php');
         exit;
-        
-    } catch (Exception $e) {
+    } catch (Throwable $e) {
+        try {
+            $conn->rollback();
+        } catch (Throwable $rollbackError) {
+        }
+
         unset($_SESSION['last_cancel_' . $id]);
-        $_SESSION['error'] = 'Error al cancelar la inscripción: ' . $e->getMessage();
+        $_SESSION['error'] =
+            'Error al cancelar la inscripción: ' . $e->getMessage();
+
         header('Location: inscripciones.php');
         exit;
     }
@@ -572,6 +895,7 @@ $sort_columns = [
     'cliente' => 'c.nombre',
     'telefono' => 'c.telefono',
     'plan' => 'p.nombre',
+    'sucursal' => 's.nombre',
     'fecha_inicio' => 'i.fecha_inicio',
     'fecha_fin' => 'i.fecha_fin',
     'precio' => 'i.precio_pagado',
@@ -581,19 +905,44 @@ $sort_columns = [
 $order_by = isset($sort_columns[$sort]) ? $sort_columns[$sort] : 'i.id';
 $order_dir = ($order == 'ASC') ? 'ASC' : 'DESC';
 
-$query = "SELECT i.*, c.nombre as cliente_nombre, c.apellido as cliente_apellido, c.telefono as cliente_telefono,
-          c.codigo_qr as cliente_codigo_qr, c.estado as cliente_estado,
-          p.nombre as plan_nombre, p.duracion_dias
-          FROM inscripciones i 
-          INNER JOIN clientes c ON i.cliente_id = c.id 
-          INNER JOIN planes p ON i.plan_id = p.id 
-          WHERE 1=1";
-$count_query = "SELECT COUNT(*) as total FROM inscripciones i 
-                INNER JOIN clientes c ON i.cliente_id = c.id 
-                INNER JOIN planes p ON i.plan_id = p.id 
-                WHERE 1=1";
+$query = "SELECT
+              i.*,
+              c.nombre AS cliente_nombre,
+              c.apellido AS cliente_apellido,
+              c.telefono AS cliente_telefono,
+              c.codigo_qr AS cliente_codigo_qr,
+              c.estado AS cliente_estado,
+              p.nombre AS plan_nombre,
+              p.duracion_dias,
+              s.nombre AS sucursal_nombre,
+              s.clave AS sucursal_clave,
+              s.es_matriz AS sucursal_es_matriz
+          FROM inscripciones i
+          INNER JOIN clientes c ON i.cliente_id = c.id
+          INNER JOIN planes p ON i.plan_id = p.id
+          INNER JOIN sucursales s ON s.id = i.sucursal_id
+          WHERE 1 = 1";
+
+$count_query = "SELECT COUNT(*) AS total
+                FROM inscripciones i
+                INNER JOIN clientes c ON i.cliente_id = c.id
+                INNER JOIN planes p ON i.plan_id = p.id
+                INNER JOIN sucursales s ON s.id = i.sucursal_id
+                WHERE 1 = 1";
+
 $params = [];
 $types = "";
+
+if (!$vista_global_inscripciones) {
+    /*
+     * La sede del sidebar filtra por la sucursal donde fue registrada
+     * la inscripción. El acceso físico del socio continúa siendo global.
+     */
+    $query .= " AND i.sucursal_id = ?";
+    $count_query .= " AND i.sucursal_id = ?";
+    $params[] = $sucursal_id;
+    $types .= "i";
+}
 
 if (!empty($search)) {
     $query .= " AND (c.nombre LIKE ? OR c.apellido LIKE ? OR c.telefono LIKE ?)";
@@ -636,12 +985,44 @@ if (!empty($count_params)) {
 }
 $stmt_count->execute();
 $total_result = $stmt_count->get_result();
-$total_rows = $total_result->fetch_assoc()['total'];
-$total_pages = ceil($total_rows / $limit);
+$total_rows = (int) ($total_result->fetch_assoc()['total'] ?? 0);
+$total_pages = (int) ceil($total_rows / $limit);
 
-// Obtener planes activos
-$result = $conn->query("SELECT * FROM planes WHERE estado = 'activo' ORDER BY duracion_dias ASC");
-$planes = $result->fetch_all(MYSQLI_ASSOC);
+// Obtener planes y precios habilitados en la sucursal activa.
+$stmtPlanes = $conn->prepare(
+    "SELECT
+        p.id,
+        p.nombre,
+        p.duracion_dias,
+        p.descripcion,
+        ps.precio
+     FROM planes p
+     INNER JOIN planes_sucursales ps
+        ON ps.plan_id = p.id
+       AND ps.sucursal_id = ?
+     WHERE p.estado = 'activo'
+       AND ps.estado = 'activo'
+     ORDER BY p.duracion_dias ASC"
+);
+$stmtPlanes->bind_param('i', $sucursal_id);
+$stmtPlanes->execute();
+$planes = $stmtPlanes->get_result()->fetch_all(MYSQLI_ASSOC);
+$stmtPlanes->close();
+
+/*
+ * La terminal Point se toma de config/mercadopago_config.php.
+ * mercadopago_inscripciones.php carga el cliente y éste carga ese archivo.
+ * La tabla mercadopago_terminales puede seguir existiendo para administración,
+ * pero no bloquea el cobro mientras la configuración PHP sea válida.
+ */
+$terminal_point_id = defined('MP_TERMINAL_ID')
+    ? trim((string) MP_TERMINAL_ID)
+    : '';
+
+$terminal_point_disponible =
+    defined('MP_ACCESS_TOKEN')
+    && trim((string) MP_ACCESS_TOKEN) !== ''
+    && $terminal_point_id !== '';
 ?>
 
 <!DOCTYPE html>
@@ -689,6 +1070,193 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
             color: #64748b;
             font-size: .82rem;
         }
+
+        /* Sucursal compacta en el listado global */
+        .tabla-simple th.col-sucursal,
+        .tabla-simple td.col-sucursal {
+            width: 112px;
+            min-width: 112px;
+            white-space: nowrap;
+        }
+
+        .sucursal-chip {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            min-width: 76px;
+            max-width: 108px;
+            padding: 7px 9px;
+            border: 1px solid #c7d7fe;
+            border-radius: 8px;
+            background: #eef4ff;
+            color: #1e3a8a;
+            font-size: .72rem;
+            font-weight: 800;
+            line-height: 1;
+            letter-spacing: .025em;
+            text-transform: uppercase;
+            vertical-align: middle;
+        }
+
+        .sucursal-chip i {
+            flex: 0 0 auto;
+            font-size: .72rem;
+        }
+
+        .sucursal-chip-text {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .sucursal-chip.is-matriz {
+            border-color: #bfdbfe;
+            background: #eff6ff;
+            color: #1d4ed8;
+        }
+
+        .sucursal-chip.is-sucursal {
+            border-color: #a7f3d0;
+            background: #ecfdf5;
+            color: #047857;
+        }
+
+        @media (max-width: 767.98px) {
+            .tabla-simple td.col-sucursal {
+                width: auto;
+                min-width: 0;
+                white-space: normal;
+            }
+
+            .sucursal-chip {
+                max-width: 150px;
+            }
+        }
+
+        /*
+         * Tabla sin scroll horizontal en escritorio.
+         * Las acciones se muestran como iconos compactos con tooltip.
+         */
+        @media (min-width: 992px) {
+            .table-card-body,
+            .table-responsive-custom {
+                width: 100%;
+                max-width: 100%;
+                overflow-x: hidden !important;
+            }
+
+            .tabla-inscripciones {
+                width: 100% !important;
+                min-width: 0 !important;
+                max-width: 100% !important;
+                table-layout: fixed;
+            }
+
+            .tabla-inscripciones th,
+            .tabla-inscripciones td {
+                min-width: 0 !important;
+                padding-left: 9px;
+                padding-right: 9px;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+
+            .tabla-inscripciones th a {
+                white-space: normal;
+                line-height: 1.15;
+            }
+
+            .tabla-inscripciones td:nth-last-child(n+2) {
+                overflow-wrap: anywhere;
+            }
+
+            .tabla-inscripciones .acciones-cell {
+                overflow: visible;
+                white-space: nowrap;
+            }
+
+            .tabla-inscripciones .acciones-container {
+                display: flex;
+                align-items: center;
+                justify-content: flex-start;
+                flex-wrap: nowrap;
+                gap: 6px;
+                min-width: 0;
+            }
+
+            .tabla-inscripciones .btn-accion {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                flex: 0 0 36px;
+                width: 36px;
+                min-width: 36px;
+                height: 36px;
+                padding: 0;
+                border-radius: 8px;
+            }
+
+            .tabla-inscripciones .btn-accion span {
+                display: none;
+            }
+
+            .tabla-inscripciones.is-global th:nth-child(1),
+            .tabla-inscripciones.is-global td:nth-child(1) { width: 11%; }
+
+            .tabla-inscripciones.is-global th:nth-child(2),
+            .tabla-inscripciones.is-global td:nth-child(2) { width: 10%; }
+
+            .tabla-inscripciones.is-global th:nth-child(3),
+            .tabla-inscripciones.is-global td:nth-child(3) { width: 9%; }
+
+            .tabla-inscripciones.is-global th:nth-child(4),
+            .tabla-inscripciones.is-global td:nth-child(4) { width: 8%; }
+
+            .tabla-inscripciones.is-global th:nth-child(5),
+            .tabla-inscripciones.is-global td:nth-child(5),
+            .tabla-inscripciones.is-global th:nth-child(6),
+            .tabla-inscripciones.is-global td:nth-child(6) { width: 10%; }
+
+            .tabla-inscripciones.is-global th:nth-child(7),
+            .tabla-inscripciones.is-global td:nth-child(7) { width: 9%; }
+
+            .tabla-inscripciones.is-global th:nth-child(8),
+            .tabla-inscripciones.is-global td:nth-child(8) { width: 8%; }
+
+            .tabla-inscripciones.is-global th:nth-child(9),
+            .tabla-inscripciones.is-global td:nth-child(9) { width: 17%; }
+
+            .tabla-inscripciones.is-branch th:nth-child(1),
+            .tabla-inscripciones.is-branch td:nth-child(1) { width: 14%; }
+
+            .tabla-inscripciones.is-branch th:nth-child(2),
+            .tabla-inscripciones.is-branch td:nth-child(2) { width: 12%; }
+
+            .tabla-inscripciones.is-branch th:nth-child(3),
+            .tabla-inscripciones.is-branch td:nth-child(3) { width: 11%; }
+
+            .tabla-inscripciones.is-branch th:nth-child(4),
+            .tabla-inscripciones.is-branch td:nth-child(4),
+            .tabla-inscripciones.is-branch th:nth-child(5),
+            .tabla-inscripciones.is-branch td:nth-child(5) { width: 11%; }
+
+            .tabla-inscripciones.is-branch th:nth-child(6),
+            .tabla-inscripciones.is-branch td:nth-child(6) { width: 10%; }
+
+            .tabla-inscripciones.is-branch th:nth-child(7),
+            .tabla-inscripciones.is-branch td:nth-child(7) { width: 9%; }
+
+            .tabla-inscripciones.is-branch th:nth-child(8),
+            .tabla-inscripciones.is-branch td:nth-child(8) { width: 22%; }
+        }
+
+        @media (max-width: 991.98px) {
+            .table-responsive-custom {
+                overflow-x: visible !important;
+            }
+        }
     </style>
 </head>
 <body>
@@ -698,7 +1266,18 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
         <header class="page-header">
             <div>
                 <h1>Gestión de Inscripciones</h1>
-                <p>Administra clientes, planes, renovaciones y pagos registrados.</p>
+                <p>
+                    <?php if ($vista_global_inscripciones): ?>
+                        Consulta las inscripciones registradas en todas las sucursales.
+                    <?php else: ?>
+                        Consulta las inscripciones registradas en
+                        <?php echo htmlspecialchars(
+                            $sucursal_nombre,
+                            ENT_QUOTES,
+                            'UTF-8'
+                        ); ?>.
+                    <?php endif; ?>
+                </p>
             </div>
             <button class="btn-custom-primary page-primary-action" data-bs-toggle="modal" data-bs-target="#modalNuevoCliente">
                 <i class="fas fa-user-plus"></i>
@@ -765,16 +1344,19 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
                     <i class="fas fa-list"></i>
                     <span>Listado de inscripciones</span>
                 </div>
-                <span class="records-count"><?php echo number_format($total_rows); ?> <?php echo $total_rows == 1 ? 'registro' : 'registros'; ?></span>
+                <span class="records-count"><?php echo number_format((int) $total_rows); ?> <?php echo $total_rows == 1 ? 'registro' : 'registros'; ?></span>
             </div>
             <div class="card-body-custom table-card-body">
                 <div class="table-responsive-custom">
-                    <table class="tabla-simple">
+                    <table class="tabla-simple tabla-inscripciones <?php echo $vista_global_inscripciones ? 'is-global' : 'is-branch'; ?>">
                         <thead>
                             <tr>
                                 <th><a href="?sort=cliente&order=<?php echo ($sort == 'cliente' && $order == 'ASC') ? 'DESC' : 'ASC'; ?>&search=<?php echo urlencode($search); ?>&estado=<?php echo urlencode($estado); ?>">Cliente <i class="fas fa-sort"></i></a></th>
                                 <th><a href="?sort=telefono&order=<?php echo ($sort == 'telefono' && $order == 'ASC') ? 'DESC' : 'ASC'; ?>&search=<?php echo urlencode($search); ?>&estado=<?php echo urlencode($estado); ?>">Teléfono <i class="fas fa-sort"></i></a></th>
                                 <th><a href="?sort=plan&order=<?php echo ($sort == 'plan' && $order == 'ASC') ? 'DESC' : 'ASC'; ?>&search=<?php echo urlencode($search); ?>&estado=<?php echo urlencode($estado); ?>">Plan <i class="fas fa-sort"></i></a></th>
+                                <?php if ($vista_global_inscripciones): ?>
+                                    <th class="col-sucursal">Sede</th>
+                                <?php endif; ?>
                                 <th><a href="?sort=fecha_inicio&order=<?php echo ($sort == 'fecha_inicio' && $order == 'ASC') ? 'DESC' : 'ASC'; ?>&search=<?php echo urlencode($search); ?>&estado=<?php echo urlencode($estado); ?>">Fecha Inicio <i class="fas fa-sort"></i></a></th>
                                 <th><a href="?sort=fecha_fin&order=<?php echo ($sort == 'fecha_fin' && $order == 'ASC') ? 'DESC' : 'ASC'; ?>&search=<?php echo urlencode($search); ?>&estado=<?php echo urlencode($estado); ?>">Fecha Fin <i class="fas fa-sort"></i></a></th>
                                 <th><a href="?sort=precio&order=<?php echo ($sort == 'precio' && $order == 'ASC') ? 'DESC' : 'ASC'; ?>&search=<?php echo urlencode($search); ?>&estado=<?php echo urlencode($estado); ?>">$ Precio <i class="fas fa-sort"></i></a></th>
@@ -856,6 +1438,66 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
                                         <?php echo htmlspecialchars($ins['plan_nombre']); ?>
                                     <?php endif; ?>
                                 </td>
+                                <?php if ($vista_global_inscripciones): ?>
+                                    <?php
+                                    $sucursalEsMatriz =
+                                        (int) ($ins['sucursal_es_matriz'] ?? 0) === 1;
+
+                                    $sucursalClave = trim((string) (
+                                        $ins['sucursal_clave'] ?? ''
+                                    ));
+
+                                    if ($sucursalClave === '') {
+                                        $sucursalClave = $sucursalEsMatriz
+                                            ? 'MATRIZ'
+                                            : 'SEDE';
+                                    }
+
+                                    $sucursalNombreCompleto = trim(
+                                        (string) ($ins['sucursal_nombre'] ?? '')
+                                    );
+
+                                    $sucursalTooltip =
+                                        $sucursalNombreCompleto
+                                        . (
+                                            $sucursalEsMatriz
+                                                ? ' · Matriz'
+                                                : ' · Sucursal'
+                                        );
+                                    ?>
+                                    <td
+                                        class="col-sucursal"
+                                        data-label="Sede"
+                                    >
+                                        <span
+                                            class="sucursal-chip <?php echo $sucursalEsMatriz
+                                                ? 'is-matriz'
+                                                : 'is-sucursal'; ?>"
+                                            title="<?php echo htmlspecialchars(
+                                                $sucursalTooltip,
+                                                ENT_QUOTES,
+                                                'UTF-8'
+                                            ); ?>"
+                                            aria-label="<?php echo htmlspecialchars(
+                                                $sucursalTooltip,
+                                                ENT_QUOTES,
+                                                'UTF-8'
+                                            ); ?>"
+                                        >
+                                            <i class="fas <?php echo $sucursalEsMatriz
+                                                ? 'fa-building'
+                                                : 'fa-location-dot'; ?>"></i>
+
+                                            <span class="sucursal-chip-text">
+                                                <?php echo htmlspecialchars(
+                                                    $sucursalClave,
+                                                    ENT_QUOTES,
+                                                    'UTF-8'
+                                                ); ?>
+                                            </span>
+                                        </span>
+                                    </td>
+                                <?php endif; ?>
                                 <td data-label="Fecha inicio"><?php echo date('d/m/Y', strtotime($ins['fecha_inicio'])); ?></td>
                                 <td data-label="Fecha fin">
                                     <?php 
@@ -866,7 +1508,7 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
                                     }
                                     ?>
                                 </td>
-                                <td data-label="Precio"><strong class="price-value">$<?php echo number_format($ins['precio_pagado'], 2); ?></strong></td>
+                                <td data-label="Precio"><strong class="price-value">$<?php echo number_format((float) $ins['precio_pagado'], 2); ?></strong></td>
                                 <td data-label="Estado">
                                     <?php if($ins['estado'] == 'activa'): ?>
                                         <span class="badge-activa">Activa</span>
@@ -914,7 +1556,7 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
                             <?php endforeach; ?>
                             <?php if(empty($inscripciones)): ?>
                             <tr>
-                                <td colspan="8" class="empty-state">
+                                <td colspan="<?php echo $vista_global_inscripciones ? 9 : 8; ?>" class="empty-state">
                                     <i class="fas fa-inbox"></i>
                                     <p class="mt-2">No hay inscripciones registradas</p>
                                 </td>
@@ -992,7 +1634,7 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
                                     <option value="">Seleccionar plan</option>
                                     <?php foreach($planes as $plan): ?>
                                     <option value="<?php echo $plan['id']; ?>" data-precio="<?php echo $plan['precio']; ?>">
-                                        <?php echo htmlspecialchars($plan['nombre'] . ' - $' . number_format($plan['precio'], 2)); ?>
+                                        <?php echo htmlspecialchars($plan['nombre'] . ' - $' . number_format((float) $plan['precio'], 2)); ?>
                                     </option>
                                     <?php endforeach; ?>
                                 </select>
@@ -1012,8 +1654,12 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
                                 <label class="form-label" for="metodo_pago_nuevo">Método Pago *</label>
                                 <select class="form-select" name="metodo_pago" id="metodo_pago_nuevo" required onchange="actualizarAyudaPago(this)">
                                     <option value="efectivo">Efectivo</option>
-                                    <option value="tarjeta_debito">Tarjeta de débito · Point</option>
-                                    <option value="tarjeta_credito">Tarjeta de crédito · Point</option>
+                                    <?php if ($terminal_point_disponible): ?>
+                                        <option value="tarjeta_debito">Tarjeta de débito · Point</option>
+                                        <option value="tarjeta_credito">Tarjeta de crédito · Point</option>
+                                    <?php else: ?>
+                                        <option value="" disabled>Point no configurada en esta sucursal</option>
+                                    <?php endif; ?>
                                     <option value="transferencia">Transferencia</option>
                                 </select>
                                 <div class="point-payment-help d-none" data-point-help>
@@ -1076,7 +1722,7 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
                                 <option value="">Seleccionar plan</option>
                                 <?php foreach($planes as $plan): ?>
                                 <option value="<?php echo $plan['id']; ?>" data-precio="<?php echo $plan['precio']; ?>">
-                                    <?php echo htmlspecialchars($plan['nombre'] . ' - $' . number_format($plan['precio'], 2)); ?>
+                                    <?php echo htmlspecialchars($plan['nombre'] . ' - $' . number_format((float) $plan['precio'], 2)); ?>
                                 </option>
                                 <?php endforeach; ?>
                             </select>
@@ -1097,8 +1743,12 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
                             <label class="form-label" for="metodo_pago_renovar">Método Pago *</label>
                             <select class="form-select" name="metodo_pago" id="metodo_pago_renovar" required onchange="actualizarAyudaPago(this)">
                                 <option value="efectivo">Efectivo</option>
-                                <option value="tarjeta_debito">Tarjeta de débito · Point</option>
-                                <option value="tarjeta_credito">Tarjeta de crédito · Point</option>
+                                <?php if ($terminal_point_disponible): ?>
+                                    <option value="tarjeta_debito">Tarjeta de débito · Point</option>
+                                    <option value="tarjeta_credito">Tarjeta de crédito · Point</option>
+                                <?php else: ?>
+                                    <option value="" disabled>Point no configurada en esta sucursal</option>
+                                <?php endif; ?>
                                 <option value="transferencia">Transferencia</option>
                             </select>
                             <div class="point-payment-help d-none" data-point-help>
@@ -1340,16 +1990,45 @@ $planes = $result->fetch_all(MYSQLI_ASSOC);
         async function fetchJsonPoint(url, options) {
             const response = await fetch(url, options || {});
             const text = await response.text();
-            let data;
+            let data = null;
 
             try {
                 data = JSON.parse(text);
             } catch (error) {
-                throw new Error('El servidor devolvió una respuesta no válida.');
+                console.error(
+                    'Respuesta no JSON de ' + url,
+                    {
+                        status: response.status,
+                        contentType: response.headers.get('content-type'),
+                        response: text
+                    }
+                );
+
+                const statusText = response.status > 0
+                    ? 'HTTP ' + response.status
+                    : 'sin código HTTP';
+
+                throw new Error(
+                    'El endpoint de Mercado Pago devolvió ' +
+                    statusText +
+                    ' en lugar de JSON. Verifica que exista ' +
+                    url +
+                    ' y revisa el registro de errores de PHP.'
+                );
             }
 
             if (!response.ok || !data.success) {
-                throw new Error(data.message || 'Ocurrió un error al comunicarse con Mercado Pago.');
+                const requestError = new Error(
+                    data.message ||
+                    'Ocurrió un error al comunicarse con Mercado Pago.'
+                );
+                requestError.code = data.code || '';
+                requestError.orderId = data.order_id || '';
+                requestError.requiresTerminal = Boolean(
+                    data.requires_terminal
+                );
+                requestError.httpStatus = response.status;
+                throw requestError;
             }
 
             return data;

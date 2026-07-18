@@ -151,37 +151,39 @@ $sucursalActivaSesion = (int) ($_SESSION['sucursal_id'] ?? 0);
 
     <style>
         :root {
-            --br-blue: #1e3a8a;
-            --br-blue-dark: #14275c;
-            --br-blue-soft: #eef4ff;
-            --br-bg: #f4f6f9;
-            --br-card: #ffffff;
-            --br-text: #1f2937;
-            --br-muted: #64748b;
-            --br-border: #dce4ef;
-            --br-border-soft: #edf1f6;
-            --br-green: #047857;
-            --br-green-soft: #ecfdf5;
-            --br-red: #b91c1c;
-            --br-red-soft: #fef2f2;
-            --br-yellow: #92400e;
-            --br-yellow-soft: #fffbeb;
-            --br-shadow: 0 12px 30px rgba(15, 23, 42, .06);
+            --azul: #1e3a8a;
+            --azul-hover: #152c6b;
+            --azul-suave: #eef4ff;
+            --fondo: #f4f6f9;
+            --blanco: #ffffff;
+            --texto: #1f2937;
+            --suave: #64748b;
+            --borde: #dfe5ee;
+            --borde-suave: #edf1f6;
+            --verde: #059669;
+            --verde-suave: #ecfdf5;
+            --rojo: #b91c1c;
+            --rojo-suave: #fef2f2;
+            --amarillo: #b45309;
+            --amarillo-suave: #fffbeb;
+            --sombra: 0 10px 28px rgba(15, 23, 42, .06);
         }
 
-        * { box-sizing: border-box; }
+        * {
+            box-sizing: border-box;
+        }
 
         html,
         body {
-            max-width: 100%;
+            width: 100%;
             min-height: 100%;
             margin: 0;
             overflow-x: hidden;
         }
 
         body {
-            color: var(--br-text);
-            background: var(--br-bg);
+            color: var(--texto);
+            background: var(--fondo);
             font-family: "Segoe UI", Roboto, Arial, sans-serif;
         }
 
@@ -189,24 +191,31 @@ $sucursalActivaSesion = (int) ($_SESSION['sucursal_id'] ?? 0);
         input,
         select,
         textarea,
-        a { font: inherit; }
+        a {
+            font: inherit;
+        }
+
+        button:disabled {
+            cursor: not-allowed !important;
+            opacity: .55;
+        }
 
         .br-main {
             min-height: 100vh;
-            padding: 27px;
+            padding: 28px;
         }
 
         .br-container {
-            width: min(1240px, 100%);
+            width: min(1440px, 100%);
             margin: 0 auto;
         }
 
         .br-page-header {
             display: flex;
-            align-items: flex-start;
+            align-items: center;
             justify-content: space-between;
-            gap: 18px;
-            margin-bottom: 17px;
+            gap: 22px;
+            margin-bottom: 20px;
         }
 
         .br-eyebrow {
@@ -214,185 +223,226 @@ $sucursalActivaSesion = (int) ($_SESSION['sucursal_id'] ?? 0);
             align-items: center;
             gap: 7px;
             margin-bottom: 6px;
-            color: var(--br-blue);
-            font-size: .68rem;
+            color: var(--azul);
+            font-size: .7rem;
             font-weight: 850;
-            letter-spacing: .08em;
+            letter-spacing: .075em;
             text-transform: uppercase;
         }
 
         .br-page-header h1 {
             margin: 0 0 6px;
-            color: var(--br-blue-dark);
-            font-size: clamp(1.65rem, 4vw, 2.25rem);
+            color: var(--azul-hover);
+            font-size: clamp(1.8rem, 3vw, 2.35rem);
             line-height: 1.08;
             letter-spacing: -.035em;
         }
 
         .br-page-header p {
-            max-width: 720px;
+            max-width: 780px;
             margin: 0;
-            color: var(--br-muted);
-            font-size: .8rem;
+            color: var(--suave);
+            font-size: .84rem;
             line-height: 1.55;
         }
 
         .br-primary,
         .br-secondary,
         .br-danger,
+        .br-soft-button,
         .br-icon-button {
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            gap: 7px;
-            min-height: 40px;
+            gap: 8px;
+            min-height: 42px;
+            padding: 0 15px;
             border-radius: 10px;
             cursor: pointer;
-            font-size: .68rem;
-            font-weight: 850;
+            font-size: .72rem;
+            font-weight: 800;
             text-decoration: none;
-            transition: background .18s ease, border-color .18s ease, transform .18s ease;
+            transition:
+                border-color .18s ease,
+                background .18s ease,
+                color .18s ease,
+                transform .18s ease;
         }
 
         .br-primary {
-            padding: 0 14px;
             border: 0;
             color: #fff;
-            background: var(--br-blue);
+            background: var(--azul);
+            box-shadow: 0 8px 18px rgba(30, 58, 138, .14);
         }
 
-        .br-primary:hover { background: #254a9e; transform: translateY(-1px); }
+        .br-primary:hover:not(:disabled) {
+            background: var(--azul-hover);
+            transform: translateY(-1px);
+        }
 
         .br-secondary {
-            padding: 0 13px;
             border: 1px solid #cbd5e1;
             color: #334155;
             background: #fff;
         }
 
-        .br-secondary:hover { border-color: #9fb3d0; background: #f8fafc; }
+        .br-secondary:hover:not(:disabled) {
+            border-color: #9fb3d0;
+            color: var(--azul);
+            background: #f8fafc;
+        }
 
         .br-danger {
-            padding: 0 13px;
             border: 1px solid #fecaca;
-            color: var(--br-red);
+            color: var(--rojo);
             background: #fff7f7;
         }
 
-        .br-danger:hover { border-color: #fca5a5; background: var(--br-red-soft); }
+        .br-danger:hover:not(:disabled) {
+            border-color: #fca5a5;
+            background: var(--rojo-suave);
+        }
+
+        .br-soft-button {
+            border: 1px solid #bfdbfe;
+            color: var(--azul);
+            background: var(--azul-suave);
+        }
+
+        .br-soft-button:hover {
+            border-color: #93b4e5;
+            background: #e2edff;
+        }
 
         .br-icon-button {
-            width: 36px;
-            min-height: 36px;
+            width: 38px;
+            min-height: 38px;
             padding: 0;
-            border: 1px solid var(--br-border);
+            border: 1px solid var(--borde);
             color: #475569;
             background: #fff;
         }
 
-        .br-icon-button:hover { color: var(--br-blue); border-color: #9fb3d0; }
-
-        .br-stats {
-            display: grid;
-            grid-template-columns: repeat(4, minmax(0, 1fr));
-            gap: 10px;
-            margin-bottom: 17px;
+        .br-icon-button:hover {
+            border-color: #9fb3d0;
+            color: var(--azul);
+            background: #f8fafc;
         }
-
-        .br-stat {
-            display: flex;
-            align-items: center;
-            gap: 11px;
-            min-width: 0;
-            padding: 14px;
-            border: 1px solid var(--br-border);
-            border-radius: 14px;
-            background: #fff;
-            box-shadow: var(--br-shadow);
-        }
-
-        .br-stat-icon {
-            display: grid;
-            flex: 0 0 39px;
-            width: 39px;
-            height: 39px;
-            place-items: center;
-            border-radius: 11px;
-            color: var(--br-blue);
-            background: var(--br-blue-soft);
-        }
-
-        .br-stat strong,
-        .br-stat span { display: block; }
-        .br-stat strong { color: var(--br-blue-dark); font-size: 1rem; }
-        .br-stat span { margin-top: 2px; color: var(--br-muted); font-size: .61rem; }
 
         .br-message {
             display: flex;
             align-items: flex-start;
-            gap: 9px;
-            margin-bottom: 15px;
-            padding: 12px 14px;
+            gap: 10px;
+            margin-bottom: 18px;
+            padding: 14px 16px;
             border: 1px solid #fecaca;
             border-radius: 12px;
             color: #991b1b;
-            background: var(--br-red-soft);
-            font-size: .72rem;
+            background: var(--rojo-suave);
+            font-size: .76rem;
             line-height: 1.5;
         }
 
-        .br-layout {
+        .br-overview {
             display: grid;
-            grid-template-columns: 300px minmax(0, 1fr);
-            gap: 15px;
-            align-items: start;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 14px;
+            margin-bottom: 18px;
+        }
+
+        .br-overview-card {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            min-width: 0;
+            min-height: 90px;
+            padding: 17px 18px;
+            border: 1px solid var(--borde);
+            border-radius: 15px;
+            background: #fff;
+            box-shadow: var(--sombra);
+        }
+
+        .br-overview-icon {
+            display: grid;
+            flex: 0 0 46px;
+            width: 46px;
+            height: 46px;
+            place-items: center;
+            border-radius: 13px;
+            color: var(--azul);
+            background: var(--azul-suave);
+            font-size: 1rem;
+        }
+
+        .br-overview-card strong,
+        .br-overview-card span {
+            display: block;
+        }
+
+        .br-overview-card strong {
+            color: var(--azul-hover);
+            font-size: 1.2rem;
+        }
+
+        .br-overview-card span {
+            margin-top: 3px;
+            color: var(--suave);
+            font-size: .68rem;
         }
 
         .br-card {
             min-width: 0;
             overflow: hidden;
-            border: 1px solid var(--br-border);
-            border-radius: 17px;
+            border: 1px solid var(--borde);
+            border-radius: 16px;
             background: #fff;
-            box-shadow: var(--br-shadow);
+            box-shadow: var(--sombra);
         }
 
-        .br-directory {
-            position: sticky;
-            top: 16px;
+        .br-card + .br-card {
+            margin-top: 18px;
         }
 
         .br-card-header {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            gap: 12px;
-            padding: 15px 16px;
-            border-bottom: 1px solid var(--br-border-soft);
+            gap: 16px;
+            padding: 18px 20px;
+            border-bottom: 1px solid var(--borde-suave);
         }
 
         .br-card-header h2,
         .br-card-header h3 {
             margin: 0;
-            color: var(--br-blue-dark);
-            font-size: .88rem;
+            color: var(--azul-hover);
+            font-size: 1rem;
         }
 
         .br-card-header p {
-            margin: 3px 0 0;
-            color: var(--br-muted);
-            font-size: .61rem;
+            margin: 4px 0 0;
+            color: var(--suave);
+            font-size: .68rem;
+            line-height: 1.45;
+        }
+
+        .br-card-tools {
+            display: flex;
+            align-items: center;
+            gap: 10px;
         }
 
         .br-search {
             position: relative;
-            margin: 12px 13px 5px;
+            width: min(330px, 40vw);
         }
 
         .br-search i {
             position: absolute;
             top: 50%;
-            left: 11px;
+            left: 12px;
             color: #94a3b8;
             transform: translateY(-50%);
             pointer-events: none;
@@ -400,652 +450,607 @@ $sucursalActivaSesion = (int) ($_SESSION['sucursal_id'] ?? 0);
 
         .br-search input {
             width: 100%;
-            min-height: 38px;
-            padding: 0 11px 0 34px;
-            border: 1px solid var(--br-border);
-            border-radius: 9px;
+            min-height: 42px;
+            padding: 0 13px 0 37px;
+            border: 1px solid var(--borde);
+            border-radius: 10px;
             outline: none;
-            color: var(--br-text);
+            color: var(--texto);
             background: #f8fafc;
-            font-size: .68rem;
+            font-size: .72rem;
         }
 
         .br-search input:focus {
             border-color: #8facd9;
             background: #fff;
-            box-shadow: 0 0 0 3px rgba(30, 58, 138, .07);
+            box-shadow: 0 0 0 3px rgba(30, 58, 138, .08);
+        }
+
+        .br-table-head,
+        .br-branch-item {
+            display: grid;
+            grid-template-columns:
+                minmax(240px, 1.45fr)
+                120px
+                105px
+                120px
+                105px
+                130px;
+            align-items: center;
+            gap: 14px;
+        }
+
+        .br-table-head {
+            padding: 11px 20px;
+            color: #64748b;
+            background: #f8fafc;
+            border-bottom: 1px solid var(--borde-suave);
+            font-size: .61rem;
+            font-weight: 850;
+            letter-spacing: .04em;
+            text-transform: uppercase;
         }
 
         .br-branch-list {
             display: grid;
-            gap: 7px;
-            max-height: calc(100vh - 285px);
-            padding: 8px 9px 12px;
-            overflow-y: auto;
-            scrollbar-width: thin;
         }
 
         .br-branch-item {
-            display: block;
             min-width: 0;
-            padding: 11px;
-            border: 1px solid var(--br-border-soft);
-            border-radius: 11px;
+            padding: 15px 20px;
+            border-bottom: 1px solid var(--borde-suave);
             color: inherit;
             background: #fff;
-            text-decoration: none;
-            transition: border-color .18s ease, background .18s ease;
         }
 
-        .br-branch-item:hover { border-color: #a9bddd; background: #fbfdff; }
-        .br-branch-item.active { border-color: #8facd9; background: var(--br-blue-soft); }
-        .br-branch-item.inactive { opacity: .65; }
+        .br-branch-item:last-child {
+            border-bottom: 0;
+        }
 
-        .br-branch-top {
+        .br-branch-item:hover {
+            background: #fbfdff;
+        }
+
+        .br-branch-item.active {
+            background: #f4f8ff;
+            box-shadow: inset 4px 0 0 var(--azul);
+        }
+
+        .br-branch-item.inactive {
+            opacity: .68;
+        }
+
+        .br-branch-main {
             display: flex;
-            align-items: flex-start;
-            justify-content: space-between;
-            gap: 8px;
+            align-items: center;
+            gap: 12px;
+            min-width: 0;
         }
 
-        .br-branch-name { min-width: 0; }
-        .br-branch-name strong,
-        .br-branch-name span { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-        .br-branch-name strong { color: var(--br-blue-dark); font-size: .72rem; }
-        .br-branch-name span { margin-top: 3px; color: var(--br-muted); font-size: .57rem; }
-
-        .br-status-dot {
-            flex: 0 0 8px;
-            width: 8px;
-            height: 8px;
-            margin-top: 4px;
-            border-radius: 50%;
-            background: #94a3b8;
+        .br-branch-icon {
+            display: grid;
+            flex: 0 0 42px;
+            width: 42px;
+            height: 42px;
+            place-items: center;
+            border-radius: 11px;
+            color: var(--azul);
+            background: var(--azul-suave);
         }
 
-        .br-status-dot.active { background: #10b981; }
-
-        .br-branch-tags,
-        .br-branch-metrics {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 5px;
-            margin-top: 8px;
+        .br-branch-copy {
+            min-width: 0;
         }
 
+        .br-branch-copy strong,
+        .br-branch-copy span {
+            display: block;
+            overflow: hidden;
+            white-space: nowrap;
+            text-overflow: ellipsis;
+        }
+
+        .br-branch-copy strong {
+            color: var(--texto);
+            font-size: .78rem;
+        }
+
+        .br-branch-copy span {
+            margin-top: 3px;
+            color: var(--suave);
+            font-size: .61rem;
+        }
+
+        .br-mobile-label {
+            display: none;
+            margin-bottom: 4px;
+            color: #64748b;
+            font-size: .58rem;
+            font-weight: 850;
+            text-transform: uppercase;
+        }
+
+        .br-cell-value {
+            color: #334155;
+            font-size: .72rem;
+            font-weight: 700;
+        }
+
+        .br-badge,
         .br-tag {
             display: inline-flex;
             align-items: center;
-            gap: 4px;
-            min-height: 22px;
-            padding: 0 7px;
+            justify-content: center;
+            gap: 5px;
+            min-height: 26px;
+            padding: 0 9px;
             border-radius: 999px;
             color: #475569;
             background: #f1f5f9;
-            font-size: .53rem;
-            font-weight: 800;
+            font-size: .58rem;
+            font-weight: 850;
+            white-space: nowrap;
         }
 
-        .br-tag.matrix { color: #1e40af; background: #dbeafe; }
-        .br-tag.session { color: #065f46; background: var(--br-green-soft); }
-
-        .br-branch-metrics {
-            color: var(--br-muted);
-            font-size: .54rem;
+        .br-badge.active,
+        .br-tag.session {
+            color: #065f46;
+            background: var(--verde-suave);
         }
 
-        .br-detail-header {
+        .br-badge.inactive {
+            color: #991b1b;
+            background: var(--rojo-suave);
+        }
+
+        .br-badge.default,
+        .br-tag.matrix {
+            color: #1e40af;
+            background: #dbeafe;
+        }
+
+        .br-row-action {
             display: flex;
-            align-items: flex-start;
-            justify-content: space-between;
-            gap: 15px;
-            padding: 18px;
-            border-bottom: 1px solid var(--br-border-soft);
-        }
-
-        .br-detail-title { min-width: 0; }
-        .br-detail-title h2 { margin: 0 0 5px; color: var(--br-blue-dark); font-size: 1.15rem; }
-        .br-detail-title p { margin: 0; color: var(--br-muted); font-size: .66rem; line-height: 1.45; }
-
-        .br-detail-actions {
-            display: flex;
-            flex-wrap: wrap;
             justify-content: flex-end;
-            gap: 7px;
+        }
+
+        .br-empty {
+            padding: 36px 18px;
+            color: var(--suave);
+            text-align: center;
+            font-size: .74rem;
+        }
+
+        .br-empty i {
+            display: block;
+            margin-bottom: 10px;
+            color: #94a3b8;
+            font-size: 1.4rem;
+        }
+
+        .br-management {
+            scroll-margin-top: 20px;
+        }
+
+        .br-management-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 18px;
+            padding: 19px 20px;
+            border-bottom: 1px solid var(--borde-suave);
+            background:
+                linear-gradient(135deg, rgba(238, 244, 255, .95), #fff);
+        }
+
+        .br-management-title {
+            min-width: 0;
+        }
+
+        .br-management-kicker {
+            display: block;
+            margin-bottom: 4px;
+            color: var(--azul);
+            font-size: .62rem;
+            font-weight: 850;
+            letter-spacing: .05em;
+            text-transform: uppercase;
+        }
+
+        .br-management-title h2 {
+            margin: 0;
+            color: var(--azul-hover);
+            font-size: 1.25rem;
+        }
+
+        .br-management-title p {
+            margin: 5px 0 0;
+            color: var(--suave);
+            font-size: .68rem;
+        }
+
+        .br-management-actions {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 8px;
+            flex-wrap: wrap;
         }
 
         .br-tabs {
-            display: flex;
-            gap: 4px;
-            padding: 9px 12px 0;
-            overflow-x: auto;
-            border-bottom: 1px solid var(--br-border-soft);
-            scrollbar-width: none;
-        }
-
-        .br-tabs::-webkit-scrollbar { display: none; }
-
-        .br-tab {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            gap: 6px;
-            flex: 0 0 auto;
-            min-height: 38px;
-            padding: 0 11px;
-            border: 0;
-            border-bottom: 2px solid transparent;
-            color: var(--br-muted);
-            background: transparent;
-            cursor: pointer;
-            font-size: .63rem;
-            font-weight: 850;
-        }
-
-        .br-tab.active { color: var(--br-blue); border-bottom-color: var(--br-blue); }
-
-        .br-tab-panel { display: none; padding: 16px; }
-        .br-tab-panel.active { display: block; }
-
-        .br-info-grid,
-        .br-mini-stats {
             display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
             gap: 10px;
-        }
-
-        .br-info-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-        .br-mini-stats { grid-template-columns: repeat(5, minmax(0, 1fr)); margin-bottom: 14px; }
-
-        .br-info-box,
-        .br-mini-stat {
-            min-width: 0;
-            padding: 12px;
-            border: 1px solid var(--br-border);
-            border-radius: 11px;
+            padding: 14px 16px;
+            border-bottom: 1px solid var(--borde-suave);
             background: #fbfcfe;
         }
 
-        .br-info-box.full { grid-column: 1 / -1; }
-        .br-info-box span,
-        .br-mini-stat span { display: block; color: var(--br-muted); font-size: .56rem; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; }
-        .br-info-box strong,
-        .br-mini-stat strong { display: block; margin-top: 5px; overflow-wrap: anywhere; color: var(--br-text); font-size: .7rem; line-height: 1.45; }
-        .br-mini-stat strong { color: var(--br-blue-dark); font-size: .83rem; }
+        .br-tab {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            min-width: 0;
+            min-height: 64px;
+            padding: 10px 12px;
+            border: 1px solid var(--borde);
+            border-radius: 11px;
+            color: #475569;
+            background: #fff;
+            cursor: pointer;
+            text-align: left;
+            transition:
+                border-color .18s ease,
+                color .18s ease,
+                background .18s ease;
+        }
+
+        .br-tab:hover {
+            border-color: #a9bddd;
+            color: var(--azul);
+        }
+
+        .br-tab.active {
+            border-color: #8facd9;
+            color: var(--azul);
+            background: var(--azul-suave);
+            box-shadow: 0 0 0 3px rgba(30, 58, 138, .06);
+        }
+
+        .br-tab-icon {
+            display: grid;
+            flex: 0 0 34px;
+            width: 34px;
+            height: 34px;
+            place-items: center;
+            border-radius: 9px;
+            color: inherit;
+            background: rgba(148, 163, 184, .12);
+        }
+
+        .br-tab-copy {
+            min-width: 0;
+        }
+
+        .br-tab-copy strong,
+        .br-tab-copy span {
+            display: block;
+        }
+
+        .br-tab-copy strong {
+            font-size: .69rem;
+        }
+
+        .br-tab-copy span {
+            margin-top: 2px;
+            color: var(--suave);
+            font-size: .56rem;
+            line-height: 1.3;
+        }
+
+        .br-tab-panel {
+            display: none;
+            padding: 18px;
+        }
+
+        .br-tab-panel.active {
+            display: block;
+        }
+
+        .br-panel-intro {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 14px;
+            margin-bottom: 14px;
+        }
+
+        .br-panel-intro h3 {
+            margin: 0;
+            color: var(--azul-hover);
+            font-size: .9rem;
+        }
+
+        .br-panel-intro p {
+            margin: 4px 0 0;
+            color: var(--suave);
+            font-size: .64rem;
+        }
+
+        .br-metrics {
+            display: grid;
+            grid-template-columns: repeat(5, minmax(0, 1fr));
+            gap: 10px;
+            margin-bottom: 14px;
+        }
+
+        .br-metric {
+            min-width: 0;
+            padding: 13px;
+            border: 1px solid var(--borde);
+            border-radius: 11px;
+            background: #fff;
+        }
+
+        .br-metric span,
+        .br-metric strong {
+            display: block;
+        }
+
+        .br-metric span {
+            color: var(--suave);
+            font-size: .56rem;
+            font-weight: 850;
+            letter-spacing: .035em;
+            text-transform: uppercase;
+        }
+
+        .br-metric strong {
+            margin-top: 5px;
+            color: var(--azul-hover);
+            font-size: .85rem;
+        }
 
         .br-section {
             overflow: hidden;
-            border: 1px solid var(--br-border);
+            border: 1px solid var(--borde);
             border-radius: 13px;
             background: #fff;
         }
 
-        .br-section + .br-section { margin-top: 13px; }
+        .br-section + .br-section {
+            margin-top: 14px;
+        }
 
         .br-section-header {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            gap: 12px;
-            padding: 13px 14px;
-            border-bottom: 1px solid var(--br-border-soft);
-            background: #fbfcfe;
+            gap: 14px;
+            padding: 14px 16px;
+            border-bottom: 1px solid var(--borde-suave);
+            background: #f8fafc;
         }
 
-        .br-section-header h3 { margin: 0 0 3px; color: var(--br-blue-dark); font-size: .76rem; }
-        .br-section-header p { margin: 0; color: var(--br-muted); font-size: .58rem; }
+        .br-section-header h3 {
+            margin: 0;
+            color: var(--azul-hover);
+            font-size: .78rem;
+        }
 
-        .br-list { display: grid; }
+        .br-section-header p {
+            margin: 3px 0 0;
+            color: var(--suave);
+            font-size: .59rem;
+        }
+
+        .br-info-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 1px;
+            background: var(--borde-suave);
+        }
+
+        .br-info-box {
+            min-width: 0;
+            padding: 14px 16px;
+            background: #fff;
+        }
+
+        .br-info-box.full {
+            grid-column: 1 / -1;
+        }
+
+        .br-info-box span,
+        .br-info-box strong {
+            display: block;
+        }
+
+        .br-info-box span {
+            color: var(--suave);
+            font-size: .57rem;
+            font-weight: 850;
+            letter-spacing: .04em;
+            text-transform: uppercase;
+        }
+
+        .br-info-box strong {
+            margin-top: 5px;
+            overflow-wrap: anywhere;
+            color: var(--texto);
+            font-size: .72rem;
+            line-height: 1.45;
+        }
+
+        .br-list {
+            display: grid;
+        }
 
         .br-person-row,
-        .br-plan-row,
         .br-terminal-row {
             display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
             align-items: center;
+            gap: 14px;
+            min-width: 0;
+            padding: 14px 16px;
+            border-bottom: 1px solid var(--borde-suave);
+        }
+
+        .br-plan-row {
+            display: grid;
+            grid-template-columns: minmax(200px, 1fr) 165px 135px 110px;
+            align-items: end;
             gap: 12px;
             min-width: 0;
-            padding: 12px 14px;
-            border-bottom: 1px solid var(--br-border-soft);
+            padding: 14px 16px;
+            border-bottom: 1px solid var(--borde-suave);
         }
 
         .br-person-row:last-child,
-        .br-plan-row:last-child,
-        .br-terminal-row:last-child { border-bottom: 0; }
-
-        .br-person-row { grid-template-columns: minmax(0, 1fr) auto; }
-        .br-plan-row { grid-template-columns: minmax(150px, 1fr) 150px 112px auto; }
-        .br-terminal-row { grid-template-columns: minmax(0, 1fr) auto; }
+        .br-terminal-row:last-child,
+        .br-plan-row:last-child {
+            border-bottom: 0;
+        }
 
         .br-person-main,
         .br-terminal-main,
         .br-plan-main {
             display: flex;
             align-items: center;
-            gap: 10px;
+            gap: 11px;
             min-width: 0;
         }
 
         .br-avatar,
         .br-row-icon {
             display: grid;
-            flex: 0 0 38px;
-            width: 38px;
-            height: 38px;
+            flex: 0 0 40px;
+            width: 40px;
+            height: 40px;
             place-items: center;
             overflow: hidden;
             border-radius: 10px;
-            color: var(--br-blue);
-            background: var(--br-blue-soft);
+            color: var(--azul);
+            background: var(--azul-suave);
         }
 
-        .br-avatar img { width: 100%; height: 100%; object-fit: cover; }
+        .br-avatar img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
 
-        .br-row-copy { min-width: 0; }
+        .br-row-copy {
+            min-width: 0;
+        }
+
         .br-row-copy strong,
-        .br-row-copy span { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-        .br-row-copy strong { color: var(--br-text); font-size: .7rem; }
-        .br-row-copy span { margin-top: 3px; color: var(--br-muted); font-size: .57rem; }
+        .br-row-copy span {
+            display: block;
+            overflow: hidden;
+            white-space: nowrap;
+            text-overflow: ellipsis;
+        }
+
+        .br-row-copy strong {
+            color: var(--texto);
+            font-size: .73rem;
+        }
+
+        .br-row-copy span {
+            margin-top: 3px;
+            color: var(--suave);
+            font-size: .59rem;
+        }
 
         .br-row-actions {
             display: flex;
             align-items: center;
             justify-content: flex-end;
             gap: 6px;
+            flex-wrap: wrap;
         }
 
-        .br-badge {
+        .br-action-text {
             display: inline-flex;
             align-items: center;
-            gap: 5px;
-            min-height: 25px;
-            padding: 0 8px;
-            border-radius: 999px;
+            justify-content: center;
+            gap: 6px;
+            min-height: 36px;
+            padding: 0 10px;
+            border: 1px solid var(--borde);
+            border-radius: 9px;
             color: #475569;
-            background: #f1f5f9;
-            font-size: .55rem;
-            font-weight: 850;
+            background: #fff;
+            cursor: pointer;
+            font-size: .61rem;
+            font-weight: 800;
         }
 
-        .br-badge.active { color: #065f46; background: var(--br-green-soft); }
-        .br-badge.inactive { color: #991b1b; background: var(--br-red-soft); }
-        .br-badge.default { color: #1e40af; background: #dbeafe; }
+        .br-action-text:hover {
+            border-color: #9fb3d0;
+            color: var(--azul);
+            background: #f8fafc;
+        }
+
+        .br-action-text.danger {
+            border-color: #fecaca;
+            color: var(--rojo);
+            background: #fffafa;
+        }
+
+        .br-plan-field {
+            min-width: 0;
+        }
+
+        .br-plan-field label {
+            display: block;
+            margin-bottom: 6px;
+            color: #64748b;
+            font-size: .56rem;
+            font-weight: 850;
+            text-transform: uppercase;
+        }
 
         .br-plan-price,
         .br-plan-state {
             width: 100%;
-            min-height: 37px;
-            border: 1px solid var(--br-border);
+            min-height: 40px;
+            border: 1px solid var(--borde);
             border-radius: 9px;
             outline: none;
-            color: var(--br-text);
+            color: var(--texto);
             background: #fff;
-            font-size: .66rem;
+            font-size: .69rem;
         }
 
-        .br-plan-price { padding: 0 10px; }
-        .br-plan-state { padding: 0 8px; }
+        .br-plan-price {
+            padding: 0 10px;
+        }
+
+        .br-plan-state {
+            padding: 0 8px;
+        }
+
         .br-plan-price:focus,
-        .br-plan-state:focus { border-color: #8facd9; box-shadow: 0 0 0 3px rgba(30, 58, 138, .07); }
-
-        .br-empty {
-            padding: 30px 16px;
-            color: var(--br-muted);
-            text-align: center;
-            font-size: .68rem;
+        .br-plan-state:focus {
+            border-color: #8facd9;
+            box-shadow: 0 0 0 3px rgba(30, 58, 138, .07);
         }
-
-        .br-empty i { display: block; margin-bottom: 8px; color: #94a3b8; font-size: 1.25rem; }
 
         .br-modal {
             position: fixed;
             inset: 0;
-            z-index: 12000;
-            display: none;
+            z-index: 50000;
+            display: grid;
             place-items: center;
             padding: 14px;
-            overflow-y: auto;
-            background: rgba(15, 23, 42, .58);
-            backdrop-filter: blur(5px);
-        }
-
-        .br-modal.open { display: grid; }
-
-        .br-modal-card {
-            width: min(650px, 100%);
-            max-height: calc(100dvh - 28px);
-            overflow: hidden;
-            border: 1px solid rgba(255, 255, 255, .75);
-            border-radius: 18px;
-            background: #fff;
-            box-shadow: 0 30px 80px rgba(2, 6, 23, .3);
-        }
-
-        .br-modal-card.small { width: min(520px, 100%); }
-
-        .br-modal-header,
-        .br-modal-footer {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 12px;
-            padding: 14px 16px;
-        }
-
-        .br-modal-header { border-bottom: 1px solid var(--br-border-soft); }
-        .br-modal-footer { justify-content: flex-end; border-top: 1px solid var(--br-border-soft); }
-        .br-modal-header h2 { margin: 0; color: var(--br-blue-dark); font-size: .95rem; }
-        .br-modal-header p { margin: 4px 0 0; color: var(--br-muted); font-size: .59rem; }
-
-        .br-modal-close {
-            display: grid;
-            flex: 0 0 35px;
-            width: 35px;
-            height: 35px;
-            place-items: center;
-            border: 0;
-            border-radius: 9px;
-            color: #64748b;
-            background: #f1f5f9;
-            cursor: pointer;
-        }
-
-        .br-modal-body {
-            max-height: calc(100dvh - 190px);
-            padding: 16px;
-            overflow-y: auto;
-            overscroll-behavior: contain;
-        }
-
-        .br-form-grid {
-            display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 12px;
-        }
-
-        .br-field { min-width: 0; }
-        .br-field.full { grid-column: 1 / -1; }
-        .br-field label { display: block; margin-bottom: 6px; color: #334155; font-size: .62rem; font-weight: 800; }
-
-        .br-control {
-            width: 100%;
-            min-height: 42px;
-            padding: 9px 11px;
-            border: 1px solid var(--br-border);
-            border-radius: 10px;
-            outline: none;
-            color: var(--br-text);
-            background: #f8fafc;
-            font-size: .7rem;
-        }
-
-        textarea.br-control { min-height: 82px; resize: vertical; }
-        .br-control:focus { border-color: #8facd9; background: #fff; box-shadow: 0 0 0 3px rgba(30, 58, 138, .07); }
-
-        .br-checks { display: grid; gap: 8px; }
-
-        .br-check {
-            display: flex;
-            align-items: flex-start;
-            gap: 9px;
-            padding: 10px;
-            border: 1px solid var(--br-border);
-            border-radius: 10px;
-            background: #fbfcfe;
-            cursor: pointer;
-        }
-
-        .br-check input { width: 17px; height: 17px; margin: 1px 0 0; accent-color: var(--br-blue); }
-        .br-check strong { display: block; color: var(--br-text); font-size: .64rem; }
-        .br-check span span { display: block; margin-top: 2px; color: var(--br-muted); font-size: .56rem; line-height: 1.35; }
-
-        body.br-modal-open { overflow: hidden !important; }
-
-        @media (max-width: 1020px) {
-            .br-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-            .br-layout { grid-template-columns: 260px minmax(0, 1fr); }
-            .br-mini-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-            .br-plan-row { grid-template-columns: minmax(140px, 1fr) 130px 105px auto; }
-        }
-
-        @media (max-width: 820px) {
-            .br-main { padding: 20px; }
-            .br-layout { grid-template-columns: 1fr; }
-            .br-directory { position: static; }
-            .br-branch-list { grid-template-columns: repeat(2, minmax(0, 1fr)); max-height: none; }
-        }
-
-        @media (max-width: 620px) {
-            .br-main { padding: 74px 10px 24px; }
-            .br-page-header,
-            .br-detail-header,
-            .br-section-header { align-items: stretch; flex-direction: column; }
-            .br-page-header .br-primary { width: 100%; }
-            .br-stats { grid-template-columns: 1fr 1fr; }
-            .br-branch-list { grid-template-columns: 1fr; }
-            .br-detail-actions { justify-content: stretch; }
-            .br-detail-actions > * { flex: 1; }
-            .br-info-grid,
-            .br-form-grid { grid-template-columns: 1fr; }
-            .br-info-box.full,
-            .br-field.full { grid-column: auto; }
-            .br-mini-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-            .br-person-row,
-            .br-terminal-row,
-            .br-plan-row { grid-template-columns: 1fr; }
-            .br-row-actions { justify-content: flex-start; flex-wrap: wrap; }
-            .br-plan-row .br-primary { width: 100%; }
-            .br-modal { padding: 7px; }
-            .br-modal-card { max-height: calc(100dvh - 14px); border-radius: 15px; }
-            .br-modal-body { max-height: calc(100dvh - 170px); }
-            .br-modal-footer > * { flex: 1; }
-        }
-
-        @media (max-width: 390px) {
-            .br-stats,
-            .br-mini-stats { grid-template-columns: 1fr; }
-            .br-detail-actions { flex-direction: column; }
-            .br-modal-footer { flex-direction: column-reverse; }
-            .br-modal-footer > * { width: 100%; }
-        }
-
-        /* ===== Rediseño compacto y estable del módulo ===== */
-        .br-main {
-            padding: 26px 28px 38px;
-        }
-
-        .br-container {
-            width: 100%;
-            max-width: 1500px;
-        }
-
-        .br-page-header {
-            align-items: center;
-            margin-bottom: 20px;
-            padding: 2px 2px 0;
-        }
-
-        .br-page-header h1 {
-            font-size: clamp(1.8rem, 3vw, 2.35rem);
-        }
-
-        .br-page-header p {
-            max-width: 860px;
-            font-size: .84rem;
-        }
-
-        .br-page-header > .br-primary {
-            min-height: 44px;
-            padding-inline: 17px;
-            border-radius: 12px;
-            box-shadow: 0 10px 24px rgba(30, 58, 138, .18);
-        }
-
-        .br-stats {
-            gap: 14px;
-            margin-bottom: 18px;
-        }
-
-        .br-stat {
-            min-height: 88px;
-            padding: 16px 17px;
-            border-color: #e2e8f0;
-            border-radius: 17px;
-            box-shadow: 0 8px 24px rgba(15, 23, 42, .05);
-        }
-
-        .br-stat-icon {
-            width: 44px;
-            height: 44px;
-            flex-basis: 44px;
-            border-radius: 13px;
-            font-size: .9rem;
-        }
-
-        .br-stat strong {
-            font-size: 1.12rem;
-        }
-
-        .br-stat span {
-            font-size: .64rem;
-        }
-
-        .br-layout {
-            display: block;
-        }
-
-        .br-directory {
-            position: static;
-            margin-bottom: 16px;
-        }
-
-        .br-directory .br-card-header {
-            padding: 17px 18px 12px;
-            border-bottom: 0;
-        }
-
-        .br-directory .br-search {
-            width: min(360px, calc(100% - 32px));
-            margin: 0 16px 6px;
-        }
-
-        .br-branch-list {
-            display: grid !important;
-            grid-template-columns: repeat(auto-fill, minmax(255px, 330px));
-            justify-content: start;
-            gap: 11px;
-            max-height: none;
-            min-height: 108px;
-            padding: 9px 16px 17px;
-            overflow: visible;
-        }
-
-        .br-branch-item {
-            display: block !important;
-            min-height: 118px;
-            padding: 14px;
-            border-color: #dfe7f2;
-            border-radius: 14px;
-            background:
-                linear-gradient(145deg, rgba(238, 244, 255, .55), rgba(255, 255, 255, .96));
-            box-shadow: 0 6px 18px rgba(15, 23, 42, .04);
-        }
-
-        .br-branch-item:hover {
-            transform: translateY(-1px);
-            border-color: #8facd9;
-            box-shadow: 0 10px 24px rgba(30, 58, 138, .08);
-        }
-
-        .br-branch-item.active {
-            border-color: #6f94cf;
-            background:
-                linear-gradient(145deg, #edf4ff, #ffffff);
-            box-shadow:
-                0 0 0 3px rgba(30, 58, 138, .07),
-                0 10px 24px rgba(30, 58, 138, .08);
-        }
-
-        .br-branch-name strong {
-            font-size: .78rem;
-        }
-
-        .br-branch-name span,
-        .br-branch-metrics {
-            font-size: .59rem;
-        }
-
-        .br-layout > section.br-card {
-            display: block !important;
-            width: 100%;
-            min-height: 250px;
-            overflow: visible;
-        }
-
-        .br-detail-header {
-            align-items: center;
-            padding: 20px 21px;
-            border-bottom-color: #e4eaf2;
-            background:
-                linear-gradient(135deg, rgba(238, 244, 255, .95), rgba(255, 255, 255, .98));
-        }
-
-        .br-detail-title h2 {
-            font-size: 1.32rem;
-        }
-
-        .br-detail-title p {
-            font-size: .69rem;
-        }
-
-        .br-tabs {
-            gap: 8px;
-            padding: 10px 16px 0;
-            background: #fbfcfe;
-        }
-
-        .br-tab {
-            min-height: 42px;
-            padding-inline: 14px;
-            font-size: .67rem;
-        }
-
-        .br-tab-panel {
-            padding: 18px;
-        }
-
-        .br-mini-stats {
-            gap: 12px;
-        }
-
-        .br-mini-stat,
-        .br-info-box {
-            border-color: #e2e8f0;
-            background: #ffffff;
-            box-shadow: 0 5px 16px rgba(15, 23, 42, .035);
-        }
-
-        .br-section {
-            border-color: #e1e8f1;
-            border-radius: 15px;
-        }
-
-        .br-section-header {
-            padding: 15px 16px;
-            background: #f8fafc;
-        }
-
-        .br-person-row,
-        .br-plan-row,
-        .br-terminal-row {
-            padding: 14px 16px;
-        }
-
-        /* Modal visible, sin depender de display:none ni de animaciones externas */
-        .br-modal {
-            display: grid;
             visibility: hidden;
             opacity: 0;
             pointer-events: none;
-            z-index: 50000;
+            background: rgba(15, 23, 42, .58);
+            backdrop-filter: blur(5px);
             transition: opacity .16s ease, visibility .16s ease;
         }
 
@@ -1056,6 +1061,13 @@ $sucursalActivaSesion = (int) ($_SESSION['sucursal_id'] ?? 0);
         }
 
         .br-modal-card {
+            width: min(650px, 100%);
+            max-height: calc(100dvh - 28px);
+            overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, .75);
+            border-radius: 16px;
+            background: #fff;
+            box-shadow: 0 30px 80px rgba(2, 6, 23, .3);
             transform: translateY(10px) scale(.985);
             transition: transform .18s ease;
         }
@@ -1064,40 +1076,272 @@ $sucursalActivaSesion = (int) ($_SESSION['sucursal_id'] ?? 0);
             transform: translateY(0) scale(1);
         }
 
-        /*
-         * SweetAlert se crea fuera del modal. Su z-index original es menor
-         * que el del módulo, por eso antes aparecía detrás.
-         */
+        .br-modal-card.small {
+            width: min(520px, 100%);
+        }
+
+        .br-modal-header,
+        .br-modal-footer {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 15px 18px;
+        }
+
+        .br-modal-header {
+            border-bottom: 1px solid var(--borde-suave);
+            background: #fbfcfe;
+        }
+
+        .br-modal-footer {
+            justify-content: flex-end;
+            border-top: 1px solid var(--borde-suave);
+            background: #fbfcfe;
+        }
+
+        .br-modal-header h2 {
+            margin: 0;
+            color: var(--azul-hover);
+            font-size: 1rem;
+        }
+
+        .br-modal-header p {
+            margin: 4px 0 0;
+            color: var(--suave);
+            font-size: .61rem;
+        }
+
+        .br-modal-close {
+            display: grid;
+            flex: 0 0 36px;
+            width: 36px;
+            height: 36px;
+            place-items: center;
+            border: 0;
+            border-radius: 9px;
+            color: #64748b;
+            background: #f1f5f9;
+            cursor: pointer;
+        }
+
+        .br-modal-body {
+            max-height: calc(100dvh - 190px);
+            padding: 18px;
+            overflow-y: auto;
+            overscroll-behavior: contain;
+        }
+
+        .br-form-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 13px;
+        }
+
+        .br-field {
+            min-width: 0;
+        }
+
+        .br-field.full {
+            grid-column: 1 / -1;
+        }
+
+        .br-field label {
+            display: block;
+            margin-bottom: 6px;
+            color: #334155;
+            font-size: .64rem;
+            font-weight: 800;
+        }
+
+        .br-control {
+            width: 100%;
+            min-height: 44px;
+            padding: 9px 11px;
+            border: 1px solid var(--borde);
+            border-radius: 10px;
+            outline: none;
+            color: var(--texto);
+            background: #f8fafc;
+            font-size: .73rem;
+        }
+
+        textarea.br-control {
+            min-height: 84px;
+            resize: vertical;
+        }
+
+        .br-control:focus {
+            border-color: #8facd9;
+            background: #fff;
+            box-shadow: 0 0 0 3px rgba(30, 58, 138, .07);
+        }
+
+        .br-checks {
+            display: grid;
+            gap: 8px;
+        }
+
+        .br-check {
+            display: flex;
+            align-items: flex-start;
+            gap: 9px;
+            padding: 11px;
+            border: 1px solid var(--borde);
+            border-radius: 10px;
+            background: #fbfcfe;
+            cursor: pointer;
+        }
+
+        .br-check input {
+            width: 17px;
+            height: 17px;
+            margin: 1px 0 0;
+            accent-color: var(--azul);
+        }
+
+        .br-check strong {
+            display: block;
+            color: var(--texto);
+            font-size: .65rem;
+        }
+
+        .br-check span span {
+            display: block;
+            margin-top: 2px;
+            color: var(--suave);
+            font-size: .57rem;
+            line-height: 1.35;
+        }
+
+        body.br-modal-open {
+            overflow: hidden !important;
+        }
+
         .swal2-container {
             z-index: 70000 !important;
         }
 
-        .br-modal-header {
-            padding: 17px 18px;
-            background: #fbfcfe;
+        @media (max-width: 1100px) {
+            .br-table-head,
+            .br-branch-item {
+                grid-template-columns:
+                    minmax(210px, 1.3fr)
+                    105px
+                    90px
+                    105px
+                    90px
+                    115px;
+                gap: 10px;
+            }
+
+            .br-metrics {
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+            }
+
+            .br-plan-row {
+                grid-template-columns: minmax(180px, 1fr) 145px 125px 105px;
+            }
         }
 
-        .br-modal-body {
-            padding: 18px;
-        }
-
-        .br-modal-footer {
-            padding: 14px 18px 16px;
-            background: #fbfcfe;
-        }
-
-        .br-control {
-            min-height: 44px;
-            font-size: .73rem;
-        }
-
-        @media (max-width: 820px) {
+        @media (max-width: 860px) {
             .br-main {
-                padding: 20px 18px 32px;
+                padding: 22px 18px 32px;
+            }
+
+            .br-page-header {
+                align-items: stretch;
+                flex-direction: column;
+            }
+
+            .br-page-header > .br-primary {
+                align-self: flex-start;
+            }
+
+            .br-overview {
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+            }
+
+            .br-card-header {
+                align-items: stretch;
+                flex-direction: column;
+            }
+
+            .br-card-tools {
+                width: 100%;
+            }
+
+            .br-search {
+                width: 100%;
+            }
+
+            .br-table-head {
+                display: none;
             }
 
             .br-branch-list {
-                grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+                gap: 10px;
+                padding: 12px;
+            }
+
+            .br-branch-item {
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+                gap: 12px;
+                padding: 14px;
+                border: 1px solid var(--borde);
+                border-radius: 12px;
+            }
+
+            .br-branch-item.active {
+                box-shadow: inset 4px 0 0 var(--azul);
+            }
+
+            .br-branch-main,
+            .br-row-action {
+                grid-column: 1 / -1;
+            }
+
+            .br-row-action {
+                justify-content: stretch;
+            }
+
+            .br-row-action .br-soft-button {
+                width: 100%;
+            }
+
+            .br-mobile-label {
+                display: block;
+            }
+
+            .br-tabs {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+
+            .br-management-header {
+                align-items: stretch;
+                flex-direction: column;
+            }
+
+            .br-management-actions {
+                justify-content: flex-start;
+            }
+
+            .br-person-row,
+            .br-terminal-row {
+                grid-template-columns: 1fr;
+            }
+
+            .br-row-actions {
+                justify-content: flex-start;
+            }
+
+            .br-plan-row {
+                grid-template-columns: 1fr 1fr;
+                align-items: end;
+            }
+
+            .br-plan-main {
+                grid-column: 1 / -1;
             }
         }
 
@@ -1106,24 +1350,109 @@ $sucursalActivaSesion = (int) ($_SESSION['sucursal_id'] ?? 0);
                 padding: 74px 10px 26px;
             }
 
-            .br-page-header {
-                align-items: stretch;
+            .br-page-header > .br-primary {
+                width: 100%;
             }
 
-            .br-branch-list {
+            .br-overview {
                 grid-template-columns: 1fr;
             }
 
-            .br-directory .br-search {
-                width: calc(100% - 24px);
-                margin-inline: 12px;
+            .br-overview-card {
+                min-height: 78px;
             }
 
-            .br-detail-header {
+            .br-card-tools {
+                flex-direction: column;
+            }
+
+            .br-card-tools .br-primary {
+                width: 100%;
+            }
+
+            .br-branch-item {
+                grid-template-columns: 1fr 1fr;
+            }
+
+            .br-tabs {
+                grid-template-columns: 1fr;
+            }
+
+            .br-panel-intro,
+            .br-section-header {
                 align-items: stretch;
+                flex-direction: column;
+            }
+
+            .br-panel-intro .br-primary,
+            .br-panel-intro .br-secondary,
+            .br-section-header .br-primary,
+            .br-section-header .br-secondary {
+                width: 100%;
+            }
+
+            .br-metrics {
+                grid-template-columns: 1fr 1fr;
+            }
+
+            .br-info-grid,
+            .br-form-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .br-info-box.full,
+            .br-field.full {
+                grid-column: auto;
+            }
+
+            .br-plan-row {
+                grid-template-columns: 1fr;
+            }
+
+            .br-plan-main {
+                grid-column: auto;
+            }
+
+            .br-management-actions {
+                flex-direction: column;
+            }
+
+            .br-management-actions > * {
+                width: 100%;
+            }
+
+            .br-modal {
+                padding: 7px;
+            }
+
+            .br-modal-card {
+                max-height: calc(100dvh - 14px);
+                border-radius: 14px;
+            }
+
+            .br-modal-body {
+                max-height: calc(100dvh - 170px);
+            }
+
+            .br-modal-footer > * {
+                flex: 1;
             }
         }
 
+        @media (max-width: 390px) {
+            .br-branch-item,
+            .br-metrics {
+                grid-template-columns: 1fr;
+            }
+
+            .br-modal-footer {
+                flex-direction: column-reverse;
+            }
+
+            .br-modal-footer > * {
+                width: 100%;
+            }
+        }
     </style>
 </head>
 <body>
@@ -1133,21 +1462,23 @@ $sucursalActivaSesion = (int) ($_SESSION['sucursal_id'] ?? 0);
     <div class="br-container">
         <header class="br-page-header">
             <div>
-                <span class="br-eyebrow">
-                    <i class="fas fa-building"></i>
-                    Administración
-                </span>
                 <h1>Sucursales</h1>
+
                 <p>
-                    Registra sedes y administra el personal, los planes,
-                    el inventario inicial y las terminales disponibles en cada una.
+                    Consulta tus sedes y entra a administrar únicamente la
+                    información que necesitas: datos, personal, planes o terminales.
                 </p>
             </div>
 
             <?php if ($errorInstalacion === ''): ?>
-                <button type="button" class="br-primary" id="newBranchButton" onclick="if(window.sucursalesOpenModal){window.sucursalesOpenModal('branchModal');}else{var m=document.getElementById('branchModal');if(m){m.classList.add('open');m.setAttribute('aria-hidden','false');document.body.classList.add('br-modal-open');}}">
+                <button
+                    type="button"
+                    class="br-primary"
+                    id="newBranchButton"
+                    onclick="if(window.sucursalesOpenModal){window.sucursalesOpenModal('branchModal');}"
+                >
                     <i class="fas fa-plus"></i>
-                    Nueva sucursal
+                    Agregar sucursal
                 </button>
             <?php endif; ?>
         </header>
@@ -1158,38 +1489,76 @@ $sucursalActivaSesion = (int) ($_SESSION['sucursal_id'] ?? 0);
                 <div><?php echo sucursalesH($errorInstalacion); ?></div>
             </div>
         <?php else: ?>
-            <section class="br-stats" aria-label="Resumen de sucursales">
-                <article class="br-stat">
-                    <span class="br-stat-icon"><i class="fas fa-building"></i></span>
-                    <div><strong><?php echo $totalSucursales; ?></strong><span>Sucursales registradas</span></div>
+            <section class="br-overview" aria-label="Resumen de sucursales">
+                <article class="br-overview-card">
+                    <span class="br-overview-icon">
+                        <i class="fas fa-building"></i>
+                    </span>
+
+                    <div>
+                        <strong><?php echo $totalSucursales; ?></strong>
+                        <span>Sucursales registradas</span>
+                    </div>
                 </article>
-                <article class="br-stat">
-                    <span class="br-stat-icon"><i class="fas fa-circle-check"></i></span>
-                    <div><strong><?php echo $totalActivas; ?></strong><span>Sedes activas</span></div>
+
+                <article class="br-overview-card">
+                    <span class="br-overview-icon">
+                        <i class="fas fa-circle-check"></i>
+                    </span>
+
+                    <div>
+                        <strong><?php echo $totalActivas; ?></strong>
+                        <span>Sucursales activas</span>
+                    </div>
                 </article>
-                <article class="br-stat">
-                    <span class="br-stat-icon"><i class="fas fa-users"></i></span>
-                    <div><strong><?php echo $totalPersonal; ?></strong><span>Asignaciones activas</span></div>
-                </article>
-                <article class="br-stat">
-                    <span class="br-stat-icon"><i class="fas fa-boxes-stacked"></i></span>
-                    <div><strong><?php echo number_format($totalUnidades); ?></strong><span>Unidades en inventario</span></div>
+
+                <article class="br-overview-card">
+                    <span class="br-overview-icon">
+                        <i class="fas fa-users"></i>
+                    </span>
+
+                    <div>
+                        <strong><?php echo $totalPersonal; ?></strong>
+                        <span>Asignaciones de personal</span>
+                    </div>
                 </article>
             </section>
 
-            <div class="br-layout">
-                <aside class="br-card br-directory">
-                    <div class="br-card-header">
-                        <div>
-                            <h2>Sedes registradas</h2>
-                            <p>Selecciona una para administrarla.</p>
-                        </div>
-                        <span class="br-badge"><?php echo $totalSucursales; ?></span>
+            <section class="br-card">
+                <header class="br-card-header">
+                    <div>
+                        <h2>Sucursales registradas</h2>
+                        <p>
+                            Busca una sede y presiona Administrar para revisar su configuración.
+                        </p>
                     </div>
 
-                    <div class="br-search">
-                        <i class="fas fa-search"></i>
-                        <input type="search" id="branchSearch" placeholder="Buscar sucursal...">
+                    <div class="br-card-tools">
+                        <div class="br-search">
+                            <i class="fas fa-search"></i>
+
+                            <input
+                                type="search"
+                                id="branchSearch"
+                                placeholder="Buscar por nombre o clave..."
+                            >
+                        </div>
+                    </div>
+                </header>
+
+                <?php if ($sucursales === []): ?>
+                    <div class="br-empty">
+                        <i class="fas fa-building-circle-xmark"></i>
+                        Todavía no hay sucursales registradas.
+                    </div>
+                <?php else: ?>
+                    <div class="br-table-head" aria-hidden="true">
+                        <span>Sucursal</span>
+                        <span>Estado</span>
+                        <span>Personal</span>
+                        <span>Inventario</span>
+                        <span>Terminales</span>
+                        <span></span>
                     </div>
 
                     <div class="br-branch-list" id="branchList">
@@ -1197,315 +1566,663 @@ $sucursalActivaSesion = (int) ($_SESSION['sucursal_id'] ?? 0);
                             <?php
                             $seleccionada = $sucursalSeleccionada !== null
                                 && (int) $sucursalSeleccionada['id'] === (int) $sucursal['id'];
-                            $esSesion = (int) $sucursal['id'] === $sucursalActivaSesion;
+
+                            $esSesion =
+                                (int) $sucursal['id'] === $sucursalActivaSesion;
                             ?>
-                            <a
-                                href="sucursales.php?sucursal=<?php echo (int) $sucursal['id']; ?>"
+
+                            <article
                                 class="br-branch-item <?php echo $seleccionada ? 'active' : ''; ?> <?php echo $sucursal['estado'] === 'inactiva' ? 'inactive' : ''; ?>"
                                 data-branch-search="<?php echo sucursalesH(strtolower($sucursal['nombre'] . ' ' . $sucursal['clave'])); ?>"
                             >
-                                <div class="br-branch-top">
-                                    <div class="br-branch-name">
-                                        <strong><?php echo sucursalesH($sucursal['nombre']); ?></strong>
-                                        <span><?php echo sucursalesH($sucursal['clave']); ?></span>
+                                <div class="br-branch-main">
+                                    <span class="br-branch-icon">
+                                        <i class="fas fa-building"></i>
+                                    </span>
+
+                                    <div class="br-branch-copy">
+                                        <strong>
+                                            <?php echo sucursalesH($sucursal['nombre']); ?>
+                                        </strong>
+
+                                        <span>
+                                            Clave <?php echo sucursalesH($sucursal['clave']); ?>
+
+                                            <?php if ((int) $sucursal['es_matriz'] === 1): ?>
+                                                · Matriz
+                                            <?php endif; ?>
+
+                                            <?php if ($esSesion): ?>
+                                                · Sucursal actual
+                                            <?php endif; ?>
+                                        </span>
                                     </div>
-                                    <span class="br-status-dot <?php echo $sucursal['estado'] === 'activa' ? 'active' : ''; ?>"></span>
                                 </div>
 
-                                <div class="br-branch-tags">
-                                    <?php if ((int) $sucursal['es_matriz'] === 1): ?>
-                                        <span class="br-tag matrix"><i class="fas fa-star"></i>Matriz</span>
-                                    <?php endif; ?>
-                                    <?php if ($esSesion): ?>
-                                        <span class="br-tag session"><i class="fas fa-location-dot"></i>Actual</span>
-                                    <?php endif; ?>
-                                    <?php if ($sucursal['estado'] === 'inactiva'): ?>
-                                        <span class="br-tag">Inactiva</span>
-                                    <?php endif; ?>
+                                <div>
+                                    <span class="br-mobile-label">Estado</span>
+
+                                    <span class="br-badge <?php echo $sucursal['estado'] === 'activa' ? 'active' : 'inactive'; ?>">
+                                        <i class="fas <?php echo $sucursal['estado'] === 'activa' ? 'fa-circle-check' : 'fa-circle-pause'; ?>"></i>
+                                        <?php echo $sucursal['estado'] === 'activa' ? 'Activa' : 'Inactiva'; ?>
+                                    </span>
                                 </div>
 
-                                <div class="br-branch-metrics">
-                                    <span><i class="fas fa-user"></i> <?php echo (int) $sucursal['usuarios_activos']; ?></span>
-                                    <span><i class="fas fa-box"></i> <?php echo (int) $sucursal['unidades_stock']; ?></span>
-                                    <span><i class="fas fa-credit-card"></i> <?php echo (int) $sucursal['terminales_activas']; ?></span>
+                                <div>
+                                    <span class="br-mobile-label">Personal</span>
+
+                                    <span class="br-cell-value">
+                                        <?php echo (int) $sucursal['usuarios_activos']; ?>
+                                        personas
+                                    </span>
                                 </div>
-                            </a>
+
+                                <div>
+                                    <span class="br-mobile-label">Inventario</span>
+
+                                    <span class="br-cell-value">
+                                        <?php echo number_format((int) $sucursal['unidades_stock']); ?>
+                                        unidades
+                                    </span>
+                                </div>
+
+                                <div>
+                                    <span class="br-mobile-label">Terminales</span>
+
+                                    <span class="br-cell-value">
+                                        <?php echo (int) $sucursal['terminales_activas']; ?>
+                                        activas
+                                    </span>
+                                </div>
+
+                                <div class="br-row-action">
+                                    <a
+                                        class="br-soft-button"
+                                        href="sucursales.php?sucursal=<?php echo (int) $sucursal['id']; ?>#branch-management"
+                                    >
+                                        <i class="fas fa-sliders"></i>
+                                        Administrar
+                                    </a>
+                                </div>
+                            </article>
                         <?php endforeach; ?>
                     </div>
-                </aside>
+                <?php endif; ?>
+            </section>
 
-                <section class="br-card">
-                    <?php if ($sucursalSeleccionada === null): ?>
-                        <div class="br-empty">
-                            <i class="fas fa-building-circle-xmark"></i>
-                            Todavía no hay una sucursal disponible.
+            <?php if ($sucursalSeleccionada !== null): ?>
+                <?php $sucursalId = (int) $sucursalSeleccionada['id']; ?>
+
+                <section
+                    class="br-card br-management"
+                    id="branch-management"
+                >
+                    <header class="br-management-header">
+                        <div class="br-management-title">
+                            <span class="br-management-kicker">
+                                Administrando sucursal
+                            </span>
+
+                            <h2>
+                                <?php echo sucursalesH($sucursalSeleccionada['nombre']); ?>
+                            </h2>
+
+                            <p>
+                                Clave <?php echo sucursalesH($sucursalSeleccionada['clave']); ?>
+
+                                · <?php echo $sucursalSeleccionada['estado'] === 'activa'
+                                    ? 'Sucursal activa'
+                                    : 'Sucursal inactiva'; ?>
+
+                                <?php if ($sucursalId === $sucursalActivaSesion): ?>
+                                    · Es la sucursal actual de tu sesión
+                                <?php endif; ?>
+                            </p>
                         </div>
-                    <?php else: ?>
-                        <?php $sucursalId = (int) $sucursalSeleccionada['id']; ?>
 
-                        <header class="br-detail-header">
-                            <div class="br-detail-title">
-                                <h2><?php echo sucursalesH($sucursalSeleccionada['nombre']); ?></h2>
+                        <div class="br-management-actions">
+                            <button
+                                type="button"
+                                class="br-secondary"
+                                id="editBranchButton"
+                                data-branch='<?php echo sucursalesH(json_encode($sucursalSeleccionada, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)); ?>'
+                            >
+                                <i class="fas fa-pen"></i>
+                                Editar datos
+                            </button>
+
+                            <button
+                                type="button"
+                                class="<?php echo $sucursalSeleccionada['estado'] === 'activa'
+                                    ? 'br-danger'
+                                    : 'br-primary'; ?>"
+                                id="toggleBranchButton"
+                                data-id="<?php echo $sucursalId; ?>"
+                                data-current-state="<?php echo sucursalesH($sucursalSeleccionada['estado']); ?>"
+                                <?php echo (int) $sucursalSeleccionada['es_matriz'] === 1
+                                    ? 'disabled title="La matriz no puede desactivarse"'
+                                    : ''; ?>
+                            >
+                                <i class="fas <?php echo $sucursalSeleccionada['estado'] === 'activa'
+                                    ? 'fa-circle-pause'
+                                    : 'fa-circle-play'; ?>"></i>
+
+                                <?php echo $sucursalSeleccionada['estado'] === 'activa'
+                                    ? 'Desactivar'
+                                    : 'Activar'; ?>
+                            </button>
+                        </div>
+                    </header>
+
+                    <nav
+                        class="br-tabs"
+                        aria-label="Configuración de la sucursal"
+                    >
+                        <button
+                            type="button"
+                            class="br-tab active"
+                            data-tab="general"
+                        >
+                            <span class="br-tab-icon">
+                                <i class="fas fa-building"></i>
+                            </span>
+
+                            <span class="br-tab-copy">
+                                <strong>Datos generales</strong>
+                                <span>Dirección, contacto e inventario</span>
+                            </span>
+                        </button>
+
+                        <button
+                            type="button"
+                            class="br-tab"
+                            data-tab="personal"
+                        >
+                            <span class="br-tab-icon">
+                                <i class="fas fa-users"></i>
+                            </span>
+
+                            <span class="br-tab-copy">
+                                <strong>Personal</strong>
+                                <span>Usuarios y permisos de la sede</span>
+                            </span>
+                        </button>
+
+                        <button
+                            type="button"
+                            class="br-tab"
+                            data-tab="planes"
+                        >
+                            <span class="br-tab-icon">
+                                <i class="fas fa-id-card"></i>
+                            </span>
+
+                            <span class="br-tab-copy">
+                                <strong>Planes</strong>
+                                <span>Precios y disponibilidad</span>
+                            </span>
+                        </button>
+
+                        <button
+                            type="button"
+                            class="br-tab"
+                            data-tab="terminales"
+                        >
+                            <span class="br-tab-icon">
+                                <i class="fas fa-credit-card"></i>
+                            </span>
+
+                            <span class="br-tab-copy">
+                                <strong>Terminales</strong>
+                                <span>Dispositivos Mercado Pago</span>
+                            </span>
+                        </button>
+                    </nav>
+
+                    <div
+                        class="br-tab-panel active"
+                        data-panel="general"
+                    >
+                        <div class="br-panel-intro">
+                            <div>
+                                <h3>Información general</h3>
                                 <p>
-                                    <?php echo sucursalesH($sucursalSeleccionada['clave']); ?>
-                                    · <?php echo $sucursalSeleccionada['estado'] === 'activa' ? 'Sucursal activa' : 'Sucursal inactiva'; ?>
-                                    <?php if ($sucursalId === $sucursalActivaSesion): ?>
-                                        · Sede actual de tu sesión
-                                    <?php endif; ?>
+                                    Consulta los datos principales y el resumen del inventario.
                                 </p>
                             </div>
 
-                            <div class="br-detail-actions">
-                                <button
-                                    type="button"
-                                    class="br-secondary"
-                                    id="editBranchButton"
-                                    onclick="if(window.sucursalesOpenModal){window.sucursalesOpenModal('branchModal');}"
-                                    data-branch='<?php echo sucursalesH(json_encode($sucursalSeleccionada, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)); ?>'
-                                >
-                                    <i class="fas fa-pen"></i>
-                                    Editar
-                                </button>
-
-                                <button
-                                    type="button"
-                                    class="<?php echo $sucursalSeleccionada['estado'] === 'activa' ? 'br-danger' : 'br-primary'; ?>"
-                                    id="toggleBranchButton"
-                                    data-id="<?php echo $sucursalId; ?>"
-                                    data-current-state="<?php echo sucursalesH($sucursalSeleccionada['estado']); ?>"
-                                    <?php echo (int) $sucursalSeleccionada['es_matriz'] === 1 ? 'disabled title="La matriz no puede desactivarse"' : ''; ?>
-                                >
-                                    <i class="fas <?php echo $sucursalSeleccionada['estado'] === 'activa' ? 'fa-circle-pause' : 'fa-circle-play'; ?>"></i>
-                                    <?php echo $sucursalSeleccionada['estado'] === 'activa' ? 'Desactivar' : 'Activar'; ?>
-                                </button>
-                            </div>
-                        </header>
-
-                        <nav class="br-tabs" aria-label="Secciones de la sucursal">
-                            <button type="button" class="br-tab active" data-tab="general"><i class="fas fa-building"></i>General</button>
-                            <button type="button" class="br-tab" data-tab="personal"><i class="fas fa-users"></i>Personal</button>
-                            <button type="button" class="br-tab" data-tab="planes"><i class="fas fa-id-card"></i>Planes</button>
-                            <button type="button" class="br-tab" data-tab="terminales"><i class="fas fa-credit-card"></i>Terminales</button>
-                        </nav>
-
-                        <div class="br-tab-panel active" data-panel="general">
-                            <div class="br-mini-stats">
-                                <article class="br-mini-stat"><span>Productos</span><strong><?php echo $resumenInventario['productos']; ?></strong></article>
-                                <article class="br-mini-stat"><span>Unidades</span><strong><?php echo number_format($resumenInventario['unidades']); ?></strong></article>
-                                <article class="br-mini-stat"><span>Bajo mínimo</span><strong><?php echo $resumenInventario['bajo_minimo']; ?></strong></article>
-                                <article class="br-mini-stat"><span>Valor compra</span><strong><?php echo sucursalesDinero((float) $resumenInventario['valor_compra']); ?></strong></article>
-                                <article class="br-mini-stat"><span>Valor venta</span><strong><?php echo sucursalesDinero((float) $resumenInventario['valor_venta']); ?></strong></article>
-                            </div>
-
-                            <section class="br-section">
-                                <div class="br-section-header">
-                                    <div>
-                                        <h3>Información de la sede</h3>
-                                        <p>Datos visibles en operaciones y documentos de esta sucursal.</p>
-                                    </div>
-                                    <button type="button" class="br-secondary" id="syncCatalogsButton" data-id="<?php echo $sucursalId; ?>">
-                                        <i class="fas fa-rotate"></i>
-                                        Sincronizar catálogos
-                                    </button>
-                                </div>
-
-                                <div style="padding:14px">
-                                    <div class="br-info-grid">
-                                        <div class="br-info-box"><span>Clave</span><strong><?php echo sucursalesH($sucursalSeleccionada['clave']); ?></strong></div>
-                                        <div class="br-info-box"><span>Zona horaria</span><strong><?php echo sucursalesH($zonasHorarias[$sucursalSeleccionada['zona_horaria']] ?? $sucursalSeleccionada['zona_horaria']); ?></strong></div>
-                                        <div class="br-info-box"><span>Teléfono</span><strong><?php echo sucursalesH($sucursalSeleccionada['telefono'] ?: 'No registrado'); ?></strong></div>
-                                        <div class="br-info-box"><span>Correo</span><strong><?php echo sucursalesH($sucursalSeleccionada['email'] ?: 'No registrado'); ?></strong></div>
-                                        <div class="br-info-box full"><span>Dirección</span><strong><?php echo nl2br(sucursalesH($sucursalSeleccionada['direccion'] ?: 'No registrada')); ?></strong></div>
-                                        <div class="br-info-box full"><span>Horario</span><strong><?php echo sucursalesH($sucursalSeleccionada['horario'] ?: 'No registrado'); ?></strong></div>
-                                    </div>
-                                </div>
-                            </section>
+                            <button
+                                type="button"
+                                class="br-secondary"
+                                id="syncCatalogsButton"
+                                data-id="<?php echo $sucursalId; ?>"
+                            >
+                                <i class="fas fa-rotate"></i>
+                                Sincronizar productos y planes
+                            </button>
                         </div>
 
-                        <div class="br-tab-panel" data-panel="personal">
-                            <section class="br-section">
-                                <div class="br-section-header">
-                                    <div>
-                                        <h3>Personal asignado</h3>
-                                        <p>Cada colaborador puede tener un rol diferente en esta sede.</p>
-                                    </div>
-                                    <button type="button" class="br-primary" id="newAssignmentButton" onclick="if(window.sucursalesOpenModal){window.sucursalesOpenModal('assignmentModal');}">
-                                        <i class="fas fa-user-plus"></i>
-                                        Asignar personal
-                                    </button>
+                        <div class="br-metrics">
+                            <article class="br-metric">
+                                <span>Productos</span>
+                                <strong><?php echo $resumenInventario['productos']; ?></strong>
+                            </article>
+
+                            <article class="br-metric">
+                                <span>Unidades</span>
+                                <strong><?php echo number_format($resumenInventario['unidades']); ?></strong>
+                            </article>
+
+                            <article class="br-metric">
+                                <span>Bajo mínimo</span>
+                                <strong><?php echo $resumenInventario['bajo_minimo']; ?></strong>
+                            </article>
+
+                            <article class="br-metric">
+                                <span>Valor de compra</span>
+                                <strong><?php echo sucursalesDinero((float) $resumenInventario['valor_compra']); ?></strong>
+                            </article>
+
+                            <article class="br-metric">
+                                <span>Valor de venta</span>
+                                <strong><?php echo sucursalesDinero((float) $resumenInventario['valor_venta']); ?></strong>
+                            </article>
+                        </div>
+
+                        <section class="br-section">
+                            <header class="br-section-header">
+                                <div>
+                                    <h3>Datos de la sucursal</h3>
+                                    <p>
+                                        Esta información identifica la sede dentro del sistema.
+                                    </p>
+                                </div>
+                            </header>
+
+                            <div class="br-info-grid">
+                                <div class="br-info-box">
+                                    <span>Clave</span>
+                                    <strong>
+                                        <?php echo sucursalesH($sucursalSeleccionada['clave']); ?>
+                                    </strong>
                                 </div>
 
-                                <div class="br-list">
-                                    <?php if ($personal === []): ?>
-                                        <div class="br-empty"><i class="fas fa-user-slash"></i>No hay personal asignado.</div>
-                                    <?php else: ?>
-                                        <?php foreach ($personal as $persona): ?>
-                                            <?php
-                                            $rolPersona = (string) $persona['rol_efectivo'];
-                                            $asignacionActiva = (string) $persona['asignacion_estado'] === 'activo';
-                                            ?>
-                                            <article class="br-person-row">
-                                                <div class="br-person-main">
-                                                    <span class="br-avatar">
-                                                        <?php if (!empty($persona['foto_perfil']) && is_file(__DIR__ . '/' . $persona['foto_perfil'])): ?>
-                                                            <img src="<?php echo sucursalesH($persona['foto_perfil']); ?>" alt="">
-                                                        <?php else: ?>
-                                                            <i class="fas fa-user"></i>
-                                                        <?php endif; ?>
-                                                    </span>
-                                                    <div class="br-row-copy">
-                                                        <strong><?php echo sucursalesH($persona['nombre']); ?></strong>
-                                                        <span>
-                                                            <?php echo sucursalesH($persona['email']); ?> ·
-                                                            <?php echo sucursalesH($rolesSucursal[$rolPersona] ?? ucfirst($rolPersona)); ?>
-                                                        </span>
-                                                    </div>
-                                                </div>
+                                <div class="br-info-box">
+                                    <span>Zona horaria</span>
+                                    <strong>
+                                        <?php echo sucursalesH(
+                                            $zonasHorarias[$sucursalSeleccionada['zona_horaria']]
+                                            ?? $sucursalSeleccionada['zona_horaria']
+                                        ); ?>
+                                    </strong>
+                                </div>
 
-                                                <div class="br-row-actions">
-                                                    <?php if ((int) $persona['es_principal'] === 1): ?>
-                                                        <span class="br-badge default"><i class="fas fa-house"></i>Principal</span>
-                                                    <?php endif; ?>
-                                                    <?php if ((int) $persona['puede_operar_caja'] === 1): ?>
-                                                        <span class="br-badge"><i class="fas fa-cash-register"></i>Caja</span>
-                                                    <?php endif; ?>
-                                                    <span class="br-badge <?php echo $asignacionActiva ? 'active' : 'inactive'; ?>">
-                                                        <?php echo $asignacionActiva ? 'Activo' : 'Inactivo'; ?>
-                                                    </span>
-                                                    <button
-                                                        type="button"
-                                                        class="br-icon-button edit-assignment-button"
-                                                        title="Editar acceso"
-                                                        data-assignment='<?php echo sucursalesH(json_encode($persona, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)); ?>'
-                                                    >
-                                                        <i class="fas fa-pen"></i>
-                                                    </button>
-                                                    <?php if ($asignacionActiva): ?>
-                                                        <button
-                                                            type="button"
-                                                            class="br-icon-button remove-assignment-button"
-                                                            title="Retirar acceso"
-                                                            data-user-id="<?php echo (int) $persona['usuario_id']; ?>"
-                                                            data-user-name="<?php echo sucursalesH($persona['nombre']); ?>"
+                                <div class="br-info-box">
+                                    <span>Teléfono</span>
+                                    <strong>
+                                        <?php echo sucursalesH(
+                                            $sucursalSeleccionada['telefono']
+                                            ?: 'No registrado'
+                                        ); ?>
+                                    </strong>
+                                </div>
+
+                                <div class="br-info-box">
+                                    <span>Correo</span>
+                                    <strong>
+                                        <?php echo sucursalesH(
+                                            $sucursalSeleccionada['email']
+                                            ?: 'No registrado'
+                                        ); ?>
+                                    </strong>
+                                </div>
+
+                                <div class="br-info-box full">
+                                    <span>Dirección</span>
+                                    <strong>
+                                        <?php echo nl2br(sucursalesH(
+                                            $sucursalSeleccionada['direccion']
+                                            ?: 'No registrada'
+                                        )); ?>
+                                    </strong>
+                                </div>
+
+                                <div class="br-info-box full">
+                                    <span>Horario</span>
+                                    <strong>
+                                        <?php echo sucursalesH(
+                                            $sucursalSeleccionada['horario']
+                                            ?: 'No registrado'
+                                        ); ?>
+                                    </strong>
+                                </div>
+                            </div>
+                        </section>
+                    </div>
+
+                    <div
+                        class="br-tab-panel"
+                        data-panel="personal"
+                    >
+                        <div class="br-panel-intro">
+                            <div>
+                                <h3>Personal de la sucursal</h3>
+                                <p>
+                                    Asigna usuarios y define qué función tendrán en esta sede.
+                                </p>
+                            </div>
+
+                            <button
+                                type="button"
+                                class="br-primary"
+                                id="newAssignmentButton"
+                            >
+                                <i class="fas fa-user-plus"></i>
+                                Asignar personal
+                            </button>
+                        </div>
+
+                        <section class="br-section">
+                            <div class="br-list">
+                                <?php if ($personal === []): ?>
+                                    <div class="br-empty">
+                                        <i class="fas fa-user-slash"></i>
+                                        Esta sucursal todavía no tiene personal asignado.
+                                    </div>
+                                <?php else: ?>
+                                    <?php foreach ($personal as $persona): ?>
+                                        <?php
+                                        $rolPersona = (string) $persona['rol_efectivo'];
+
+                                        $asignacionActiva =
+                                            (string) $persona['asignacion_estado']
+                                            === 'activo';
+                                        ?>
+
+                                        <article class="br-person-row">
+                                            <div class="br-person-main">
+                                                <span class="br-avatar">
+                                                    <?php if (
+                                                        !empty($persona['foto_perfil'])
+                                                        && is_file(
+                                                            __DIR__
+                                                            . '/'
+                                                            . $persona['foto_perfil']
+                                                        )
+                                                    ): ?>
+                                                        <img
+                                                            src="<?php echo sucursalesH($persona['foto_perfil']); ?>"
+                                                            alt=""
                                                         >
-                                                            <i class="fas fa-user-minus"></i>
-                                                        </button>
+                                                    <?php else: ?>
+                                                        <i class="fas fa-user"></i>
                                                     <?php endif; ?>
-                                                </div>
-                                            </article>
-                                        <?php endforeach; ?>
-                                    <?php endif; ?>
-                                </div>
-                            </section>
-                        </div>
+                                                </span>
 
-                        <div class="br-tab-panel" data-panel="planes">
-                            <section class="br-section">
-                                <div class="br-section-header">
-                                    <div>
-                                        <h3>Planes disponibles</h3>
-                                        <p>El catálogo es global, pero el precio y disponibilidad pertenecen a la sede.</p>
-                                    </div>
-                                </div>
-
-                                <div class="br-list">
-                                    <?php foreach ($planesSucursal as $plan): ?>
-                                        <form class="br-plan-row plan-form">
-                                            <input type="hidden" name="sucursal_id" value="<?php echo $sucursalId; ?>">
-                                            <input type="hidden" name="plan_id" value="<?php echo (int) $plan['plan_id']; ?>">
-
-                                            <div class="br-plan-main">
-                                                <span class="br-row-icon"><i class="fas fa-id-card"></i></span>
                                                 <div class="br-row-copy">
-                                                    <strong><?php echo sucursalesH($plan['nombre']); ?></strong>
-                                                    <span><?php echo (int) $plan['duracion_dias']; ?> días · Catálogo <?php echo sucursalesDinero((float) $plan['precio_catalogo']); ?></span>
+                                                    <strong>
+                                                        <?php echo sucursalesH($persona['nombre']); ?>
+                                                    </strong>
+
+                                                    <span>
+                                                        <?php echo sucursalesH($persona['email']); ?>
+                                                        ·
+                                                        <?php echo sucursalesH(
+                                                            $rolesSucursal[$rolPersona]
+                                                            ?? ucfirst($rolPersona)
+                                                        ); ?>
+                                                    </span>
                                                 </div>
                                             </div>
 
+                                            <div class="br-row-actions">
+                                                <?php if ((int) $persona['es_principal'] === 1): ?>
+                                                    <span class="br-badge default">
+                                                        <i class="fas fa-house"></i>
+                                                        Principal
+                                                    </span>
+                                                <?php endif; ?>
+
+                                                <?php if ((int) $persona['puede_operar_caja'] === 1): ?>
+                                                    <span class="br-badge">
+                                                        <i class="fas fa-cash-register"></i>
+                                                        Caja
+                                                    </span>
+                                                <?php endif; ?>
+
+                                                <span class="br-badge <?php echo $asignacionActiva ? 'active' : 'inactive'; ?>">
+                                                    <?php echo $asignacionActiva
+                                                        ? 'Activo'
+                                                        : 'Inactivo'; ?>
+                                                </span>
+
+                                                <button
+                                                    type="button"
+                                                    class="br-action-text edit-assignment-button"
+                                                    data-assignment='<?php echo sucursalesH(json_encode($persona, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)); ?>'
+                                                >
+                                                    <i class="fas fa-pen"></i>
+                                                    Editar
+                                                </button>
+
+                                                <?php if ($asignacionActiva): ?>
+                                                    <button
+                                                        type="button"
+                                                        class="br-action-text danger remove-assignment-button"
+                                                        data-user-id="<?php echo (int) $persona['usuario_id']; ?>"
+                                                        data-user-name="<?php echo sucursalesH($persona['nombre']); ?>"
+                                                    >
+                                                        <i class="fas fa-user-minus"></i>
+                                                        Retirar
+                                                    </button>
+                                                <?php endif; ?>
+                                            </div>
+                                        </article>
+                                    <?php endforeach; ?>
+                                <?php endif; ?>
+                            </div>
+                        </section>
+                    </div>
+
+                    <div
+                        class="br-tab-panel"
+                        data-panel="planes"
+                    >
+                        <div class="br-panel-intro">
+                            <div>
+                                <h3>Planes disponibles</h3>
+                                <p>
+                                    Define el precio y si cada plan se puede vender en esta sede.
+                                </p>
+                            </div>
+                        </div>
+
+                        <section class="br-section">
+                            <div class="br-list">
+                                <?php if ($planesSucursal === []): ?>
+                                    <div class="br-empty">
+                                        <i class="fas fa-id-card"></i>
+                                        No hay planes disponibles para esta sucursal.
+                                    </div>
+                                <?php else: ?>
+                                    <?php foreach ($planesSucursal as $plan): ?>
+                                        <form class="br-plan-row plan-form">
                                             <input
-                                                class="br-plan-price"
-                                                type="number"
-                                                name="precio"
-                                                min="0"
-                                                step="0.01"
-                                                value="<?php echo sucursalesH(number_format((float) $plan['precio_sucursal'], 2, '.', '')); ?>"
-                                                aria-label="Precio de <?php echo sucursalesH($plan['nombre']); ?>"
+                                                type="hidden"
+                                                name="sucursal_id"
+                                                value="<?php echo $sucursalId; ?>"
                                             >
 
-                                            <select class="br-plan-state" name="estado" aria-label="Estado del plan">
-                                                <option value="activo" <?php echo $plan['estado_sucursal'] === 'activo' ? 'selected' : ''; ?>>Activo</option>
-                                                <option value="inactivo" <?php echo $plan['estado_sucursal'] === 'inactivo' ? 'selected' : ''; ?>>Inactivo</option>
-                                            </select>
+                                            <input
+                                                type="hidden"
+                                                name="plan_id"
+                                                value="<?php echo (int) $plan['plan_id']; ?>"
+                                            >
 
-                                            <button type="submit" class="br-primary"><i class="fas fa-check"></i>Guardar</button>
+                                            <div class="br-plan-main">
+                                                <span class="br-row-icon">
+                                                    <i class="fas fa-id-card"></i>
+                                                </span>
+
+                                                <div class="br-row-copy">
+                                                    <strong>
+                                                        <?php echo sucursalesH($plan['nombre']); ?>
+                                                    </strong>
+
+                                                    <span>
+                                                        <?php echo (int) $plan['duracion_dias']; ?>
+                                                        días · Precio general
+                                                        <?php echo sucursalesDinero((float) $plan['precio_catalogo']); ?>
+                                                    </span>
+                                                </div>
+                                            </div>
+
+                                            <div class="br-plan-field">
+                                                <label>
+                                                    Precio en esta sucursal
+                                                </label>
+
+                                                <input
+                                                    class="br-plan-price"
+                                                    type="number"
+                                                    name="precio"
+                                                    min="0"
+                                                    step="0.01"
+                                                    value="<?php echo sucursalesH(number_format((float) $plan['precio_sucursal'], 2, '.', '')); ?>"
+                                                >
+                                            </div>
+
+                                            <div class="br-plan-field">
+                                                <label>Disponibilidad</label>
+
+                                                <select
+                                                    class="br-plan-state"
+                                                    name="estado"
+                                                >
+                                                    <option
+                                                        value="activo"
+                                                        <?php echo $plan['estado_sucursal'] === 'activo' ? 'selected' : ''; ?>
+                                                    >
+                                                        Disponible
+                                                    </option>
+
+                                                    <option
+                                                        value="inactivo"
+                                                        <?php echo $plan['estado_sucursal'] === 'inactivo' ? 'selected' : ''; ?>
+                                                    >
+                                                        No disponible
+                                                    </option>
+                                                </select>
+                                            </div>
+
+                                            <button
+                                                type="submit"
+                                                class="br-primary"
+                                            >
+                                                <i class="fas fa-check"></i>
+                                                Guardar
+                                            </button>
                                         </form>
                                     <?php endforeach; ?>
-                                </div>
-                            </section>
+                                <?php endif; ?>
+                            </div>
+                        </section>
+                    </div>
+
+                    <div
+                        class="br-tab-panel"
+                        data-panel="terminales"
+                    >
+                        <div class="br-panel-intro">
+                            <div>
+                                <h3>Terminales Mercado Pago</h3>
+                                <p>
+                                    Registra los dispositivos Point permitidos en esta sede.
+                                </p>
+                            </div>
+
+                            <button
+                                type="button"
+                                class="br-primary"
+                                id="newTerminalButton"
+                            >
+                                <i class="fas fa-plus"></i>
+                                Agregar terminal
+                            </button>
                         </div>
 
-                        <div class="br-tab-panel" data-panel="terminales">
-                            <section class="br-section">
-                                <div class="br-section-header">
-                                    <div>
-                                        <h3>Terminales Mercado Pago</h3>
-                                        <p>Relaciona los dispositivos Point autorizados para cobrar en esta sede.</p>
+                        <section class="br-section">
+                            <div class="br-list">
+                                <?php if ($terminalesSucursal === []): ?>
+                                    <div class="br-empty">
+                                        <i class="fas fa-credit-card"></i>
+                                        Esta sucursal no tiene terminales registradas.
                                     </div>
-                                    <button type="button" class="br-primary" id="newTerminalButton" onclick="if(window.sucursalesOpenModal){window.sucursalesOpenModal('terminalModal');}">
-                                        <i class="fas fa-plus"></i>
-                                        Agregar terminal
-                                    </button>
-                                </div>
+                                <?php else: ?>
+                                    <?php foreach ($terminalesSucursal as $terminal): ?>
+                                        <article class="br-terminal-row">
+                                            <div class="br-terminal-main">
+                                                <span class="br-row-icon">
+                                                    <i class="fas fa-mobile-screen-button"></i>
+                                                </span>
 
-                                <div class="br-list">
-                                    <?php if ($terminalesSucursal === []): ?>
-                                        <div class="br-empty"><i class="fas fa-credit-card"></i>No hay terminales registradas.</div>
-                                    <?php else: ?>
-                                        <?php foreach ($terminalesSucursal as $terminal): ?>
-                                            <article class="br-terminal-row">
-                                                <div class="br-terminal-main">
-                                                    <span class="br-row-icon"><i class="fas fa-mobile-screen-button"></i></span>
-                                                    <div class="br-row-copy">
-                                                        <strong><?php echo sucursalesH($terminal['nombre']); ?></strong>
-                                                        <span><?php echo sucursalesH($terminal['terminal_id']); ?></span>
-                                                    </div>
-                                                </div>
+                                                <div class="br-row-copy">
+                                                    <strong>
+                                                        <?php echo sucursalesH($terminal['nombre']); ?>
+                                                    </strong>
 
-                                                <div class="br-row-actions">
-                                                    <?php if ((int) $terminal['predeterminada'] === 1): ?>
-                                                        <span class="br-badge default">Predeterminada</span>
-                                                    <?php endif; ?>
-                                                    <span class="br-badge <?php echo (int) $terminal['activo'] === 1 ? 'active' : 'inactive'; ?>">
-                                                        <?php echo (int) $terminal['activo'] === 1 ? 'Activa' : 'Inactiva'; ?>
+                                                    <span>
+                                                        <?php echo sucursalesH($terminal['terminal_id']); ?>
                                                     </span>
-                                                    <button
-                                                        type="button"
-                                                        class="br-icon-button edit-terminal-button"
-                                                        title="Editar terminal"
-                                                        data-terminal='<?php echo sucursalesH(json_encode($terminal, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)); ?>'
-                                                    >
-                                                        <i class="fas fa-pen"></i>
-                                                    </button>
-                                                    <button
-                                                        type="button"
-                                                        class="br-icon-button toggle-terminal-button"
-                                                        title="Cambiar estado"
-                                                        data-id="<?php echo (int) $terminal['id']; ?>"
-                                                        data-active="<?php echo (int) $terminal['activo']; ?>"
-                                                        data-name="<?php echo sucursalesH($terminal['nombre']); ?>"
-                                                    >
-                                                        <i class="fas <?php echo (int) $terminal['activo'] === 1 ? 'fa-circle-pause' : 'fa-circle-play'; ?>"></i>
-                                                    </button>
                                                 </div>
-                                            </article>
-                                        <?php endforeach; ?>
-                                    <?php endif; ?>
-                                </div>
-                            </section>
-                        </div>
-                    <?php endif; ?>
+                                            </div>
+
+                                            <div class="br-row-actions">
+                                                <?php if ((int) $terminal['predeterminada'] === 1): ?>
+                                                    <span class="br-badge default">
+                                                        Predeterminada
+                                                    </span>
+                                                <?php endif; ?>
+
+                                                <span class="br-badge <?php echo (int) $terminal['activo'] === 1 ? 'active' : 'inactive'; ?>">
+                                                    <?php echo (int) $terminal['activo'] === 1
+                                                        ? 'Activa'
+                                                        : 'Inactiva'; ?>
+                                                </span>
+
+                                                <button
+                                                    type="button"
+                                                    class="br-action-text edit-terminal-button"
+                                                    data-terminal='<?php echo sucursalesH(json_encode($terminal, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)); ?>'
+                                                >
+                                                    <i class="fas fa-pen"></i>
+                                                    Editar
+                                                </button>
+
+                                                <button
+                                                    type="button"
+                                                    class="br-action-text toggle-terminal-button"
+                                                    data-id="<?php echo (int) $terminal['id']; ?>"
+                                                    data-active="<?php echo (int) $terminal['activo']; ?>"
+                                                    data-name="<?php echo sucursalesH($terminal['nombre']); ?>"
+                                                >
+                                                    <i class="fas <?php echo (int) $terminal['activo'] === 1
+                                                        ? 'fa-circle-pause'
+                                                        : 'fa-circle-play'; ?>"></i>
+
+                                                    <?php echo (int) $terminal['activo'] === 1
+                                                        ? 'Desactivar'
+                                                        : 'Activar'; ?>
+                                                </button>
+                                            </div>
+                                        </article>
+                                    <?php endforeach; ?>
+                                <?php endif; ?>
+                            </div>
+                        </section>
+                    </div>
                 </section>
-            </div>
+            <?php endif; ?>
         <?php endif; ?>
     </div>
 </main>
