@@ -1,422 +1,196 @@
 <?php
-// Archivo: includes/procesar_devolucion.php
-// Procesa una devolución parcial local y, cuando corresponde,
-// ejecuta primero el reembolso parcial en Mercado Pago Point.
+declare(strict_types=1);
 
 session_start();
 header('Content-Type: application/json; charset=utf-8');
 
-function responderDevolucion(bool $success, string $message, array $extra = []): void
-{
-    echo json_encode(
-        array_merge([
-            'success' => $success,
-            'message' => $message,
-        ], $extra),
-        JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
-    );
-    exit();
-}
-
-if (!isset($_SESSION['user_id'])) {
-    responderDevolucion(false, 'No autorizado');
-}
-
-if (
-    !isset($_SESSION['user_rol']) ||
-    !in_array($_SESSION['user_rol'], ['admin', 'recepcionista'], true)
-) {
-    responderDevolucion(
-        false,
-        'No tienes permiso para procesar devoluciones'
-    );
-}
-
 require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/sucursal_context.php';
 require_once __DIR__ . '/mercadopago_service.php';
-require_once __DIR__ . '/devoluciones_config.php';
+require_once __DIR__ . '/ventas_operaciones_multisucursal.php';
+
+function responderDevolucion(bool $success, string $message, array $extra = [], int $status = 200): void
+{
+    http_response_code($status);
+    echo json_encode(array_merge([
+        'success' => $success,
+        'message' => $message,
+    ], $extra), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
+if (empty($_SESSION['user_id'])) {
+    responderDevolucion(false, 'No autorizado.', [], 401);
+}
+if (!in_array(ventas_multi_rol_base(), ['admin', 'recepcionista'], true)) {
+    responderDevolucion(false, 'No tienes permiso para procesar devoluciones.', [], 403);
+}
+
+$input = json_decode(file_get_contents('php://input'), true);
+$ventaId = is_array($input) ? (int) ($input['venta_id'] ?? 0) : 0;
+$productoId = is_array($input) ? (int) ($input['producto_id'] ?? 0) : 0;
+$cantidad = is_array($input) ? (int) ($input['cantidad'] ?? 0) : 0;
+$motivo = is_array($input) ? trim((string) ($input['motivo'] ?? '')) : '';
+
+if ($ventaId <= 0 || $productoId <= 0 || $cantidad <= 0) {
+    responderDevolucion(false, 'Datos inválidos.', [], 400);
+}
+if ($motivo === '') {
+    responderDevolucion(false, 'Debe ingresar un motivo para la devolución.', [], 400);
+}
 
 $database = new Database();
 $conn = $database->getConnection();
-
 if (!$conn instanceof mysqli) {
-    responderDevolucion(
-        false,
-        'No fue posible conectar con la base de datos'
-    );
+    responderDevolucion(false, 'No fue posible conectar con la base de datos.', [], 500);
 }
-
 $conn->set_charset('utf8mb4');
 
-$input = json_decode(file_get_contents('php://input'), true);
-
-if (!is_array($input)) {
-    responderDevolucion(false, 'La solicitud JSON no es válida');
-}
-
-$ventaId = isset($input['venta_id'])
-    ? (int) $input['venta_id']
-    : 0;
-
-$productoId = isset($input['producto_id'])
-    ? (int) $input['producto_id']
-    : 0;
-
-$cantidad = isset($input['cantidad'])
-    ? (int) $input['cantidad']
-    : 0;
-
-$motivo = trim((string) ($input['motivo'] ?? ''));
-
-if ($ventaId <= 0 || $productoId <= 0 || $cantidad <= 0) {
-    responderDevolucion(false, 'Datos inválidos');
-}
-
-if ($motivo === '') {
-    responderDevolucion(
-        false,
-        'Debe ingresar un motivo para la devolución'
-    );
-}
-
-$transaccionIniciada = false;
-
+$tx = false;
 try {
     $conn->begin_transaction();
-    $transaccionIniciada = true;
+    $tx = true;
 
-    /*
-     * Bloquear la venta para impedir dos devoluciones simultáneas.
-     */
-    $stmtVenta = $conn->prepare(
-        "SELECT id, estado, metodo_pago, total
-         FROM ventas
-         WHERE id = ?
-         LIMIT 1
-         FOR UPDATE"
-    );
-
-    if (!$stmtVenta) {
-        throw new RuntimeException(
-            'No se pudo preparar la consulta de la venta: ' .
-            $conn->error
-        );
-    }
-
-    $stmtVenta->bind_param('i', $ventaId);
-    $stmtVenta->execute();
-    $venta = $stmtVenta->get_result()->fetch_assoc();
-    $stmtVenta->close();
-
-    if (!$venta) {
-        throw new RuntimeException('Venta no encontrada');
-    }
+    $venta = ventas_multi_obtener_venta($conn, $ventaId, true);
+    ventas_multi_validar_acceso($venta);
 
     if ($venta['estado'] !== 'completada') {
-        throw new RuntimeException(
-            'Solo se pueden devolver productos de ventas completadas'
-        );
+        throw new RuntimeException('Solo se pueden devolver productos de ventas completadas.');
     }
 
-    $plazoOperacion = devoluciones_validar_plazo_venta(
+    ventas_multi_validar_plazo($conn, $venta, 'devolucion');
+
+    $usuarioId = (int) $_SESSION['user_id'];
+    $caja = ventas_multi_obtener_caja_abierta(
         $conn,
-        $ventaId,
-        'devolucion'
+        (int) $venta['sucursal_id'],
+        $usuarioId
     );
 
-    /*
-     * Bloquear el detalle para impedir devolver más unidades que las
-     * actualmente disponibles en la venta.
-     */
-    $stmtDetalle = $conn->prepare(
+    $stmt = $conn->prepare(
         "SELECT cantidad, precio_unitario, subtotal
          FROM detalle_ventas
          WHERE venta_id = ? AND producto_id = ?
          LIMIT 1
          FOR UPDATE"
     );
+    $stmt->bind_param('ii', $ventaId, $productoId);
+    $stmt->execute();
+    $detalle = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
 
-    if (!$stmtDetalle) {
+    if (!is_array($detalle)) {
+        throw new RuntimeException('El producto ya no está disponible para devolución en esta venta.');
+    }
+
+    $cantidadDisponible = (int) $detalle['cantidad'];
+    if ($cantidad > $cantidadDisponible) {
         throw new RuntimeException(
-            'No se pudo preparar la consulta del producto vendido: ' .
-            $conn->error
+            'La cantidad excede las unidades pendientes de devolución (máximo: ' .
+            $cantidadDisponible . ').'
         );
     }
 
-    $stmtDetalle->bind_param('ii', $ventaId, $productoId);
-    $stmtDetalle->execute();
-    $detalle = $stmtDetalle->get_result()->fetch_assoc();
-    $stmtDetalle->close();
-
-    if (!$detalle) {
-        throw new RuntimeException(
-            'Producto no encontrado en esta venta'
-        );
+    $precio = round((float) $detalle['precio_unitario'], 2);
+    $monto = round($precio * $cantidad, 2);
+    if ($monto <= 0 || $monto > (float) $venta['total'] + 0.01) {
+        throw new RuntimeException('El monto calculado para la devolución no es válido.');
     }
 
-    $cantidadVendida = (int) $detalle['cantidad'];
-
-    if ($cantidad > $cantidadVendida) {
-        throw new RuntimeException(
-            'Cantidad a devolver excede la cantidad disponible ' .
-            '(máximo: ' . $cantidadVendida . ')'
-        );
-    }
-
-    $precioUnitario = round(
-        (float) $detalle['precio_unitario'],
-        2
-    );
-
-    $montoDevuelto = round(
-        $precioUnitario * $cantidad,
-        2
-    );
-
-    if ($montoDevuelto <= 0) {
-        throw new RuntimeException(
-            'El monto de devolución calculado no es válido'
-        );
-    }
-
-    if ($montoDevuelto > (float) $venta['total'] + 0.01) {
-        throw new RuntimeException(
-            'El monto a devolver supera el saldo actual de la venta'
-        );
-    }
-
-    /*
-     * Para tarjeta, esta llamada hace el reembolso real en Mercado Pago.
-     * Para efectivo o transferencia devuelve null y continúa localmente.
-     *
-     * Se ejecuta después de validar todo, pero antes de modificar stock,
-     * detalle, total o caja.
-     */
-    $reembolsoMp = mp_refund_sale_if_needed(
+    ventas_multi_bloquear_inventario(
         $conn,
-        $ventaId,
-        $montoDevuelto
+        (int) $venta['sucursal_id'],
+        $productoId
     );
 
-    if ($cantidadVendida === $cantidad) {
-        $stmtEliminar = $conn->prepare(
+    $reembolsoMp = mp_refund_sale_if_needed($conn, $ventaId, $monto);
+
+    if ($cantidad === $cantidadDisponible) {
+        $updateDetalle = $conn->prepare(
             "DELETE FROM detalle_ventas
              WHERE venta_id = ? AND producto_id = ?"
         );
-
-        if (!$stmtEliminar) {
-            throw new RuntimeException(
-                'No se pudo preparar la eliminación del detalle: ' .
-                $conn->error
-            );
-        }
-
-        $stmtEliminar->bind_param('ii', $ventaId, $productoId);
-
-        if (!$stmtEliminar->execute()) {
-            $error = $stmtEliminar->error;
-            $stmtEliminar->close();
-
-            throw new RuntimeException(
-                'Error al eliminar el detalle de la venta: ' . $error
-            );
-        }
-
-        $stmtEliminar->close();
+        $updateDetalle->bind_param('ii', $ventaId, $productoId);
     } else {
-        /*
-         * Es indispensable reducir cantidad Y subtotal.
-         */
-        $stmtActualizar = $conn->prepare(
+        $updateDetalle = $conn->prepare(
             "UPDATE detalle_ventas
              SET cantidad = cantidad - ?,
                  subtotal = subtotal - ?
              WHERE venta_id = ? AND producto_id = ?"
         );
-
-        if (!$stmtActualizar) {
-            throw new RuntimeException(
-                'No se pudo preparar la actualización del detalle: ' .
-                $conn->error
-            );
-        }
-
-        $stmtActualizar->bind_param(
-            'idii',
-            $cantidad,
-            $montoDevuelto,
-            $ventaId,
-            $productoId
-        );
-
-        if (!$stmtActualizar->execute()) {
-            $error = $stmtActualizar->error;
-            $stmtActualizar->close();
-
-            throw new RuntimeException(
-                'Error al actualizar el producto devuelto: ' . $error
-            );
-        }
-
-        $stmtActualizar->close();
+        $updateDetalle->bind_param('idii', $cantidad, $monto, $ventaId, $productoId);
     }
+    $updateDetalle->execute();
+    $updateDetalle->close();
 
-    $stmtTotal = $conn->prepare(
+    $updateVenta = $conn->prepare(
         "UPDATE ventas
          SET total = GREATEST(total - ?, 0)
-         WHERE id = ?"
+         WHERE id = ? AND estado = 'completada'"
+    );
+    $updateVenta->bind_param('di', $monto, $ventaId);
+    $updateVenta->execute();
+    $updateVenta->close();
+
+    ventas_multi_reponer_stock(
+        $conn,
+        (int) $venta['sucursal_id'],
+        $productoId,
+        $cantidad,
+        $usuarioId,
+        $ventaId,
+        'Devolución parcial de venta',
+        'devolucion_venta',
+        'Venta #' . $ventaId . ' · Motivo: ' . $motivo
     );
 
-    if (!$stmtTotal) {
-        throw new RuntimeException(
-            'No se pudo preparar la actualización del total: ' .
-            $conn->error
-        );
-    }
+    $productosJson = json_encode([[
+        'producto_id' => $productoId,
+        'cantidad' => $cantidad,
+    ]], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '[]';
 
-    $stmtTotal->bind_param('di', $montoDevuelto, $ventaId);
-
-    if (!$stmtTotal->execute()) {
-        $error = $stmtTotal->error;
-        $stmtTotal->close();
-
-        throw new RuntimeException(
-            'Error al actualizar el total de la venta: ' . $error
-        );
-    }
-
-    $stmtTotal->close();
-
-    $stmtStock = $conn->prepare(
-        "UPDATE productos
-         SET stock = stock + ?
-         WHERE id = ?"
+    $descripcion = 'Devolución de ' . $cantidad .
+        ' unidad(es) · Motivo: ' . $motivo;
+    $modificacionId = ventas_multi_registrar_modificacion(
+        $conn,
+        $ventaId,
+        $usuarioId,
+        'devolucion_parcial',
+        $descripcion,
+        $monto,
+        $productosJson
     );
 
-    if (!$stmtStock) {
-        throw new RuntimeException(
-            'No se pudo preparar la devolución de stock: ' .
-            $conn->error
-        );
-    }
-
-    $stmtStock->bind_param('ii', $cantidad, $productoId);
-
-    if (!$stmtStock->execute()) {
-        $error = $stmtStock->error;
-        $stmtStock->close();
-
-        throw new RuntimeException(
-            'Error al devolver el stock del producto: ' . $error
-        );
-    }
-
-    $stmtStock->close();
-
-    $tablaModificaciones = $conn->query(
-        "SHOW TABLES LIKE 'ventas_modificaciones'"
+    ventas_multi_registrar_caja(
+        $conn,
+        (int) $caja['id'],
+        $modificacionId,
+        $ventaId,
+        (string) $venta['metodo_pago'],
+        $monto,
+        'Devolución parcial',
+        'Venta #' . $ventaId . ' · ' . $descripcion
     );
-
-    if (
-        $tablaModificaciones &&
-        $tablaModificaciones->num_rows > 0
-    ) {
-        $stmtModificacion = $conn->prepare(
-            "INSERT INTO ventas_modificaciones (
-                venta_id,
-                usuario_id,
-                tipo_modificacion,
-                descripcion,
-                monto_devuelto,
-                productos_devueltos,
-                fecha_modificacion
-             ) VALUES (
-                ?,
-                ?,
-                'devolucion_parcial',
-                ?,
-                ?,
-                ?,
-                NOW()
-             )"
-        );
-
-        if (!$stmtModificacion) {
-            throw new RuntimeException(
-                'No se pudo preparar el historial de devolución: ' .
-                $conn->error
-            );
-        }
-
-        $descripcion =
-            'Devolución de ' . $cantidad .
-            ' unidad(es) - Motivo: ' . $motivo;
-
-        $productosDevueltos = json_encode(
-            [[
-                'producto_id' => $productoId,
-                'cantidad' => $cantidad,
-            ]],
-            JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
-        );
-
-        if ($productosDevueltos === false) {
-            $productosDevueltos = '[]';
-        }
-
-        $usuarioId = (int) $_SESSION['user_id'];
-
-        $stmtModificacion->bind_param(
-            'iisds',
-            $ventaId,
-            $usuarioId,
-            $descripcion,
-            $montoDevuelto,
-            $productosDevueltos
-        );
-
-        if (!$stmtModificacion->execute()) {
-            $error = $stmtModificacion->error;
-            $stmtModificacion->close();
-
-            throw new RuntimeException(
-                'No se pudo registrar la devolución: ' . $error
-            );
-        }
-
-        $stmtModificacion->close();
-    }
 
     $conn->commit();
-    $transaccionIniciada = false;
+    $tx = false;
 
-    $mensaje =
-        'Devolución procesada correctamente. Monto devuelto: $' .
-        number_format($montoDevuelto, 2);
-
-    if (is_array($reembolsoMp)) {
-        $mensaje .= ' · Reembolso enviado a Mercado Pago.';
-    }
-
-    responderDevolucion(true, $mensaje, [
-        'monto_devuelto' => $montoDevuelto,
-        'reembolso_mercadopago' => $reembolsoMp !== null,
-        'refund_id' => is_array($reembolsoMp)
-            ? ($reembolsoMp['refund_id'] ?? null)
-            : null,
-        'refund_status' => is_array($reembolsoMp)
-            ? ($reembolsoMp['refund_status'] ?? null)
-            : null,
-    ]);
+    responderDevolucion(true,
+        'Devolución procesada correctamente. Monto devuelto: $' . number_format($monto, 2),
+        [
+            'sucursal_id' => (int) $venta['sucursal_id'],
+            'sucursal_nombre' => (string) $venta['sucursal_nombre'],
+            'stock_restaurado' => true,
+            'monto_devuelto' => $monto,
+            'reembolso_mercadopago' => $reembolsoMp !== null,
+            'refund_id' => is_array($reembolsoMp) ? ($reembolsoMp['refund_id'] ?? null) : null,
+            'refund_status' => is_array($reembolsoMp) ? ($reembolsoMp['refund_status'] ?? null) : null,
+        ]
+    );
 } catch (Throwable $error) {
-    if ($transaccionIniciada) {
+    if ($tx) {
         $conn->rollback();
     }
-
-    error_log(
-        'Error procesar_devolucion venta ' .
-        $ventaId . ': ' . $error->getMessage()
-    );
-
-    responderDevolucion(false, $error->getMessage());
+    error_log('[procesar_devolucion #' . $ventaId . '] ' . $error->getMessage());
+    responderDevolucion(false, $error->getMessage(), [], 409);
 }

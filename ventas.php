@@ -1,58 +1,331 @@
 <?php
+declare(strict_types=1);
+
 header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 header('Pragma: no-cache');
 header('Expires: 0');
 
-// Archivo: ventas.php
-// BUILD: FLUJO_RAPIDO_20260716_FINAL
-// Módulo de venta de productos
+require_once __DIR__ . '/includes/auth_guard.php';
+require_once __DIR__ . '/config/database.php';
+require_once __DIR__ . '/includes/sucursal_context.php';
 
-// Asegurar que la sesión está iniciada
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
+mysqli_report(
+    MYSQLI_REPORT_ERROR |
+    MYSQLI_REPORT_STRICT
+);
+
+$userId = (int) ($_SESSION['user_id'] ?? 0);
+$userRole = strtolower(trim((string) (
+    $_SESSION['user_rol'] ?? ''
+)));
+
+if ($userRole === 'administrador') {
+    $userRole = 'admin';
 }
 
-// Verificar si el usuario está logueado
-if (!isset($_SESSION['user_id'])) {
-    header("Location: login.php");
-    exit();
+if (!in_array(
+    $userRole,
+    ['admin', 'recepcionista'],
+    true
+)) {
+    header('Location: dashboard.php');
+    exit;
 }
 
-// Verificar rol (solo admin y recepcionista)
-if ($_SESSION['user_rol'] !== 'admin' && $_SESSION['user_rol'] !== 'recepcionista') {
-    header("Location: dashboard.php");
-    exit();
-}
-
-// Incluir sidebar y configuración
-require_once 'includes/sidebar.php';
-require_once 'config/database.php';
+$sucursalId = (int) (
+    $_SESSION['sucursal_id'] ?? 0
+);
 
 $database = new Database();
 $conn = $database->getConnection();
 
-// Obtener configuración del gimnasio
-$query_config = "SELECT nombre, logo FROM configuracion_gimnasio WHERE id = 1";
-$result_config = $conn->query($query_config);
-$config = $result_config->fetch_assoc();
-$gym_nombre = $config['nombre'] ?? 'Ego Gym';
-$gym_logo = $config['logo'] ?? '';
-
-// Obtener productos activos
-$query_productos = "SELECT p.*, c.nombre as categoria_nombre 
-                    FROM productos p 
-                    LEFT JOIN categorias_productos c ON p.categoria_id = c.id 
-                    WHERE p.estado = 'activo' 
-                    ORDER BY p.nombre ASC";
-$result_productos = $conn->query($query_productos);
-$productos = [];
-while ($row = $result_productos->fetch_assoc()) {
-    $productos[] = $row;
+if (!$conn instanceof mysqli) {
+    die('No se pudo conectar con la base de datos.');
 }
 
-// Obtener clientes para asociar la venta (opcional)
-$query_clientes = "SELECT id, nombre, apellido, telefono, email FROM clientes WHERE estado = 'activo' ORDER BY nombre ASC";
-$result_clientes = $conn->query($query_clientes);
+$conn->set_charset('utf8mb4');
+
+$esAdministrador = in_array(
+    $userRole,
+    ['admin', 'administrador'],
+    true
+);
+
+$vistaSolicitada = strtolower(trim((string) (
+    $_GET['vista'] ?? ''
+)));
+
+try {
+    if (
+        $vistaSolicitada === 'global'
+        && $esAdministrador
+    ) {
+        sucursal_activar_vista_global(
+            $conn,
+            $userId
+        );
+    } elseif ($vistaSolicitada === 'sucursal') {
+        sucursal_desactivar_vista_global();
+    }
+} catch (Throwable $errorVista) {
+    error_log(
+        '[Ventas contexto sucursal] ' .
+        $errorVista->getMessage()
+    );
+
+    sucursal_desactivar_vista_global();
+}
+
+$vistaGlobalVentas =
+    $esAdministrador
+    && sucursal_dashboard_vista_global();
+
+if (
+    !$vistaGlobalVentas
+    && $sucursalId <= 0
+) {
+    $_SESSION['error'] =
+        'Selecciona una sucursal operativa antes de abrir ventas.';
+    header('Location: dashboard.php');
+    exit;
+}
+
+$sucursal = null;
+$sucursalNombre = '';
+$sucursalClave = '';
+$sucursalEsMatriz = false;
+
+if ($sucursalId > 0) {
+    $stmtSucursal = $conn->prepare(
+        "SELECT
+            id,
+            clave,
+            nombre,
+            es_matriz,
+            estado,
+            zona_horaria
+         FROM sucursales
+         WHERE id = ?
+         LIMIT 1"
+    );
+
+    $stmtSucursal->bind_param(
+        'i',
+        $sucursalId
+    );
+
+    $stmtSucursal->execute();
+
+    $sucursal = $stmtSucursal
+        ->get_result()
+        ->fetch_assoc();
+
+    $stmtSucursal->close();
+}
+
+if (!$vistaGlobalVentas) {
+    if (
+        !is_array($sucursal) ||
+        ($sucursal['estado'] ?? '') !== 'activa'
+    ) {
+        $_SESSION['error'] =
+            'La sucursal seleccionada está inactiva.';
+        header('Location: dashboard.php');
+        exit;
+    }
+
+    $sucursalNombre = trim((string) (
+        $sucursal['nombre'] ?? 'Sucursal'
+    ));
+
+    $sucursalClave = trim((string) (
+        $sucursal['clave'] ?? ''
+    ));
+
+    $sucursalEsMatriz =
+        (int) ($sucursal['es_matriz'] ?? 0) === 1;
+} else {
+    $sucursalNombre = 'Todas las sucursales';
+    $sucursalClave = 'GLOBAL';
+}
+
+date_default_timezone_set(
+    trim((string) (
+        is_array($sucursal)
+            ? (
+                $sucursal['zona_horaria']
+                ?? 'America/Mexico_City'
+            )
+            : 'America/Mexico_City'
+    ))
+);
+
+$resultConfig = $conn->query(
+    "SELECT nombre, logo
+     FROM configuracion_gimnasio
+     WHERE id = 1
+     LIMIT 1"
+);
+
+$config = $resultConfig
+    ? $resultConfig->fetch_assoc()
+    : [];
+
+$gymNombre = trim((string) (
+    $config['nombre'] ?? 'Rex Core Gym'
+));
+
+$gymLogo = trim((string) (
+    $config['logo'] ?? ''
+));
+
+/*
+ * Catálogo, socios y terminal solo se cargan para una sede concreta.
+ */
+$productos = [];
+$totalProductosAsignados = 0;
+$totalProductosConStock = 0;
+$totalUnidadesDisponibles = 0;
+$resultClientes = null;
+$terminalPointDisponible = false;
+$terminalPointNombre = '';
+
+if (!$vistaGlobalVentas) {
+    $stmtProductos = $conn->prepare(
+        "SELECT
+            p.id,
+            p.nombre,
+            p.descripcion,
+            p.foto,
+            categoria.nombre AS categoria_nombre,
+            inv.id AS inventario_id,
+            inv.precio_compra,
+            inv.precio_venta,
+            inv.stock,
+            inv.stock_minimo
+         FROM inventario_sucursales inv
+         INNER JOIN productos p
+            ON p.id = inv.producto_id
+         LEFT JOIN categorias_productos categoria
+            ON categoria.id = p.categoria_id
+         WHERE inv.sucursal_id = ?
+           AND inv.estado = 'activo'
+           AND p.estado = 'activo'
+         ORDER BY p.nombre ASC"
+    );
+
+    $stmtProductos->bind_param(
+        'i',
+        $sucursalId
+    );
+
+    $stmtProductos->execute();
+
+    $resultProductos =
+        $stmtProductos->get_result();
+
+    while (
+        $producto =
+            $resultProductos->fetch_assoc()
+    ) {
+        $producto['id'] =
+            (int) $producto['id'];
+
+        $producto['inventario_id'] =
+            (int) $producto['inventario_id'];
+
+        $producto['stock'] =
+            max(0, (int) $producto['stock']);
+
+        $producto['stock_minimo'] =
+            max(
+                0,
+                (int) $producto['stock_minimo']
+            );
+
+        $producto['precio_venta'] =
+            round(
+                (float) $producto['precio_venta'],
+                2
+            );
+
+        $productos[] = $producto;
+    }
+
+    $stmtProductos->close();
+
+    $totalProductosAsignados =
+        count($productos);
+
+    foreach ($productos as $producto) {
+        $stockProducto =
+            (int) $producto['stock'];
+
+        if ($stockProducto > 0) {
+            $totalProductosConStock++;
+            $totalUnidadesDisponibles +=
+                $stockProducto;
+        }
+    }
+
+    /*
+     * Los socios son globales.
+     */
+    $resultClientes = $conn->query(
+        "SELECT
+            id,
+            nombre,
+            apellido,
+            telefono,
+            email
+         FROM clientes
+         WHERE estado = 'activo'
+         ORDER BY
+            nombre ASC,
+            apellido ASC"
+    );
+
+    $stmtTerminal = $conn->prepare(
+        "SELECT
+            terminal_id,
+            nombre
+         FROM mercadopago_terminales
+         WHERE sucursal_id = ?
+           AND activo = 1
+         ORDER BY
+            predeterminada DESC,
+            id ASC
+         LIMIT 1"
+    );
+
+    $stmtTerminal->bind_param(
+        'i',
+        $sucursalId
+    );
+
+    $stmtTerminal->execute();
+
+    $terminalPoint = $stmtTerminal
+        ->get_result()
+        ->fetch_assoc();
+
+    $stmtTerminal->close();
+
+    $terminalPointDisponible =
+        is_array($terminalPoint)
+        && trim((string) (
+            $terminalPoint['terminal_id']
+            ?? ''
+        )) !== '';
+
+    $terminalPointNombre =
+        $terminalPointDisponible
+            ? trim((string) (
+                $terminalPoint['nombre']
+                ?? 'Terminal Point'
+            ))
+            : '';
+}
 ?>
 
 <!DOCTYPE html>
@@ -60,24 +333,256 @@ $result_clientes = $conn->query($query_clientes);
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Venta de Productos - <?php echo htmlspecialchars($gym_nombre); ?></title>
+    <title>Venta de Productos - <?php echo htmlspecialchars($gymNombre); ?></title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-    <link rel="stylesheet" href="css/ventas.css">
+    <link
+        rel="stylesheet"
+        href="css/ventas.css?v=<?php echo is_file(
+            __DIR__ . '/css/ventas.css'
+        ) ? filemtime(__DIR__ . '/css/ventas.css') : time(); ?>"
+    >
 </head>
 <body>
+    <?php include __DIR__ . '/includes/sidebar.php'; ?>
+
     <div class="main-content">
         <div class="ventas-container">
-            <header class="ventas-header ventas-header-minimal">
-                <h1><i class="fas fa-cash-register" aria-hidden="true"></i> Venta de productos</h1>
+            <header
+                class="ventas-header ventas-header-minimal ventas-header-contextual"
+            >
+                <div class="ventas-title-group">
+                    <h1>
+                        <i
+                            class="fas fa-cash-register"
+                            aria-hidden="true"
+                        ></i>
+                        Venta de productos
+                    </h1>
+
+                    <p class="ventas-header-subtitle">
+                        <?php if ($vistaGlobalVentas): ?>
+                            Selecciona la sede donde se realizará la venta.
+                        <?php else: ?>
+                            Consulta existencias, arma el carrito y registra el cobro.
+                        <?php endif; ?>
+                    </p>
+                </div>
+
+                <div class="ventas-header-side">
+                    <div class="ventas-sucursal-context <?php echo $vistaGlobalVentas
+                        ? 'is-global'
+                        : ''; ?>">
+                        <span class="ventas-context-icon">
+                            <i class="fas <?php echo $vistaGlobalVentas
+                                ? 'fa-chart-pie'
+                                : 'fa-location-dot'; ?>"></i>
+                        </span>
+
+                        <span class="ventas-context-copy">
+                            <strong>
+                                <?php if ($vistaGlobalVentas): ?>
+                                    Todas las sucursales
+                                <?php else: ?>
+                                    <?php echo htmlspecialchars(
+                                        $sucursalNombre,
+                                        ENT_QUOTES,
+                                        'UTF-8'
+                                    ); ?>
+                                <?php endif; ?>
+                            </strong>
+
+                            <small>
+                                <?php if ($vistaGlobalVentas): ?>
+                                    Elige una sede para habilitar la venta
+                                <?php else: ?>
+                                    <?php echo htmlspecialchars(
+                                        $sucursalClave,
+                                        ENT_QUOTES,
+                                        'UTF-8'
+                                    ); ?>
+                                    <?php if ($sucursalEsMatriz): ?>
+                                        · Matriz
+                                    <?php else: ?>
+                                        · Sucursal
+                                    <?php endif; ?>
+                                <?php endif; ?>
+                            </small>
+                        </span>
+                    </div>
+
+                    <?php if (!$vistaGlobalVentas): ?>
+                        <div class="ventas-inventory-summary">
+                            <span class="ventas-inventory-pill">
+                                <i class="fas fa-box-open"></i>
+                                <strong>
+                                    <?php echo $totalProductosConStock; ?>
+                                </strong>
+                                con existencia
+                            </span>
+
+                            <span class="ventas-inventory-pill">
+                                <i class="fas fa-cubes-stacked"></i>
+                                <strong>
+                                    <?php echo $totalUnidadesDisponibles; ?>
+                                </strong>
+                                unidades
+                            </span>
+
+                            <span class="ventas-inventory-pill">
+                                <i class="fas fa-credit-card"></i>
+                                <?php echo $terminalPointDisponible
+                                    ? 'Point disponible'
+                                    : 'Sin terminal Point'; ?>
+                            </span>
+                        </div>
+                    <?php endif; ?>
+                </div>
             </header>
 
+            <?php if ($vistaGlobalVentas): ?>
+                <div class="ventas-grid is-global-view">
+                    <section class="productos-section">
+                        <div class="section-header global-catalog-header">
+                            <div class="global-catalog-heading">
+                                <div class="global-catalog-title-row">
+                                    <h2>Productos disponibles</h2>
+
+                                    <span class="global-catalog-status">
+                                        <i class="fas fa-location-dot"></i>
+                                        Sin sede
+                                    </span>
+                                </div>
+
+                                <p>
+                                    Elige una sucursal para consultar su inventario.
+                                </p>
+                            </div>
+
+                            <div class="search-box global-sales-search">
+                                <i class="fas fa-search"></i>
+
+                                <input
+                                    type="search"
+                                    placeholder="Selecciona una sucursal para buscar"
+                                    disabled
+                                >
+
+                                <button
+                                    type="button"
+                                    class="clear-search"
+                                    disabled
+                                    aria-label="Búsqueda deshabilitada"
+                                >
+                                    <i class="fas fa-xmark"></i>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="productos-grid global-empty-grid">
+                            <div class="global-product-empty">
+                                <div class="global-product-empty-icon">
+                                    <i class="fas fa-store"></i>
+                                </div>
+
+                                <div class="global-product-empty-copy">
+                                    <span>Catálogo por sucursal</span>
+
+                                    <h3>Selecciona una sucursal</h3>
+
+                                    <p>
+                                        Cargaremos únicamente sus productos,
+                                        precios y existencias disponibles.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <aside
+                        class="carrito-section"
+                        aria-label="Carrito deshabilitado"
+                    >
+                        <div class="carrito-header">
+                            <div class="carrito-heading">
+                                <h2>
+                                    <i class="fas fa-cart-shopping"></i>
+                                    Carrito
+                                </h2>
+                            </div>
+
+                            <div class="carrito-header-actions">
+                                <span class="carrito-badge">0</span>
+                            </div>
+                        </div>
+
+                        <div class="carrito-items">
+                            <div class="carrito-vacio global-cart-disabled">
+                                <div class="empty-icon">
+                                    <i class="fas fa-basket-shopping"></i>
+                                </div>
+
+                                <p>Tu carrito está vacío</p>
+
+                                <small>
+                                    Selecciona una sucursal para cargar el
+                                    catálogo y comenzar la venta.
+                                </small>
+                            </div>
+                        </div>
+
+                        <div class="carrito-footer">
+                            <div class="cliente-select">
+                                <label>
+                                    <i class="fas fa-user"></i>
+                                    Socio (opcional)
+                                </label>
+
+                                <select
+                                    class="global-disabled-select"
+                                    disabled
+                                >
+                                    <option>
+                                        Selecciona primero una sucursal
+                                    </option>
+                                </select>
+
+                                <small class="global-disabled-help">
+                                    La venta todavía no tiene una sede operativa.
+                                </small>
+                            </div>
+
+                            <div class="carrito-total">
+                                <div class="carrito-total-label">
+                                    <span>Total de la venta</span>
+                                    <small>0 artículos</small>
+                                </div>
+
+                                <strong>$0.00</strong>
+                            </div>
+
+                            <button
+                                class="btn-pagar global-disabled-button"
+                                type="button"
+                                disabled
+                            >
+                                <i class="fas fa-arrow-right-to-bracket"></i>
+                                Cobrar venta
+                            </button>
+
+                            <div class="pago-seguro">
+                                <i class="fas fa-shield-halved"></i>
+                                Selecciona una sede para habilitar el cobro
+                            </div>
+                        </div>
+                    </aside>
+                </div>
+            <?php else: ?>
             <div class="ventas-grid">
                 <div class="productos-section">
                     <div class="section-header">
                         <div class="section-heading">
                             <h2>Productos disponibles</h2>
-                            <div class="section-meta"><span id="productosVisibles"><?php echo count($productos); ?></span> productos</div>
                         </div>
                         <div class="search-box">
                             <i class="fas fa-search"></i>
@@ -87,22 +592,57 @@ $result_clientes = $conn->query($query_clientes);
                             </button>
                         </div>
                     </div>
-                    <div class="productos-grid" id="productosGrid">
+                    <div class="productos-grid" id="productosGrid">                       
                         <?php foreach ($productos as $producto): ?>
-                            <div class="producto-card"
+                            <?php
+                            $productoAgotado =
+                                (int) $producto['stock'] <= 0;
+                            $productoStockBajo =
+                                !$productoAgotado
+                                && (int) $producto['stock']
+                                    <= (int) $producto['stock_minimo'];
+                            ?>
+                            <div class="producto-card <?php echo $productoAgotado
+                                ? 'is-out-of-stock'
+                                : ''; ?>"
                                  role="button"
-                                 tabindex="0"
-                                 aria-label="Agregar <?php echo htmlspecialchars($producto['nombre']); ?> al carrito"
+                                 tabindex="<?php echo $productoAgotado ? '-1' : '0'; ?>"
+                                 aria-disabled="<?php echo $productoAgotado
+                                    ? 'true'
+                                    : 'false'; ?>"
+                                 aria-label="<?php echo $productoAgotado
+                                    ? 'Producto agotado: '
+                                    : 'Agregar '; ?><?php echo htmlspecialchars(
+                                        $producto['nombre'],
+                                        ENT_QUOTES,
+                                        'UTF-8'
+                                    ); ?><?php echo $productoAgotado
+                                        ? ''
+                                        : ' al carrito'; ?>"
                                  data-id="<?php echo $producto['id']; ?>"
-                                 data-nombre="<?php echo htmlspecialchars($producto['nombre']); ?>"
+                                 data-inventario-id="<?php echo $producto['inventario_id']; ?>"
+                                 data-sucursal-id="<?php echo $sucursalId; ?>"
+                                 data-nombre="<?php echo htmlspecialchars(
+                                     (string) $producto['nombre'],
+                                     ENT_QUOTES,
+                                     'UTF-8'
+                                 ); ?>" 
                                  data-categoria="<?php echo htmlspecialchars($producto['categoria_nombre'] ?? 'Sin categoría'); ?>"
                                  data-precio="<?php echo $producto['precio_venta']; ?>"
                                  data-stock="<?php echo $producto['stock']; ?>"
                                  data-imagen="<?php echo htmlspecialchars($producto['foto'] ?? ''); ?>">
                                 <div class="producto-card-top">
                                     <span class="producto-categoria"><?php echo htmlspecialchars($producto['categoria_nombre'] ?? 'Sin categoría'); ?></span>
-                                    <span class="producto-stock-badge <?php echo $producto['stock'] <= $producto['stock_minimo'] ? 'bajo' : ''; ?>">
-                                        <?php echo (int) $producto['stock']; ?> disp.
+                                    <span class="producto-stock-badge <?php
+                                        echo $productoAgotado
+                                            ? 'agotado'
+                                            : ($productoStockBajo ? 'bajo' : '');
+                                    ?>">
+                                        <?php if ($productoAgotado): ?>
+                                            Agotado
+                                        <?php else: ?>
+                                            <?php echo (int) $producto['stock']; ?> disp.
+                                        <?php endif; ?>
                                     </span>
                                 </div>
                                 <div class="producto-imagen">
@@ -117,15 +657,46 @@ $result_clientes = $conn->query($query_clientes);
                                     <div class="producto-footer">
                                         <div>
                                             <div class="producto-precio">$<?php echo number_format($producto['precio_venta'], 2); ?></div>
-                                            <div class="producto-stock <?php echo $producto['stock'] <= $producto['stock_minimo'] ? 'bajo' : ''; ?>">
-                                                <?php echo $producto['stock'] <= $producto['stock_minimo'] ? 'Stock bajo' : 'Disponible'; ?>
+                                            <div class="producto-stock <?php
+                                                echo $productoAgotado
+                                                    ? 'agotado'
+                                                    : ($productoStockBajo ? 'bajo' : '');
+                                            ?>">
+                                                <?php
+                                                if ($productoAgotado) {
+                                                    echo 'Sin existencias';
+                                                } elseif ($productoStockBajo) {
+                                                    echo 'Stock bajo';
+                                                } else {
+                                                    echo 'Disponible';
+                                                }
+                                                ?>
                                             </div>
                                         </div>
-                                        <span class="producto-add" aria-hidden="true"><i class="fas fa-plus"></i></span>
+                                        <span class="producto-add" aria-hidden="true">
+                                            <i class="fas <?php echo $productoAgotado
+                                                ? 'fa-ban'
+                                                : 'fa-plus'; ?>"></i>
+                                        </span>
                                     </div>
                                 </div>
                             </div>
                         <?php endforeach; ?>
+
+                        <?php if ($productos === []): ?>
+                            <div class="ventas-empty-branch">
+                                <i class="fas fa-boxes-stacked"></i>
+                                <strong>No hay productos configurados en esta sucursal</strong>
+                                <span>
+                                    Sincroniza el catálogo o asigna productos y existencias
+                                    a <?php echo htmlspecialchars(
+                                        $sucursalNombre,
+                                        ENT_QUOTES,
+                                        'UTF-8'
+                                    ); ?> desde el módulo de sucursales.
+                                </span>
+                            </div>
+                        <?php endif; ?>
                     </div>
                     <div class="sin-resultados" id="sinResultados">
                         <i class="fas fa-magnifying-glass"></i>
@@ -155,10 +726,13 @@ $result_clientes = $conn->query($query_clientes);
                     </div>
                     <div class="carrito-footer">
                         <div class="cliente-select">
-                            <label><i class="fas fa-user"></i> Cliente (Opcional)</label>
+                            <label><i class="fas fa-user"></i> Socio (opcional)</label>
                             <select id="clienteId">
-                                <option value="" data-email="">Venta al público (sin cliente)</option>
-                                <?php while ($cliente = $result_clientes->fetch_assoc()): ?>
+                                <option value="" data-email="">Venta al público (sin socio)</option>
+                                <?php while (
+                                    $resultClientes instanceof mysqli_result
+                                    && $cliente = $resultClientes->fetch_assoc()
+                                ): ?>
                                     <option
                                         value="<?php echo (int) $cliente['id']; ?>"
                                         data-email="<?php echo htmlspecialchars((string) ($cliente['email'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>">
@@ -185,11 +759,51 @@ $result_clientes = $conn->query($query_clientes);
                     </div>
                 </aside>
             </div>
+            <?php endif; ?>
         </div>
     </div>
 
+    <?php if (!$vistaGlobalVentas): ?>
     <script>
+    const SUCURSAL_ID = <?php echo (int) $sucursalId; ?>;
+    const SUCURSAL_NOMBRE = <?php echo json_encode(
+        $sucursalNombre,
+        JSON_UNESCAPED_UNICODE |
+        JSON_UNESCAPED_SLASHES
+    ); ?>;
+    const TERMINAL_POINT_DISPONIBLE = <?php echo $terminalPointDisponible
+        ? 'true'
+        : 'false'; ?>;
+    const TERMINAL_POINT_NOMBRE = <?php echo json_encode(
+        $terminalPointNombre,
+        JSON_UNESCAPED_UNICODE |
+        JSON_UNESCAPED_SLASHES
+    ); ?>;
+    const CART_STORAGE_KEY =
+        `carritoVentas_sucursal_${SUCURSAL_ID}`;
+
     let carrito = [];
+
+    const catalogoSucursal = new Map(
+        [...document.querySelectorAll(
+            '.producto-card[data-id]'
+        )].map(card => [
+            Number(card.dataset.id),
+            {
+                id: Number(card.dataset.id),
+                inventarioId:
+                    Number(card.dataset.inventarioId || 0),
+                nombre:
+                    String(card.dataset.nombre || ''),
+                precio:
+                    Number(card.dataset.precio || 0),
+                stock:
+                    Number(card.dataset.stock || 0),
+                imagen:
+                    String(card.dataset.imagen || '')
+            }
+        ])
+    );
 
     const moneyFormatter = new Intl.NumberFormat('es-MX', {
         style: 'currency',
@@ -211,21 +825,106 @@ $result_clientes = $conn->query($query_clientes);
     }
 
     function loadCart() {
-        const savedCart = localStorage.getItem('carritoVentas');
+        /*
+         * El carrito anterior era global y podía mezclar sucursales.
+         */
+        localStorage.removeItem('carritoVentas');
+
+        const savedCart =
+            localStorage.getItem(CART_STORAGE_KEY);
+
+        let carritoAjustado = false;
+
         if (savedCart) {
             try {
                 const parsed = JSON.parse(savedCart);
-                carrito = Array.isArray(parsed) ? parsed : [];
+                const items = Array.isArray(parsed)
+                    ? parsed
+                    : [];
+
+                carrito = items
+                    .map(item => {
+                        const producto =
+                            catalogoSucursal.get(
+                                Number(item.id)
+                            );
+
+                        if (
+                            !producto ||
+                            producto.stock <= 0
+                        ) {
+                            carritoAjustado = true;
+                            return null;
+                        }
+
+                        const cantidadOriginal =
+                            Math.max(
+                                1,
+                                Number(item.cantidad || 1)
+                            );
+
+                        const cantidad = Math.min(
+                            cantidadOriginal,
+                            producto.stock
+                        );
+
+                        if (
+                            cantidad !== cantidadOriginal ||
+                            Number(item.precio) !==
+                                producto.precio ||
+                            Number(item.stock) !==
+                                producto.stock
+                        ) {
+                            carritoAjustado = true;
+                        }
+
+                        return {
+                            id: producto.id,
+                            inventario_id:
+                                producto.inventarioId,
+                            sucursal_id: SUCURSAL_ID,
+                            nombre: producto.nombre,
+                            precio: producto.precio,
+                            cantidad,
+                            imagen: producto.imagen,
+                            stock: producto.stock
+                        };
+                    })
+                    .filter(Boolean);
             } catch (error) {
-                localStorage.removeItem('carritoVentas');
+                localStorage.removeItem(
+                    CART_STORAGE_KEY
+                );
+
                 carrito = [];
+                carritoAjustado = true;
             }
         }
+
+        saveCart();
         updateCartDisplay();
+
+        if (carritoAjustado) {
+            Swal.fire({
+                icon: 'info',
+                title: 'Carrito actualizado',
+                text:
+                    'Se ajustaron precios o existencias para ' +
+                    SUCURSAL_NOMBRE +
+                    '.',
+                timer: 2300,
+                showConfirmButton: false,
+                toast: true,
+                position: 'top-end'
+            });
+        }
     }
 
     function saveCart() {
-        localStorage.setItem('carritoVentas', JSON.stringify(carrito));
+        localStorage.setItem(
+            CART_STORAGE_KEY,
+            JSON.stringify(carrito)
+        );
     }
 
     function addToCart(productoId, nombre, precio, stock, imagen) {
@@ -247,8 +946,16 @@ $result_clientes = $conn->query($query_clientes);
         if (existingItem) {
             existingItem.cantidad++;
         } else {
+            const productoCatalogo =
+                catalogoSucursal.get(
+                    Number(productoId)
+                );
+
             carrito.push({
                 id: productoId,
+                inventario_id:
+                    productoCatalogo?.inventarioId || 0,
+                sucursal_id: SUCURSAL_ID,
                 nombre: nombre,
                 precio: parseFloat(precio),
                 cantidad: 1,
@@ -306,7 +1013,7 @@ $result_clientes = $conn->query($query_clientes);
         Swal.fire({
             icon: 'info',
             title: 'Producto Eliminado',
-            text: item.nombre + ' ha sido eliminado del carrito',
+            text: (item?.nombre || 'El producto') + ' ha sido eliminado del carrito',
             showConfirmButton: false,
             timer: 1500,
             toast: true,
@@ -441,15 +1148,35 @@ $result_clientes = $conn->query($query_clientes);
                         <strong>Efectivo</strong>
                         <small>Calcula automáticamente el cambio.</small>
                     </button>
-                    <button type="button" id="btn-debito" class="payment-option debit">
+                    <button
+                        type="button"
+                        id="btn-debito"
+                        class="payment-option debit ${TERMINAL_POINT_DISPONIBLE ? '' : 'is-disabled'}"
+                        ${TERMINAL_POINT_DISPONIBLE ? '' : 'disabled'}
+                    >
                         <span class="payment-icon"><i class="fas fa-credit-card"></i></span>
                         <strong>Tarjeta de débito</strong>
-                        <small>Envía el cobro a la terminal Point.</small>
+                        <small>
+                            ${TERMINAL_POINT_DISPONIBLE
+                                ? `Se enviará el cobro a la terminal.`
+                                : 'Esta sucursal no tiene una terminal Point activa.'
+                            }
+                        </small>
                     </button>
-                    <button type="button" id="btn-credito" class="payment-option credit">
+                    <button
+                        type="button"
+                        id="btn-credito"
+                        class="payment-option credit ${TERMINAL_POINT_DISPONIBLE ? '' : 'is-disabled'}"
+                        ${TERMINAL_POINT_DISPONIBLE ? '' : 'disabled'}
+                    >
                         <span class="payment-icon"><i class="fas fa-layer-group"></i></span>
                         <strong>Tarjeta de crédito</strong>
-                        <small>La terminal mostrará las opciones y MSI disponibles.</small>
+                        <small>
+                            ${TERMINAL_POINT_DISPONIBLE
+                                ? 'La terminal mostrará las mensualidades disponibles.'
+                                : 'Esta sucursal no tiene una terminal Point activa.'
+                            }
+                        </small>
                     </button>
                     <button type="button" id="btn-transferencia" class="payment-option transfer">
                         <span class="payment-icon"><i class="fas fa-building-columns"></i></span>
@@ -469,10 +1196,19 @@ $result_clientes = $conn->query($query_clientes);
                     Swal.clickConfirm();
                 };
 
-                document.getElementById('btn-efectivo').onclick = () => elegir('efectivo');
-                document.getElementById('btn-debito').onclick = () => elegir('tarjeta_debito');
-                document.getElementById('btn-credito').onclick = () => elegir('tarjeta_credito');
-                document.getElementById('btn-transferencia').onclick = () => elegir('transferencia');
+                document.getElementById('btn-efectivo').onclick =
+                    () => elegir('efectivo');
+
+                document.getElementById('btn-transferencia').onclick =
+                    () => elegir('transferencia');
+
+                if (TERMINAL_POINT_DISPONIBLE) {
+                    document.getElementById('btn-debito').onclick =
+                        () => elegir('tarjeta_debito');
+
+                    document.getElementById('btn-credito').onclick =
+                        () => elegir('tarjeta_credito');
+                }
             },
             preConfirm: () => window.metodoSeleccionado
         });
@@ -487,7 +1223,8 @@ $result_clientes = $conn->query($query_clientes);
             body: JSON.stringify({
                 items: carrito,
                 total,
-                payment_type: paymentType
+                payment_type: paymentType,
+                sucursal_id: SUCURSAL_ID
             })
         });
     }
@@ -742,6 +1479,10 @@ $result_clientes = $conn->query($query_clientes);
                             <span style="color:#64748b;">Método</span>
                             <strong style="color:#0f172a;text-align:right;">${nombreMetodoPago(metodo, installments)}</strong>
                         </div>
+                        <div style="display:flex;justify-content:space-between;gap:16px;padding:10px 13px;border-bottom:1px solid #e2e8f0;font-size:.88rem;">
+                            <span style="color:#64748b;">Sucursal</span>
+                            <strong style="color:#0f172a;text-align:right;">${escapeHtml(SUCURSAL_NOMBRE)}</strong>
+                        </div>
                         <div style="display:flex;justify-content:space-between;gap:16px;padding:10px 13px;${clienteId ? 'border-bottom:1px solid #e2e8f0;' : ''}font-size:.88rem;">
                             <span style="color:#64748b;">Productos</span>
                             <strong style="color:#0f172a;text-align:right;">${totalArticulos} ${totalArticulos === 1 ? 'artículo' : 'artículos'}</strong>
@@ -892,6 +1633,8 @@ $result_clientes = $conn->query($query_clientes);
             }
 
             const payload = {
+                sucursal_id: SUCURSAL_ID,
+                sucursal_nombre: SUCURSAL_NOMBRE,
                 cliente_id: clienteId || null,
                 items: carrito,
                 total,
@@ -957,6 +1700,25 @@ $result_clientes = $conn->query($query_clientes);
     }
 
     function agregarProductoDesdeTarjeta(card) {
+        const stockDisponible =
+            parseInt(card.dataset.stock, 10) || 0;
+
+        if (
+            card.classList.contains('is-out-of-stock') ||
+            stockDisponible <= 0
+        ) {
+            Swal.fire({
+                icon: 'warning',
+                title: 'Producto agotado',
+                text:
+                    'Este producto no tiene existencias en ' +
+                    SUCURSAL_NOMBRE +
+                    '.',
+                confirmButtonColor: '#1e3a8a'
+            });
+            return;
+        }
+
         const id = parseInt(card.dataset.id, 10);
         const nombre = card.dataset.nombre;
         const precio = parseFloat(card.dataset.precio);
@@ -1006,13 +1768,18 @@ $result_clientes = $conn->query($query_clientes);
     actualizarEstadoCorreoCliente();
 
     const searchInput = document.getElementById('searchProducto');
+    const productsGrid = document.getElementById('productosGrid');
     const clearSearchButton = document.getElementById('clearSearch');
     const visibleProducts = document.getElementById('productosVisibles');
     const noResults = document.getElementById('sinResultados');
 
     function filtrarProductos() {
         const searchTerm = searchInput.value.trim().toLocaleLowerCase('es-MX');
-        const cards = [...document.querySelectorAll('.producto-card')];
+        const cards = [
+            ...document.querySelectorAll(
+                '.producto-card[data-id]'
+            )
+        ];
         let visibleCount = 0;
 
         cards.forEach(card => {
@@ -1025,8 +1792,17 @@ $result_clientes = $conn->query($query_clientes);
         });
 
         visibleProducts.textContent = visibleCount;
-        noResults.classList.toggle('visible', visibleCount === 0);
-        productsGrid.classList.toggle('is-empty', visibleCount === 0);
+        const hayCatalogo = cards.length > 0;
+
+        noResults.classList.toggle(
+            'visible',
+            hayCatalogo && visibleCount === 0
+        );
+
+        productsGrid.classList.toggle(
+            'is-empty',
+            hayCatalogo && visibleCount === 0
+        );
         clearSearchButton.classList.toggle('visible', searchTerm.length > 0);
     }
 
@@ -1062,5 +1838,38 @@ $result_clientes = $conn->query($query_clientes);
     filtrarProductos();
     loadCart();
     </script>
+    <?php else: ?>
+    <script>
+    document.addEventListener(
+        'DOMContentLoaded',
+        function () {
+            const button = document.getElementById(
+                'btnElegirSucursalVenta'
+            );
+
+            if (!button) {
+                return;
+            }
+
+            button.addEventListener(
+                'click',
+                function () {
+                    const trigger =
+                        document.getElementById(
+                            'sidebarBranchTrigger'
+                        );
+
+                    if (trigger) {
+                        trigger.click();
+                        trigger.focus({
+                            preventScroll: true
+                        });
+                    }
+                }
+            );
+        }
+    );
+    </script>
+    <?php endif; ?>
 </body>
 </html>

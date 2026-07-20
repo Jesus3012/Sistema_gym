@@ -1,0 +1,265 @@
+/* Contexto multisucursal para Clases e Inscripciones a clases */
+
+.class-context-header {
+    gap: 18px;
+}
+
+.class-header-actions {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+.class-context-badge {
+    min-width: 0;
+    max-width: 255px;
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    min-height: 43px;
+    padding: 7px 10px;
+    border: 1px solid #dbeafe;
+    border-radius: 11px;
+    background: #eff6ff;
+    color: #1e3a8a;
+}
+
+.class-context-badge.global {
+    border-color: #bbf7d0;
+    background: #f0fdf4;
+    color: #047857;
+}
+
+.class-context-badge > i {
+    width: 29px;
+    height: 29px;
+    display: grid;
+    place-items: center;
+    flex: 0 0 29px;
+    border-radius: 8px;
+    background: rgba(37, 99, 235, .11);
+}
+
+.class-context-badge.global > i {
+    background: rgba(16, 185, 129, .14);
+}
+
+.class-context-badge > span {
+    min-width: 0;
+}
+
+.class-context-badge strong,
+.class-context-badge small {
+    display: block;
+    overflow: hidden;
+    line-height: 1.2;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.class-context-badge strong {
+    font-size: .75rem;
+    font-weight: 850;
+}
+
+.class-context-badge small {
+    margin-top: 2px;
+    color: #64748b;
+    font-size: .61rem;
+    font-weight: 700;
+}
+
+.btn-custom-primary.is-disabled,
+.btn-custom-primary:disabled {
+    cursor: not-allowed;
+    opacity: .58;
+    transform: none !important;
+}
+
+.class-branch-pill {
+    min-width: 0;
+    max-width: 190px;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 5px 7px;
+    border: 1px solid #dbeafe;
+    border-radius: 8px;
+    background: #f8fbff;
+    color: #1e3a8a;
+}
+
+.class-branch-pill > i {
+    flex: 0 0 auto;
+    font-size: .68rem;
+}
+
+.class-branch-pill > span {
+    min-width: 0;
+}
+
+.class-branch-pill strong,
+.class-branch-pill small {
+    display: block;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.class-branch-pill strong {
+    font-size: .68rem;
+    line-height: 1.2;
+}
+
+.class-branch-pill small {
+    margin-top: 2px;
+    color: #64748b;
+    font-size: .56rem;
+    font-weight: 700;
+    line-height: 1.15;
+}
+
+.class-readonly {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    min-height: 27px;
+    padding: 4px 7px;
+    border: 1px solid #e2e8f0;
+    border-radius: 7px;
+    background: #f8fafc;
+    color: #64748b;
+    font-size: .65rem;
+    font-weight: 750;
+    white-space: nowrap;
+}
+
+.class-modal-branch {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-bottom: 15px;
+    padding: 9px 10px;
+    border: 1px solid #dbeafe;
+    border-radius: 9px;
+    background: #f8fbff;
+    color: #475569;
+    font-size: .72rem;
+}
+
+.class-modal-branch i,
+.class-modal-branch strong {
+    color: #1e3a8a;
+}
+
+.class-branch-warning {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin-bottom: 18px;
+    padding: 11px 12px;
+    border: 1px solid #fde68a;
+    border-radius: 10px;
+    background: #fffbeb;
+    color: #78350f;
+    font-size: .74rem;
+    line-height: 1.4;
+}
+
+.class-branch-warning i {
+    margin-top: 2px;
+}
+
+.responsive-table.is-global {
+    min-width: 1040px;
+}
+
+@media (max-width: 991.98px) {
+    .class-context-header {
+        align-items: flex-start;
+    }
+
+    .class-header-actions {
+        flex: 0 0 auto;
+    }
+
+    .class-context-badge {
+        max-width: 220px;
+    }
+}
+
+@media (max-width: 767.98px) {
+    .class-header-actions {
+        width: 100%;
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .class-context-badge {
+        width: 100%;
+        max-width: none;
+    }
+
+    .class-header-actions .btn-custom-primary {
+        width: 100%;
+    }
+
+    .responsive-table tbody td .class-branch-pill {
+        justify-self: end;
+    }
+}
+
+@media (max-width: 420px) {
+    .responsive-table tbody td .class-branch-pill {
+        justify-self: start;
+        max-width: 100%;
+    }
+}
+
+
+/* ENTRENADORES POR SUCURSAL Y ALERTAS */
+
+.class-trainer-note {
+    display: block;
+    margin-top: 6px;
+    color: #64748b;
+    font-size: .68rem;
+    line-height: 1.35;
+}
+
+.class-trainer-note:not(.d-none) {
+    padding: 7px 8px;
+    border: 1px solid #fde68a;
+    border-radius: 7px;
+    background: #fffbeb;
+    color: #92400e;
+}
+
+.class-trainer-warning {
+    align-items: center;
+}
+
+.class-trainer-warning > span {
+    min-width: 0;
+}
+
+.class-trainer-warning strong {
+    color: #78350f;
+}
+
+.swal2-popup {
+    border-radius: 13px !important;
+}
+
+.swal2-title {
+    color: #172554 !important;
+    font-size: 1.22rem !important;
+}
+
+.swal2-confirm {
+    min-width: 105px;
+    border-radius: 7px !important;
+    box-shadow: none !important;
+}

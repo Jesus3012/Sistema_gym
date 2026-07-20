@@ -1,140 +1,134 @@
 <?php
-// Archivo: historial_ventas.php
-// Módulo de historial de ventas
+declare(strict_types=1);
 
 session_start();
 
-if (!isset($_SESSION['user_id'])) {
-    header("Location: login.php");
-    exit();
+if (empty($_SESSION['user_id'])) {
+    header('Location: login.php');
+    exit;
 }
 
-/*
- * Endpoint interno del mismo historial_ventas.php.
- * Consulta directamente tickets_venta sin crear archivos adicionales.
- */
-if (
-    isset($_GET['action']) &&
-    $_GET['action'] === 'ticket_datos'
-) {
+require_once __DIR__ . '/config/database.php';
+require_once __DIR__ . '/includes/sucursal_context.php';
+
+$databaseHistorial = new Database();
+$connHistorial = $databaseHistorial->getConnection();
+
+if (!$connHistorial instanceof mysqli) {
+    die('No fue posible conectar con la base de datos.');
+}
+$connHistorial->set_charset('utf8mb4');
+
+$historialUsuarioId = (int) $_SESSION['user_id'];
+$historialRol = strtolower(trim((string) (
+    $_SESSION['user_rol_base']
+    ?? $_SESSION['user_rol']
+    ?? ''
+)));
+if ($historialRol === 'administrador') {
+    $historialRol = 'admin';
+}
+$historialEsAdmin = in_array($historialRol, ['admin', 'administrador'], true);
+$historialSucursalId = (int) ($_SESSION['sucursal_id'] ?? 0);
+$historialVistaSolicitada = strtolower(trim((string) ($_GET['vista'] ?? '')));
+
+if ($historialVistaSolicitada === 'global' && $historialEsAdmin) {
+    sucursal_activar_vista_global($connHistorial, $historialUsuarioId);
+} elseif ($historialVistaSolicitada === 'sucursal') {
+    sucursal_desactivar_vista_global();
+}
+
+$historialVistaGlobal = $historialEsAdmin
+    && sucursal_dashboard_vista_global();
+
+if ($historialSucursalId <= 0) {
+    $_SESSION['error'] = 'Selecciona una sucursal operativa antes de abrir el historial.';
+    header('Location: dashboard.php');
+    exit;
+}
+
+$historialContextoNombre = $historialVistaGlobal
+    ? 'Todas las sucursales'
+    : trim((string) ($_SESSION['sucursal_nombre'] ?? 'Sucursal'));
+$historialContextoClave = $historialVistaGlobal
+    ? 'GLOBAL'
+    : trim((string) ($_SESSION['sucursal_clave'] ?? ''));
+
+if (isset($_GET['action']) && $_GET['action'] === 'ticket_datos') {
     header('Content-Type: application/json; charset=utf-8');
     header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 
-    function responderTicketHistorial($codigo, $respuesta)
-    {
-        http_response_code($codigo);
-        echo json_encode(
-            $respuesta,
-            JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
-        );
-        exit();
-    }
+    $responder = static function (int $status, array $data): void {
+        http_response_code($status);
+        echo json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        exit;
+    };
 
-    $ventaId = isset($_GET['venta_id'])
-        ? (int) $_GET['venta_id']
-        : 0;
-
+    $ventaId = (int) ($_GET['venta_id'] ?? 0);
     if ($ventaId <= 0) {
-        responderTicketHistorial(400, array(
-            'success' => false,
-            'message' => 'El identificador de la venta no es válido.'
-        ));
+        $responder(400, ['success' => false, 'message' => 'Venta no válida.']);
     }
 
-    try {
-        require_once __DIR__ . '/config/database.php';
+    $conditions = [
+        'v.id = ?',
+        "v.estado <> 'cancelada'"
+    ];
+    $types = 'i';
+    $params = [$ventaId];
 
-        $database = new Database();
-        $connTicket = $database->getConnection();
+    if (!$historialVistaGlobal) {
+        $conditions[] = 'v.sucursal_id = ?';
+        $types .= 'i';
+        $params[] = $historialSucursalId;
+    }
+    if (!$historialEsAdmin) {
+        $conditions[] = 'v.usuario_id = ?';
+        $types .= 'i';
+        $params[] = $historialUsuarioId;
+    }
 
-        if (!$connTicket instanceof mysqli) {
-            throw new RuntimeException(
-                'No fue posible establecer conexión con la base de datos.'
-            );
-        }
+    $sql = "SELECT
+                tv.id,
+                tv.venta_id,
+                tv.cliente_id,
+                tv.cliente_nombre,
+                tv.total,
+                tv.metodo_pago,
+                tv.monto_recibido,
+                tv.cambio,
+                tv.ticket_nombre,
+                tv.fecha_venta,
+                tv.fecha_registro,
+                s.nombre AS sucursal_nombre,
+                s.clave AS sucursal_clave
+            FROM tickets_venta tv
+            INNER JOIN ventas v ON v.id = tv.venta_id
+            INNER JOIN sucursales s ON s.id = v.sucursal_id
+            WHERE " . implode(' AND ', $conditions) . "
+            ORDER BY tv.id DESC
+            LIMIT 1";
 
-        $connTicket->set_charset('utf8mb4');
+    $stmt = $connHistorial->prepare($sql);
+    $refs = [];
+    foreach ($params as $k => &$value) {
+        $refs[$k] = &$value;
+    }
+    unset($value);
+    $stmt->bind_param($types, ...$refs);
+    $stmt->execute();
+    $ticket = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
 
-        $sqlTicket = "SELECT
-                        tv.id,
-                        tv.venta_id,
-                        tv.cliente_id,
-                        tv.cliente_nombre,
-                        tv.total,
-                        tv.metodo_pago,
-                        tv.monto_recibido,
-                        tv.cambio,
-                        tv.ticket_nombre,
-                        tv.fecha_venta,
-                        tv.fecha_registro
-                      FROM tickets_venta tv
-                      WHERE tv.venta_id = ?
-                      ORDER BY tv.id DESC
-                      LIMIT 1";
-
-        $stmtTicket = $connTicket->prepare($sqlTicket);
-
-        if (!$stmtTicket) {
-            throw new RuntimeException(
-                'No se pudo preparar la consulta del ticket: ' .
-                $connTicket->error
-            );
-        }
-
-        $stmtTicket->bind_param('i', $ventaId);
-
-        if (!$stmtTicket->execute()) {
-            $detalleError = $stmtTicket->error;
-            $stmtTicket->close();
-
-            throw new RuntimeException(
-                'No se pudo consultar el ticket: ' . $detalleError
-            );
-        }
-
-        $resultadoTicket = $stmtTicket->get_result();
-        $ticket = $resultadoTicket->fetch_assoc();
-
-        $stmtTicket->close();
-
-        if (!$ticket) {
-            responderTicketHistorial(200, array(
-                'success' => true,
-                'ticket' => null,
-                'message' => 'La venta no tiene un ticket guardado.'
-            ));
-        }
-
-        $ticket['id'] = (int) $ticket['id'];
-        $ticket['venta_id'] = (int) $ticket['venta_id'];
-
-        if ($ticket['cliente_id'] !== null) {
-            $ticket['cliente_id'] = (int) $ticket['cliente_id'];
-        }
-
-        $ticket['total'] = (float) $ticket['total'];
-
-        if ($ticket['monto_recibido'] !== null) {
-            $ticket['monto_recibido'] =
-                (float) $ticket['monto_recibido'];
-        }
-
-        if ($ticket['cambio'] !== null) {
-            $ticket['cambio'] = (float) $ticket['cambio'];
-        }
-
-        responderTicketHistorial(200, array(
+    if (!is_array($ticket)) {
+        $responder(200, [
             'success' => true,
-            'ticket' => $ticket
-        ));
-    } catch (Throwable $errorTicket) {
-        responderTicketHistorial(500, array(
-            'success' => false,
-            'message' => $errorTicket->getMessage()
-        ));
+            'ticket' => null,
+            'message' => 'La venta no tiene un ticket disponible o no pertenece al contexto actual.',
+        ]);
     }
-}
 
+    $responder(200, ['success' => true, 'ticket' => $ticket]);
+}
 ?>
 
 <!DOCTYPE html>
@@ -146,6 +140,7 @@ if (
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <link rel="stylesheet" href="css/historial_ventas.css">
+    <link rel="stylesheet" href="css/historial_ventas_multisucursal.css?v=<?php echo filemtime(__DIR__ . '/css/historial_ventas_multisucursal.css'); ?>">
 </head>
 <body>
     <!-- historial-ventas-acciones-v4 -->
@@ -154,19 +149,29 @@ if (
     <main class="main-content ventas-page">
         <div class="ventas-shell">
         <div class="historial-card">
-            <div class="historial-header">
-                <h1>
-                    <i class="fas fa-history"></i>
-                    Historial de Ventas
-                </h1>
-                <p>Consulta y gestiona todas las ventas realizadas en el sistema</p>
+            <div class="historial-header historial-header-multisucursal">
+                <div>
+                    <h1>
+                        <i class="fas fa-history"></i>
+                        Historial de Ventas
+                    </h1>
+                    <p>Consulta y gestiona las ventas vigentes de la sucursal seleccionada.</p>
+                </div>
+
+                <div class="historial-sucursal-chip <?php echo $historialVistaGlobal ? 'is-global' : ''; ?>">
+                    <i class="fas <?php echo $historialVistaGlobal ? 'fa-chart-pie' : 'fa-building'; ?>"></i>
+                    <span>
+                        <strong><?php echo htmlspecialchars($historialContextoNombre, ENT_QUOTES, 'UTF-8'); ?></strong>
+                        <small><?php echo htmlspecialchars($historialContextoClave, ENT_QUOTES, 'UTF-8'); ?></small>
+                    </span>
+                </div>
             </div>
 
             <div class="filtros-section">
                 <div class="filtros-grid">
                     <div class="filtro-group">
                         <label>Buscar</label>
-                        <input type="text" id="buscar" placeholder="Ticket o cliente...">
+                        <input type="text" id="buscar" placeholder="Ticket, socio o sucursal...">
                     </div>
                     <div class="filtro-group">
                         <label>Desde</label>
@@ -227,7 +232,7 @@ if (
                             <th>Ticket</th>
                             <th>Fecha</th>
                             <th>Cliente</th>
-                            <th>Vendedor</th>
+                            <th>Vendedor / Sucursal</th>
                             <th>Total</th>
                             <th>Método</th>
                             <th>Estado</th>
@@ -376,7 +381,7 @@ if (
                 
                 await cargarPlazosVentas(data.ventas);
 
-                actualizarEstadisticas(data.ventas);
+                actualizarEstadisticas(data.estadisticas || {});
                 mostrarVentas(data.ventas);
                 actualizarPaginacion(data.total_pages);
                 mostrarLoading(false);
@@ -399,18 +404,18 @@ if (
             document.getElementById('empty-state').style.display = 'block';
             document.getElementById('tabla-ventas').style.display = 'none';
             document.getElementById('pagination').style.display = 'none';
-            Swal.fire('Error', 'No se pudieron cargar las ventas', 'error');
+            Swal.fire('Error', error.message || 'No se pudieron cargar las ventas', 'error');
         }
     }
 
-    function actualizarEstadisticas(ventas) {
-        const total = ventas.reduce((sum, v) => sum + parseFloat(v.total), 0);
-        // Total de tickets = cantidad de ventas
-        const totalTickets = ventas.length;
-        
-        document.getElementById('total-ventas').textContent = ventas.length;
-        document.getElementById('total-ingresos').textContent = '$' + total.toFixed(2);
-        document.getElementById('total-clientes').textContent = totalTickets;
+    function actualizarEstadisticas(stats) {
+        const totalVentas = Number(stats.total_ventas || 0);
+        const totalIngresos = Number(stats.total_ingresos || 0);
+
+        document.getElementById('total-ventas').textContent = totalVentas;
+        document.getElementById('total-ingresos').textContent =
+            '$' + totalIngresos.toFixed(2);
+        document.getElementById('total-clientes').textContent = totalVentas;
     }
 
     function mostrarVentas(ventas) {
@@ -483,10 +488,17 @@ if (
                         <span>${escapeHtml(clienteNombre)}</span>
                     </span>
                 </td>
-                <td data-label="Vendedor">
-                    <span class="venta-persona">
-                        <i class="fas fa-store" style="color:#7c3aed;"></i>
-                        <span>${escapeHtml(venta.usuario_nombre)}</span>
+                <td data-label="Vendedor / Sucursal">
+                    <span class="venta-persona venta-persona-sucursal">
+                        <span class="venta-vendedor-linea">
+                            <i class="fas fa-user-tie" style="color:#7c3aed;"></i>
+                            <span>${escapeHtml(venta.usuario_nombre)}</span>
+                        </span>
+                        <span class="venta-sucursal-badge ${Number(venta.sucursal_es_matriz) === 1 ? 'is-matriz' : ''}">
+                            <i class="fas fa-building"></i>
+                            ${escapeHtml(venta.sucursal_nombre || 'Sucursal')}
+                            <small>${escapeHtml(venta.sucursal_clave || '')}</small>
+                        </span>
                     </span>
                 </td>
                 <td data-label="Total">
@@ -819,6 +831,7 @@ if (
                 <section class="ticket-sale-meta">
                     <div><strong>Cliente:</strong> ${escapeHtml(clienteNombre)}</div>
                     <div><strong>Atendió:</strong> ${escapeHtml(vendedorNombre)}</div>
+                    <div><strong>Sucursal:</strong> ${escapeHtml(venta.sucursal_nombre || 'Sucursal')} ${venta.sucursal_clave ? '· ' + escapeHtml(venta.sucursal_clave) : ''}</div>
                 </section>
 
                 <footer class="ticket-footer">

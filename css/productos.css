@@ -1408,3 +1408,262 @@ input[type="file"].form-control {
 #lista-productos {
     scroll-margin-top: 16px;
 }
+
+/* =========================================================
+   PRODUCTOS MULTISUCURSAL
+   ========================================================= */
+.products-context-header {
+    justify-content: space-between;
+}
+
+.products-context-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    flex: 0 0 auto;
+    min-height: 42px;
+    padding: 7px 11px;
+    border: 1px solid #bfdbfe;
+    border-radius: 11px;
+    background: #eff6ff;
+    color: #1e3a8a;
+}
+
+.products-context-badge.global {
+    border-color: #a7f3d0;
+    background: #ecfdf5;
+    color: #047857;
+}
+
+.products-context-badge > i {
+    width: 28px;
+    height: 28px;
+    display: grid;
+    place-items: center;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, .75);
+}
+
+.products-context-badge span,
+.products-context-badge strong,
+.products-context-badge small {
+    display: block;
+}
+
+.products-context-badge strong {
+    max-width: 220px;
+    overflow: hidden;
+    font-size: .78rem;
+    line-height: 1.15;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.products-context-badge small {
+    margin-top: 2px;
+    color: #64748b;
+    font-size: .62rem;
+    font-weight: 700;
+}
+
+.products-global-note {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    padding: 18px 20px;
+    border-color: #bfdbfe;
+    background: linear-gradient(135deg, #eff6ff, #ffffff 70%);
+}
+
+.products-global-note-icon {
+    width: 48px;
+    height: 48px;
+    display: grid;
+    flex: 0 0 48px;
+    place-items: center;
+    border-radius: 13px;
+    background: #dbeafe;
+    color: #1e3a8a;
+    font-size: 1.05rem;
+}
+
+.products-global-kicker {
+    display: block;
+    margin-bottom: 2px;
+    color: #64748b;
+    font-size: .64rem;
+    font-weight: 850;
+    letter-spacing: .055em;
+    text-transform: uppercase;
+}
+
+.products-global-note h2 {
+    margin: 0 0 4px;
+    color: #172554;
+    font-size: 1rem;
+    font-weight: 800;
+}
+
+.products-global-note p {
+    margin: 0;
+    color: #64748b;
+    font-size: .78rem;
+    line-height: 1.45;
+}
+
+.product-coverage {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 29px;
+    padding: 5px 9px;
+    border: 1px solid #bfdbfe;
+    border-radius: 999px;
+    background: #eff6ff;
+    color: #1e3a8a;
+    font-size: .7rem;
+    font-weight: 800;
+    white-space: nowrap;
+}
+
+.product-coverage.empty {
+    border-color: #e2e8f0;
+    background: #f8fafc;
+    color: #64748b;
+}
+
+.price-range {
+    font-size: .74rem;
+    line-height: 1.25;
+    white-space: normal;
+}
+
+@media (max-width: 767px) {
+    .products-context-header {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .products-context-badge {
+        width: 100%;
+    }
+
+    .products-context-badge strong {
+        max-width: none;
+    }
+
+    .products-global-note {
+        align-items: flex-start;
+        padding: 15px;
+    }
+}
+
+@media (max-width: 430px) {
+    .products-global-note {
+        flex-direction: column;
+    }
+}
+
+
+
+/* CORRECCIÓN DEFINITIVA: AVISO DE VISTA GLOBAL */
+
+.products-page .products-global-note.card.module-card {
+    display: grid !important;
+    grid-template-columns: 44px minmax(0, 1fr) !important;
+    align-items: center !important;
+    justify-items: stretch !important;
+    gap: 13px !important;
+    width: 100% !important;
+    min-height: 0 !important;
+    height: auto !important;
+    margin: 0 0 16px !important;
+    padding: 13px 16px !important;
+    overflow: hidden !important;
+    border: 1px solid #bfdbfe !important;
+    border-radius: 12px !important;
+    background: linear-gradient(
+        135deg,
+        #eff6ff 0%,
+        #ffffff 72%
+    ) !important;
+    box-shadow: 0 5px 15px rgba(30, 58, 138, .06) !important;
+    text-align: left !important;
+}
+
+.products-page .products-global-note > div {
+    min-width: 0;
+}
+
+.products-page .products-global-note-icon {
+    width: 44px !important;
+    height: 44px !important;
+    min-width: 44px !important;
+    min-height: 44px !important;
+    display: grid !important;
+    place-items: center !important;
+    align-self: center !important;
+    justify-self: start !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border-radius: 11px !important;
+    background: #dbeafe !important;
+    color: #1e3a8a !important;
+    font-size: .95rem !important;
+}
+
+.products-page .products-global-kicker {
+    display: block !important;
+    width: auto !important;
+    margin: 0 0 2px !important;
+    padding: 0 !important;
+    color: #2563eb !important;
+    background: transparent !important;
+    font-size: .61rem !important;
+    font-weight: 850 !important;
+    line-height: 1.2 !important;
+    letter-spacing: .055em !important;
+    text-transform: uppercase !important;
+}
+
+.products-page .products-global-note h2 {
+    margin: 0 0 3px !important;
+    color: #172554 !important;
+    font-size: .94rem !important;
+    font-weight: 800 !important;
+    line-height: 1.25 !important;
+}
+
+.products-page .products-global-note p {
+    max-width: none !important;
+    margin: 0 !important;
+    color: #64748b !important;
+    font-size: .75rem !important;
+    line-height: 1.4 !important;
+}
+
+@media (max-width: 767px) {
+    .products-page .products-global-note.card.module-card {
+        grid-template-columns: 40px minmax(0, 1fr) !important;
+        gap: 11px !important;
+        padding: 12px 13px !important;
+    }
+
+    .products-page .products-global-note-icon {
+        width: 40px !important;
+        height: 40px !important;
+        min-width: 40px !important;
+        min-height: 40px !important;
+    }
+}
+
+@media (max-width: 430px) {
+    .products-page .products-global-note.card.module-card {
+        grid-template-columns: 1fr !important;
+        gap: 8px !important;
+    }
+
+    .products-page .products-global-note-icon {
+        justify-self: start !important;
+    }
+}

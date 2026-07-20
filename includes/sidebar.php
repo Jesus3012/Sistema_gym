@@ -152,6 +152,19 @@ $sidebar_paginas_globales = [
     'dashboard.php',
     'inscripciones.php',
     'asistencias.php',
+    'ventas.php',
+    'historial_ventas.php',
+    'corte_caja.php',
+    'corte_caja_detalle.php',
+    'productos.php',
+    'inventario.php',
+    'historial_stock.php',
+    'clases.php',
+    'inscripciones_clases.php',
+    'solicitudes_usuarios.php',
+    'reportes.php',
+    'notificaciones.php',
+    'sucursales.php',
 ];
 
 $sidebar_vista_solicitada = strtolower(trim((string) (
@@ -176,6 +189,32 @@ $sidebar_global_urls = [
         'inscripciones.php?vista=global',
     'asistencias.php' =>
         'asistencias.php?vista=global',
+    'ventas.php' =>
+        'ventas.php?vista=global',
+    'historial_ventas.php' =>
+        'historial_ventas.php?vista=global',
+    'corte_caja.php' =>
+        'corte_caja.php?vista=global',
+    'corte_caja_detalle.php' =>
+        'corte_caja.php?vista=global',
+    'productos.php' =>
+        'productos.php?vista=global',
+    'inventario.php' =>
+        'inventario.php?vista=global',
+    'historial_stock.php' =>
+        'historial_stock.php?vista=global',
+    'clases.php' =>
+        'clases.php?vista=global',
+    'inscripciones_clases.php' =>
+        'inscripciones_clases.php?vista=global',
+    'solicitudes_usuarios.php' =>
+        'solicitudes_usuarios.php?vista=global',
+    'reportes.php' =>
+        'reportes.php?vista=global',
+    'notificaciones.php' =>
+        'notificaciones.php?vista=global',
+    'sucursales.php' =>
+        'sucursales.php?vista=global',
 ];
 
 $sidebar_sucursal_urls = [
@@ -185,6 +224,32 @@ $sidebar_sucursal_urls = [
         'inscripciones.php?vista=sucursal',
     'asistencias.php' =>
         'asistencias.php?vista=sucursal',
+    'ventas.php' =>
+        'ventas.php?vista=sucursal',
+    'historial_ventas.php' =>
+        'historial_ventas.php?vista=sucursal',
+    'corte_caja.php' =>
+        'corte_caja.php?vista=sucursal',
+    'corte_caja_detalle.php' =>
+        'corte_caja.php?vista=sucursal',
+    'productos.php' =>
+        'productos.php?vista=sucursal',
+    'inventario.php' =>
+        'inventario.php?vista=sucursal',
+    'historial_stock.php' =>
+        'historial_stock.php?vista=sucursal',
+    'clases.php' =>
+        'clases.php?vista=sucursal',
+    'inscripciones_clases.php' =>
+        'inscripciones_clases.php?vista=sucursal',
+    'solicitudes_usuarios.php' =>
+        'solicitudes_usuarios.php?vista=sucursal',
+    'reportes.php' =>
+        'reportes.php?vista=sucursal',
+    'notificaciones.php' =>
+        'notificaciones.php?vista=sucursal',
+    'sucursales.php' =>
+        'sucursales.php?vista=sucursal',
 ];
 
 $sidebar_contexto_titulos = [
@@ -193,6 +258,32 @@ $sidebar_contexto_titulos = [
         'Vista de inscripciones',
     'asistencias.php' =>
         'Vista de asistencias',
+    'ventas.php' =>
+        'Sucursal de venta',
+    'historial_ventas.php' =>
+        'Vista del historial',
+    'corte_caja.php' =>
+        'Vista de caja',
+    'corte_caja_detalle.php' =>
+        'Vista de caja',
+    'productos.php' =>
+        'Vista de productos',
+    'inventario.php' =>
+        'Vista de inventario',
+    'historial_stock.php' =>
+        'Vista del stock',
+    'clases.php' =>
+        'Vista de clases',
+    'inscripciones_clases.php' =>
+        'Vista de inscripciones a clases',
+    'solicitudes_usuarios.php' =>
+        'Asignación de personal',
+    'reportes.php' =>
+        'Vista de reportes',
+    'notificaciones.php' =>
+        'Vista de notificaciones',
+    'sucursales.php' =>
+        'Sucursal administrada',
 ];
 
 $sidebar_global_url =
@@ -258,7 +349,55 @@ $sidebar_contexto_detalle = $sidebar_vista_global
             : (
                 $current_page === 'asistencias.php'
                     ? 'Asistencias globales · ' . $sidebar_total_sedes_texto
-                    : 'Estadísticas globales · ' . $sidebar_total_sedes_texto
+                    : (
+                        $current_page === 'ventas.php'
+                            ? 'Elige una sede para vender'
+                            : (
+                                $current_page === 'historial_ventas.php'
+                                    ? 'Ventas de todas las sucursales · ' . $sidebar_total_sedes_texto
+                                    : (
+                                        in_array($current_page, ['corte_caja.php', 'corte_caja_detalle.php'], true)
+                                            ? 'Cortes consolidados · ' . $sidebar_total_sedes_texto
+                                            : (
+                                                $current_page === 'productos.php'
+                                                    ? 'Inventario consolidado · ' . $sidebar_total_sedes_texto
+                                                    : (
+                                                        $current_page === 'inventario.php'
+                                                            ? 'Existencias consolidadas · ' . $sidebar_total_sedes_texto
+                                                            : (
+                                                                $current_page === 'historial_stock.php'
+                                                                    ? 'Movimientos consolidados · ' . $sidebar_total_sedes_texto
+                                                                    : (
+                                                                        $current_page === 'clases.php'
+                                                                            ? 'Clases consolidadas · ' . $sidebar_total_sedes_texto
+                                                                            : (
+                                                                                $current_page === 'inscripciones_clases.php'
+                                                                                    ? 'Inscripciones a clases · ' . $sidebar_total_sedes_texto
+                                                                                    : (
+                                                                                        $current_page === 'solicitudes_usuarios.php'
+                                                                                            ? 'Asignación de personal · ' . $sidebar_total_sedes_texto
+                                                                                            : (
+                                                                                                $current_page === 'reportes.php'
+                                                                                                    ? 'Reportes consolidados · ' . $sidebar_total_sedes_texto
+                                                                                                    : (
+                                                                                                        $current_page === 'notificaciones.php'
+                                                                                                            ? 'Notificaciones consolidadas · ' . $sidebar_total_sedes_texto
+                                                                                                            : (
+                                                                                                                $current_page === 'sucursales.php'
+                                                                                                                    ? 'Administración de ' . $sidebar_total_sedes_texto
+                                                                                                                    : 'Estadísticas globales · ' . $sidebar_total_sedes_texto
+                                                                                                            )
+                                                                                                    )
+                                                                                            )
+                                                                                    )
+                                                                            )
+                                                                    )
+                                                            )
+                                                    )
+                                            )
+                                    )
+                            )
+                    )
             )
     )
     : (
@@ -644,6 +783,30 @@ $sidebar_navbar_version = is_file($sidebar_navbar_css)
                                     echo 'Inscripciones de todas las sucursales';
                                 } elseif ($current_page === 'asistencias.php') {
                                     echo 'Actividad de todas las sucursales';
+                                } elseif ($current_page === 'ventas.php') {
+                                    echo 'Selecciona después una sede para vender';
+                                } elseif ($current_page === 'historial_ventas.php') {
+                                    echo 'Ventas, cancelaciones y devoluciones globales';
+                                } elseif (in_array($current_page, ['corte_caja.php', 'corte_caja_detalle.php'], true)) {
+                                    echo 'Historial de cortes de todas las sucursales';
+                                } elseif ($current_page === 'productos.php') {
+                                    echo 'Catálogo e inventario de todas las sucursales';
+                                } elseif ($current_page === 'inventario.php') {
+                                    echo 'Existencias y precios consolidados por producto';
+                                } elseif ($current_page === 'historial_stock.php') {
+                                    echo 'Movimientos de stock de todas las sucursales';
+                                } elseif ($current_page === 'clases.php') {
+                                    echo 'Clases y cupos de todas las sucursales';
+                                } elseif ($current_page === 'inscripciones_clases.php') {
+                                    echo 'Inscripciones a clases de todas las sucursales';
+                                } elseif ($current_page === 'solicitudes_usuarios.php') {
+                                    echo 'Elegir la sede al aprobar cada solicitud';
+                                } elseif ($current_page === 'reportes.php') {
+                                    echo 'Inscripciones, ventas e ingresos de todas las sucursales';
+                                } elseif ($current_page === 'notificaciones.php') {
+                                    echo 'Comunicados e historial de todas las sucursales';
+                                } elseif ($current_page === 'sucursales.php') {
+                                    echo 'Listado y administración de todas las sedes';
                                 } else {
                                     echo 'Estadísticas globales del gimnasio';
                                 }
@@ -715,17 +878,43 @@ $sidebar_navbar_version = is_file($sidebar_navbar_css)
                         echo 'Listado consolidado de';
                     } elseif ($current_page === 'asistencias.php') {
                         echo 'Actividad consolidada de';
+                    } elseif ($current_page === 'ventas.php') {
+                        echo 'Selecciona una sucursal para vender';
+                    } elseif ($current_page === 'historial_ventas.php') {
+                        echo 'Historial consolidado de';
+                    } elseif (in_array($current_page, ['corte_caja.php', 'corte_caja_detalle.php'], true)) {
+                        echo 'Cortes consolidados de';
+                    } elseif ($current_page === 'productos.php') {
+                        echo 'Inventario consolidado de';
+                    } elseif ($current_page === 'inventario.php') {
+                        echo 'Existencias consolidadas de';
+                    } elseif ($current_page === 'historial_stock.php') {
+                        echo 'Movimientos consolidados de';
+                    } elseif ($current_page === 'clases.php') {
+                        echo 'Clases consolidadas de';
+                    } elseif ($current_page === 'inscripciones_clases.php') {
+                        echo 'Inscripciones consolidadas de';
+                    } elseif ($current_page === 'solicitudes_usuarios.php') {
+                        echo 'Asignación disponible para';
+                    } elseif ($current_page === 'reportes.php') {
+                        echo 'Reportes consolidados de';
+                    } elseif ($current_page === 'notificaciones.php') {
+                        echo 'Notificaciones consolidadas de';
+                    } elseif ($current_page === 'sucursales.php') {
+                        echo 'Administración disponible para';
                     } else {
                         echo 'Estadísticas consolidadas de';
                     }
                     ?>
-                    <strong>
-                        <?php echo htmlspecialchars(
-                            $sidebar_total_sedes_texto,
-                            ENT_QUOTES,
-                            'UTF-8'
-                        ); ?>
-                    </strong>
+                    <?php if ($current_page !== 'ventas.php'): ?>
+                        <strong>
+                            <?php echo htmlspecialchars(
+                                $sidebar_total_sedes_texto,
+                                ENT_QUOTES,
+                                'UTF-8'
+                            ); ?>
+                        </strong>
+                    <?php endif; ?>
                 <?php else: ?>
                     <i class="fas fa-location-dot"></i>
                     Vista de
@@ -739,9 +928,37 @@ $sidebar_navbar_version = is_file($sidebar_navbar_css)
 
             <div class="sidebar-branch-loading" aria-live="polite">
                 <i class="fas fa-spinner fa-spin"></i>
-                <?php echo $current_page === 'asistencias.php'
-                    ? 'Actualizando asistencias...'
-                    : 'Actualizando estadísticas...'; ?>
+                <?php
+                if ($current_page === 'asistencias.php') {
+                    echo 'Actualizando asistencias...';
+                } elseif ($current_page === 'ventas.php') {
+                    echo 'Cambiando sucursal de venta...';
+                } elseif ($current_page === 'historial_ventas.php') {
+                    echo 'Actualizando historial de ventas...';
+                } elseif (in_array($current_page, ['corte_caja.php', 'corte_caja_detalle.php'], true)) {
+                    echo 'Actualizando cortes de caja...';
+                } elseif ($current_page === 'productos.php') {
+                    echo 'Actualizando productos...';
+                } elseif ($current_page === 'inventario.php') {
+                    echo 'Actualizando inventario...';
+                } elseif ($current_page === 'historial_stock.php') {
+                    echo 'Actualizando historial de stock...';
+                } elseif ($current_page === 'clases.php') {
+                    echo 'Actualizando clases...';
+                } elseif ($current_page === 'inscripciones_clases.php') {
+                    echo 'Actualizando inscripciones a clases...';
+                } elseif ($current_page === 'solicitudes_usuarios.php') {
+                    echo 'Actualizando solicitudes de usuarios...';
+                } elseif ($current_page === 'reportes.php') {
+                    echo 'Actualizando reportes...';
+                } elseif ($current_page === 'notificaciones.php') {
+                    echo 'Actualizando notificaciones...';
+                } elseif ($current_page === 'sucursales.php') {
+                    echo 'Cambiando sucursal administrada...';
+                } else {
+                    echo 'Actualizando estadísticas...';
+                }
+                ?>
             </div>
         </section>
     <?php endif; ?>
@@ -1126,9 +1343,9 @@ $sidebar_navbar_version = is_file($sidebar_navbar_css)
             });
 
             /*
-             * La vista global se resuelve directamente en dashboard.php.
-             * Esto evita depender de una petición AJAX previa para guardar
-             * el estado antes de recalcular las estadísticas.
+             * Cada módulo resuelve su propia vista global.
+             * En ventas esta opción muestra un bloqueo hasta que se elija
+             * una sucursal operativa.
              */
             if (newValue === '0') {
                 const globalUrl = option.getAttribute(

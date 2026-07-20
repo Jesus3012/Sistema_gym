@@ -1,47 +1,107 @@
 <?php
-date_default_timezone_set('America/Mexico_City');
-session_start();
-require_once '../config/database.php';
-header('Content-Type: application/json');
+declare(strict_types=1);
 
-if (!isset($_SESSION['user_id'])) {
-    echo json_encode(['success' => false, 'message' => 'No autorizado']);
-    exit;
-}
+require_once __DIR__ . '/asistencia_context.php';
 
-$database = new Database();
-$conn = $database->getConnection();
-$conn->query("SET time_zone = '-06:00'");
+try {
+    $contexto = asistencia_contexto();
 
-$fecha_hoy = date('Y-m-d');
+    $conn = $contexto['conn'];
+    $sucursalId = (int) $contexto['sucursal_id'];
+    $vistaGlobal = (bool) $contexto['vista_global'];
 
-// Total asistencias hoy
-$stmt = $conn->prepare("SELECT COUNT(*) as total FROM asistencias WHERE fecha = ?");
-$stmt->bind_param("s", $fecha_hoy);
-$stmt->execute();
-$total_asistencias = $stmt->get_result()->fetch_assoc()['total'] ?? 0;
+    $sqlAsistencias =
+        "SELECT COUNT(*) AS total
+         FROM asistencias
+         WHERE fecha = CURDATE()";
 
-// Clientes activos hoy (con asistencia)
-$stmt = $conn->prepare("SELECT COUNT(DISTINCT cliente_id) as total FROM asistencias WHERE fecha = ?");
-$stmt->bind_param("s", $fecha_hoy);
-$stmt->execute();
-$clientes_activos = $stmt->get_result()->fetch_assoc()['total'] ?? 0;
+    if (!$vistaGlobal) {
+        $sqlAsistencias .=
+            " AND sucursal_id = ?";
+    }
 
-// Asistencias denegadas (intentos fallidos)
-$denegadas = 0;
-$stmt = $conn->prepare("SELECT COUNT(*) as total FROM asistencias_denegadas WHERE fecha = ?");
-if ($stmt) {
-    $stmt->bind_param("s", $fecha_hoy);
+    $stmt = $conn->prepare($sqlAsistencias);
+
+    if (!$vistaGlobal) {
+        $stmt->bind_param('i', $sucursalId);
+    }
+
     $stmt->execute();
-    $denegadas = $stmt->get_result()->fetch_assoc()['total'] ?? 0;
-}
 
-echo json_encode([
-    'success' => true,
-    'total_asistencias' => (int)$total_asistencias,
-    'clientes_activos' => (int)$clientes_activos,
-    'asistencias_denegadas' => (int)$denegadas,
-    'fecha' => $fecha_hoy,
-    'hora_servidor' => date('H:i:s')
-]);
-?>
+    $totalAsistencias = (int) (
+        $stmt->get_result()->fetch_assoc()['total']
+        ?? 0
+    );
+
+    $stmt->close();
+
+    /*
+     * Los socios con acceso son globales porque la membresía vigente
+     * permite entrar a cualquier sucursal activa.
+     */
+    $resultActivos = $conn->query(
+        "SELECT COUNT(DISTINCT c.id) AS total
+         FROM clientes c
+         INNER JOIN inscripciones i
+            ON i.cliente_id = c.id
+         WHERE c.estado = 'activo'
+           AND i.estado = 'activa'
+           AND i.fecha_inicio <= CURDATE()
+           AND (
+                i.fecha_fin IS NULL
+                OR i.fecha_fin >= CURDATE()
+           )"
+    );
+
+    $sociosConAcceso = (int) (
+        $resultActivos->fetch_assoc()['total']
+        ?? 0
+    );
+
+    $sqlDenegadas =
+        "SELECT COUNT(*) AS total
+         FROM asistencias_denegadas
+         WHERE fecha = CURDATE()";
+
+    if (!$vistaGlobal) {
+        $sqlDenegadas .=
+            " AND sucursal_id = ?";
+    }
+
+    $stmt = $conn->prepare($sqlDenegadas);
+
+    if (!$vistaGlobal) {
+        $stmt->bind_param('i', $sucursalId);
+    }
+
+    $stmt->execute();
+
+    $denegadas = (int) (
+        $stmt->get_result()->fetch_assoc()['total']
+        ?? 0
+    );
+
+    $stmt->close();
+
+    asistencia_ok([
+        'total_asistencias' =>
+            $totalAsistencias,
+        'clientes_activos' =>
+            $sociosConAcceso,
+        'asistencias_denegadas' =>
+            $denegadas,
+        'fecha' => date('Y-m-d'),
+        'hora_servidor' => date('H:i:s'),
+        'vista_global' => $vistaGlobal,
+    ]);
+} catch (Throwable $error) {
+    error_log(
+        '[Estadísticas asistencia] ' .
+        $error->getMessage()
+    );
+
+    asistencia_error(
+        'No se pudieron cargar las estadísticas.',
+        500
+    );
+}

@@ -14,6 +14,7 @@ if (empty($_SESSION['user_id'])) {
 require_once __DIR__ . '/config/database.php';
 require_once __DIR__ . '/includes/permisos_helper.php';
 require_once __DIR__ . '/includes/legal_guard.php';
+require_once __DIR__ . '/includes/sucursal_context.php';
 
 $rolActual = strtolower(trim((string) ($_SESSION['user_rol'] ?? '')));
 
@@ -39,6 +40,78 @@ if (!$conn) {
 }
 
 $conn->set_charset('utf8mb4');
+
+$usuarioId = (int) $_SESSION['user_id'];
+$vistaSolicitada = strtolower(trim((string) ($_GET['vista'] ?? '')));
+
+if ($vistaSolicitada === 'global') {
+    sucursal_activar_vista_global($conn, $usuarioId);
+} elseif ($vistaSolicitada === 'sucursal') {
+    sucursal_desactivar_vista_global();
+}
+
+$vistaGlobal = function_exists('sucursal_dashboard_vista_global')
+    && sucursal_dashboard_vista_global();
+
+$sucursalId = (int) ($_SESSION['sucursal_id'] ?? 0);
+$sucursalesAsignadas = sucursal_obtener_asignadas($conn, $usuarioId);
+
+/*
+ * Como el módulo es exclusivo de administradores, si por alguna migración
+ * antigua el usuario aún no tiene filas en usuarios_sucursales, se usan
+ * las sucursales activas para no dejar el inventario sin contexto.
+ */
+if ($sucursalesAsignadas === []) {
+    $resultadoSucursales = $conn->query(
+        "SELECT id, clave, nombre, es_matriz
+         FROM sucursales
+         WHERE estado = 'activa'
+         ORDER BY es_matriz DESC, nombre ASC"
+    );
+
+    if ($resultadoSucursales) {
+        while ($filaSucursal = $resultadoSucursales->fetch_assoc()) {
+            $sucursalesAsignadas[] = $filaSucursal;
+        }
+    }
+}
+
+$sucursalActual = null;
+$sucursalesIds = [];
+
+foreach ($sucursalesAsignadas as $sucursalAsignada) {
+    $idAsignado = (int) ($sucursalAsignada['id'] ?? 0);
+
+    if ($idAsignado <= 0) {
+        continue;
+    }
+
+    $sucursalesIds[] = $idAsignado;
+
+    if ($idAsignado === $sucursalId) {
+        $sucursalActual = $sucursalAsignada;
+    }
+}
+
+$sucursalesIds = array_values(array_unique($sucursalesIds));
+
+if ($sucursalesIds === []) {
+    die('No existen sucursales activas disponibles para consultar el inventario.');
+}
+
+if (!$vistaGlobal && !$sucursalActual) {
+    die('No hay una sucursal operativa seleccionada para consultar el inventario.');
+}
+
+$sucursalNombre = $sucursalActual
+    ? trim((string) ($sucursalActual['nombre'] ?? 'Sucursal'))
+    : 'Todas las sucursales';
+
+$sucursalClave = $sucursalActual
+    ? trim((string) ($sucursalActual['clave'] ?? ''))
+    : '';
+
+$totalSedes = count($sucursalesIds);
 
 function inventario_h($valor): string
 {
@@ -122,6 +195,25 @@ function inventario_url(array $base, array $cambios = []): string
     return 'inventario.php' . ($query !== '' ? '?' . $query : '');
 }
 
+function inventario_rango_precio($minimo, $maximo): string
+{
+    if ($minimo === null || $maximo === null) {
+        return 'Sin precio';
+    }
+
+    $minimo = round((float) $minimo, 2);
+    $maximo = round((float) $maximo, 2);
+
+    if (abs($maximo - $minimo) <= 0.009) {
+        return '$' . number_format($minimo, 2);
+    }
+
+    return '$'
+        . number_format($minimo, 2)
+        . ' – $'
+        . number_format($maximo, 2);
+}
+
 $busqueda = trim((string) ($_GET['busqueda'] ?? ''));
 $categoriaId = max(0, (int) ($_GET['categoria'] ?? 0));
 $estado = (string) ($_GET['estado'] ?? 'todos');
@@ -146,6 +238,7 @@ $categorias = [];
 $resultadoCategorias = $conn->query(
     "SELECT id, nombre
      FROM categorias_productos
+     WHERE estado = 'activo'
      ORDER BY nombre ASC"
 );
 
@@ -155,99 +248,312 @@ if ($resultadoCategorias) {
     }
 }
 
-$where = [];
-$parametros = [];
-$tipos = '';
+$productos = [];
+$totalProductos = 0;
 
-if ($busqueda !== '') {
-    $where[] = '(p.nombre LIKE ? OR p.descripcion LIKE ? OR c.nombre LIKE ? OR prov.nombre LIKE ?)';
-    $termino = '%' . $busqueda . '%';
+if ($vistaGlobal) {
+    /*
+     * La vista global devuelve una tarjeta por producto y consolida
+     * únicamente las sucursales disponibles para el usuario.
+     */
+    $marcadoresSucursales = implode(
+        ',',
+        array_fill(0, count($sucursalesIds), '?')
+    );
 
-    for ($i = 0; $i < 4; $i++) {
-        $parametros[] = $termino;
+    $where = [
+        "inv.sucursal_id IN ($marcadoresSucursales)",
+    ];
+    $parametros = $sucursalesIds;
+    $tipos = str_repeat('i', count($sucursalesIds));
+    $having = [];
+
+    if ($busqueda !== '') {
+        $where[] = '(p.nombre LIKE ? OR p.descripcion LIKE ? OR c.nombre LIKE ? OR prov.nombre LIKE ?)';
+        $termino = '%' . $busqueda . '%';
+
+        for ($i = 0; $i < 4; $i++) {
+            $parametros[] = $termino;
+        }
+
+        $tipos .= 'ssss';
     }
 
-    $tipos .= 'ssss';
+    if ($categoriaId > 0) {
+        $where[] = 'p.categoria_id = ?';
+        $parametros[] = $categoriaId;
+        $tipos .= 'i';
+    }
+
+    $conteoActivasSql =
+        "SUM(CASE WHEN inv.estado = 'activo' THEN 1 ELSE 0 END)";
+
+    if ($estado === 'activo') {
+        $having[] =
+            "p.estado = 'activo' AND $conteoActivasSql > 0";
+    } elseif ($estado === 'inactivo') {
+        $having[] =
+            "(p.estado <> 'activo' OR $conteoActivasSql = 0)";
+    }
+
+    if ($existencia === 'disponible') {
+        $having[] =
+            "p.estado = 'activo'
+             AND $conteoActivasSql > 0
+             AND SUM(inv.stock) > SUM(inv.stock_minimo)";
+    } elseif ($existencia === 'bajo') {
+        $having[] =
+            "p.estado = 'activo'
+             AND $conteoActivasSql > 0
+             AND SUM(inv.stock) > 0
+             AND SUM(inv.stock) <= SUM(inv.stock_minimo)";
+    } elseif ($existencia === 'agotado') {
+        $having[] =
+            "p.estado = 'activo'
+             AND $conteoActivasSql > 0
+             AND SUM(inv.stock) <= 0";
+    }
+
+    $whereSql = 'WHERE ' . implode(' AND ', $where);
+    $havingSql = $having
+        ? 'HAVING ' . implode(' AND ', $having)
+        : '';
+
+    $sqlBaseGlobal = "SELECT
+                        p.id,
+                        p.nombre,
+                        p.descripcion,
+                        p.foto,
+                        p.fecha_registro,
+                        p.estado AS catalogo_estado,
+                        c.nombre AS categoria_nombre,
+                        prov.nombre AS proveedor_nombre,
+                        COUNT(inv.id) AS sucursales_count,
+                        $conteoActivasSql AS sucursales_activas,
+                        COALESCE(SUM(inv.stock), 0) AS stock,
+                        COALESCE(SUM(inv.stock_minimo), 0) AS stock_minimo,
+                        MIN(inv.precio_compra) AS precio_compra_min,
+                        MAX(inv.precio_compra) AS precio_compra_max,
+                        MIN(inv.precio_venta) AS precio_venta_min,
+                        MAX(inv.precio_venta) AS precio_venta_max,
+                        CASE
+                            WHEN p.estado = 'activo'
+                             AND $conteoActivasSql > 0
+                            THEN 'activo'
+                            ELSE 'inactivo'
+                        END AS estado
+                     FROM inventario_sucursales inv
+                     INNER JOIN productos p
+                        ON p.id = inv.producto_id
+                     LEFT JOIN categorias_productos c
+                        ON c.id = p.categoria_id
+                     LEFT JOIN proveedores prov
+                        ON prov.id = p.proveedor_id
+                     $whereSql
+                     GROUP BY
+                        p.id,
+                        p.nombre,
+                        p.descripcion,
+                        p.foto,
+                        p.fecha_registro,
+                        p.estado,
+                        c.nombre,
+                        prov.nombre";
+
+    $sqlConteo = "SELECT COUNT(*) AS total
+                  FROM (
+                      $sqlBaseGlobal
+                      $havingSql
+                  ) inventario_consolidado";
+
+    $stmtConteo = $conn->prepare($sqlConteo);
+
+    if (!$stmtConteo) {
+        die(
+            'No fue posible preparar el conteo consolidado: '
+            . inventario_h($conn->error)
+        );
+    }
+
+    $parametrosConteo = $parametros;
+    inventario_bind(
+        $stmtConteo,
+        $tipos,
+        $parametrosConteo
+    );
+    $stmtConteo->execute();
+    $totalProductos = (int) (
+        $stmtConteo
+            ->get_result()
+            ->fetch_assoc()['total']
+        ?? 0
+    );
+    $stmtConteo->close();
+
+    $totalPaginas = max(
+        1,
+        (int) ceil($totalProductos / $porPagina)
+    );
+    $pagina = min($pagina, $totalPaginas);
+    $offset = ($pagina - 1) * $porPagina;
+
+    $sqlProductos = "$sqlBaseGlobal
+                     $havingSql
+                     ORDER BY p.nombre ASC, p.id DESC
+                     LIMIT ? OFFSET ?";
+
+    $parametrosProductos = $parametros;
+    $parametrosProductos[] = $porPagina;
+    $parametrosProductos[] = $offset;
+    $tiposProductos = $tipos . 'ii';
+} else {
+    /*
+     * La vista de sucursal obtiene precios y existencias únicamente
+     * desde inventario_sucursales.
+     */
+    $where = ['inv.sucursal_id = ?'];
+    $parametros = [$sucursalId];
+    $tipos = 'i';
+
+    if ($busqueda !== '') {
+        $where[] = '(p.nombre LIKE ? OR p.descripcion LIKE ? OR c.nombre LIKE ? OR prov.nombre LIKE ?)';
+        $termino = '%' . $busqueda . '%';
+
+        for ($i = 0; $i < 4; $i++) {
+            $parametros[] = $termino;
+        }
+
+        $tipos .= 'ssss';
+    }
+
+    if ($categoriaId > 0) {
+        $where[] = 'p.categoria_id = ?';
+        $parametros[] = $categoriaId;
+        $tipos .= 'i';
+    }
+
+    if ($estado === 'activo') {
+        $where[] =
+            "p.estado = 'activo'
+             AND inv.estado = 'activo'";
+    } elseif ($estado === 'inactivo') {
+        $where[] =
+            "(p.estado <> 'activo'
+              OR inv.estado <> 'activo')";
+    }
+
+    if ($existencia === 'disponible') {
+        $where[] =
+            "p.estado = 'activo'
+             AND inv.estado = 'activo'
+             AND inv.stock > inv.stock_minimo";
+    } elseif ($existencia === 'bajo') {
+        $where[] =
+            "p.estado = 'activo'
+             AND inv.estado = 'activo'
+             AND inv.stock > 0
+             AND inv.stock <= inv.stock_minimo";
+    } elseif ($existencia === 'agotado') {
+        $where[] =
+            "p.estado = 'activo'
+             AND inv.estado = 'activo'
+             AND inv.stock <= 0";
+    }
+
+    $whereSql = 'WHERE ' . implode(' AND ', $where);
+
+    $sqlConteo = "SELECT COUNT(*) AS total
+                  FROM inventario_sucursales inv
+                  INNER JOIN productos p
+                    ON p.id = inv.producto_id
+                  LEFT JOIN categorias_productos c
+                    ON c.id = p.categoria_id
+                  LEFT JOIN proveedores prov
+                    ON prov.id = p.proveedor_id
+                  $whereSql";
+
+    $stmtConteo = $conn->prepare($sqlConteo);
+
+    if (!$stmtConteo) {
+        die(
+            'No fue posible preparar el conteo de la sucursal: '
+            . inventario_h($conn->error)
+        );
+    }
+
+    $parametrosConteo = $parametros;
+    inventario_bind(
+        $stmtConteo,
+        $tipos,
+        $parametrosConteo
+    );
+    $stmtConteo->execute();
+    $totalProductos = (int) (
+        $stmtConteo
+            ->get_result()
+            ->fetch_assoc()['total']
+        ?? 0
+    );
+    $stmtConteo->close();
+
+    $totalPaginas = max(
+        1,
+        (int) ceil($totalProductos / $porPagina)
+    );
+    $pagina = min($pagina, $totalPaginas);
+    $offset = ($pagina - 1) * $porPagina;
+
+    $sqlProductos = "SELECT
+                        p.id,
+                        p.nombre,
+                        p.descripcion,
+                        p.foto,
+                        p.fecha_registro,
+                        c.nombre AS categoria_nombre,
+                        prov.nombre AS proveedor_nombre,
+                        inv.precio_compra,
+                        inv.precio_venta,
+                        inv.stock,
+                        inv.stock_minimo,
+                        CASE
+                            WHEN p.estado = 'activo'
+                             AND inv.estado = 'activo'
+                            THEN 'activo'
+                            ELSE 'inactivo'
+                        END AS estado
+                     FROM inventario_sucursales inv
+                     INNER JOIN productos p
+                        ON p.id = inv.producto_id
+                     LEFT JOIN categorias_productos c
+                        ON c.id = p.categoria_id
+                     LEFT JOIN proveedores prov
+                        ON prov.id = p.proveedor_id
+                     $whereSql
+                     ORDER BY p.nombre ASC, p.id DESC
+                     LIMIT ? OFFSET ?";
+
+    $parametrosProductos = $parametros;
+    $parametrosProductos[] = $porPagina;
+    $parametrosProductos[] = $offset;
+    $tiposProductos = $tipos . 'ii';
 }
-
-if ($categoriaId > 0) {
-    $where[] = 'p.categoria_id = ?';
-    $parametros[] = $categoriaId;
-    $tipos .= 'i';
-}
-
-if ($estado !== 'todos') {
-    $where[] = 'p.estado = ?';
-    $parametros[] = $estado;
-    $tipos .= 's';
-}
-
-if ($existencia === 'disponible') {
-    $where[] = "p.estado = 'activo' AND p.stock > p.stock_minimo";
-} elseif ($existencia === 'bajo') {
-    $where[] = "p.estado = 'activo' AND p.stock > 0 AND p.stock <= p.stock_minimo";
-} elseif ($existencia === 'agotado') {
-    $where[] = "p.estado = 'activo' AND p.stock <= 0";
-}
-
-$whereSql = $where ? 'WHERE ' . implode(' AND ', $where) : '';
-
-$sqlConteo = "SELECT COUNT(*) AS total
-              FROM productos p
-              LEFT JOIN categorias_productos c ON c.id = p.categoria_id
-              LEFT JOIN proveedores prov ON prov.id = p.proveedor_id
-              $whereSql";
-
-$stmtConteo = $conn->prepare($sqlConteo);
-
-if (!$stmtConteo) {
-    die('No fue posible preparar el conteo de productos.');
-}
-
-$parametrosConteo = $parametros;
-inventario_bind($stmtConteo, $tipos, $parametrosConteo);
-$stmtConteo->execute();
-$totalProductos = (int) (($stmtConteo->get_result()->fetch_assoc()['total'] ?? 0));
-$stmtConteo->close();
-
-$totalPaginas = max(1, (int) ceil($totalProductos / $porPagina));
-$pagina = min($pagina, $totalPaginas);
-$offset = ($pagina - 1) * $porPagina;
-
-$sqlProductos = "SELECT
-                    p.id,
-                    p.nombre,
-                    p.descripcion,
-                    p.precio_compra,
-                    p.precio_venta,
-                    p.stock,
-                    p.stock_minimo,
-                    p.foto,
-                    p.estado,
-                    p.fecha_registro,
-                    c.nombre AS categoria_nombre,
-                    prov.nombre AS proveedor_nombre
-                 FROM productos p
-                 LEFT JOIN categorias_productos c ON c.id = p.categoria_id
-                 LEFT JOIN proveedores prov ON prov.id = p.proveedor_id
-                 $whereSql
-                 ORDER BY p.nombre ASC, p.id DESC
-                 LIMIT ? OFFSET ?";
 
 $stmtProductos = $conn->prepare($sqlProductos);
 
 if (!$stmtProductos) {
-    die('No fue posible consultar los productos: ' . inventario_h($conn->error));
+    die(
+        'No fue posible consultar los productos: '
+        . inventario_h($conn->error)
+    );
 }
 
-$parametrosProductos = $parametros;
-$parametrosProductos[] = $porPagina;
-$parametrosProductos[] = $offset;
-$tiposProductos = $tipos . 'ii';
-inventario_bind($stmtProductos, $tiposProductos, $parametrosProductos);
+inventario_bind(
+    $stmtProductos,
+    $tiposProductos,
+    $parametrosProductos
+);
 $stmtProductos->execute();
 $resultadoProductos = $stmtProductos->get_result();
-$productos = [];
 
 while ($fila = $resultadoProductos->fetch_assoc()) {
     $productos[] = $fila;
@@ -256,6 +562,7 @@ while ($fila = $resultadoProductos->fetch_assoc()) {
 $stmtProductos->close();
 
 $queryBase = [
+    'vista' => $vistaGlobal ? 'global' : 'sucursal',
     'busqueda' => $busqueda,
     'categoria' => $categoriaId,
     'estado' => $estado,
@@ -263,14 +570,24 @@ $queryBase = [
     'por_pagina' => $porPagina,
 ];
 
-$desde = $totalProductos > 0 ? $offset + 1 : 0;
-$hasta = min($offset + count($productos), $totalProductos);
+$desde = $totalProductos > 0
+    ? $offset + 1
+    : 0;
+
+$hasta = min(
+    $offset + count($productos),
+    $totalProductos
+);
 
 $paginasVisibles = [];
 $inicioPaginas = max(1, $pagina - 2);
 $finPaginas = min($totalPaginas, $pagina + 2);
 
-for ($numero = $inicioPaginas; $numero <= $finPaginas; $numero++) {
+for (
+    $numero = $inicioPaginas;
+    $numero <= $finPaginas;
+    $numero++
+) {
     $paginasVisibles[] = $numero;
 }
 ?>
@@ -281,32 +598,76 @@ for ($numero = $inicioPaginas; $numero <= $finPaginas; $numero++) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Inventario - Sistema Gimnasio</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
-    <link rel="stylesheet" href="css/inventario.css?v=6.1.0">
+    <?php
+    $inventarioCss = __DIR__ . '/css/inventario.css';
+    $inventarioMultisucursalCss =
+        __DIR__ . '/css/inventario_multisucursal.css';
+    ?>
+    <link
+        rel="stylesheet"
+        href="css/inventario.css?v=<?php echo is_file($inventarioCss) ? (int) filemtime($inventarioCss) : time(); ?>"
+    >
+    <link
+        rel="stylesheet"
+        href="css/inventario_multisucursal.css?v=<?php echo is_file($inventarioMultisucursalCss) ? (int) filemtime($inventarioMultisucursalCss) : time(); ?>"
+    >
 </head>
 <body>
     <?php include __DIR__ . '/includes/sidebar.php'; ?>
 
     <main class="main-content inventory-catalog-main">
         <div class="inventory-catalog-page">
-            <header class="inventory-catalog-header">
+            <header class="inventory-catalog-header inventory-context-header">
                 <div class="inventory-catalog-title">
                     <span class="inventory-catalog-title-icon" aria-hidden="true">
                         <i class="fas fa-boxes-stacked"></i>
                     </span>
                     <div>
                         <h1>Inventario</h1>
-                        <p>Consulta visual de productos con filtros automáticos y paginación.</p>
+                        <p>
+                            <?php echo $vistaGlobal
+                                ? 'Consulta consolidada de precios y existencias de todas las sucursales.'
+                                : 'Consulta visual del inventario operativo de ' . inventario_h($sucursalNombre) . '.';
+                            ?>
+                        </p>
                     </div>
                 </div>
 
-                <span class="inventory-catalog-total">
-                    <strong><?php echo number_format($totalProductos); ?></strong>
-                    <?php echo $totalProductos === 1 ? 'producto' : 'productos'; ?>
-                </span>
+                <div class="inventory-header-actions">
+                    <span class="inventory-context-badge <?php echo $vistaGlobal ? 'global' : 'branch'; ?>">
+                        <i class="fas <?php echo $vistaGlobal ? 'fa-chart-pie' : 'fa-building'; ?>"></i>
+                        <span>
+                            <strong>
+                                <?php echo inventario_h(
+                                    $vistaGlobal
+                                        ? 'Todas las sucursales'
+                                        : $sucursalNombre
+                                ); ?>
+                            </strong>
+                            <small>
+                                <?php echo inventario_h(
+                                    $vistaGlobal
+                                        ? $totalSedes . ($totalSedes === 1 ? ' sede consolidada' : ' sedes consolidadas')
+                                        : ($sucursalClave !== '' ? $sucursalClave : 'Sucursal activa')
+                                ); ?>
+                            </small>
+                        </span>
+                    </span>
+
+                    <span class="inventory-catalog-total">
+                        <strong><?php echo number_format($totalProductos); ?></strong>
+                        <?php echo $totalProductos === 1 ? 'producto' : 'productos'; ?>
+                    </span>
+                </div>
             </header>
 
             <section class="inventory-catalog-panel" aria-label="Productos del inventario">
                 <form method="GET" class="inventory-catalog-filters" id="inventoryFilterForm">
+                    <input
+                        type="hidden"
+                        name="vista"
+                        value="<?php echo $vistaGlobal ? 'global' : 'sucursal'; ?>"
+                    >
                     <label class="inventory-catalog-search">
                         <span class="sr-only">Buscar producto</span>
                         <i class="fas fa-magnifying-glass"></i>
@@ -363,7 +724,7 @@ for ($numero = $inicioPaginas; $numero <= $finPaginas; $numero++) {
                             <?php endforeach; ?>
                         </select>
                     </label>
-                    <a href="inventario.php" class="inventory-catalog-clear" aria-label="Borrar filtros" title="Borrar filtros">
+                    <a href="<?php echo inventario_h(inventario_url(['vista' => $vistaGlobal ? 'global' : 'sucursal'])); ?>" class="inventory-catalog-clear" aria-label="Borrar filtros" title="Borrar filtros">
                         <i class="fas fa-rotate-left"></i>
                     </a>
                 </form>
@@ -377,7 +738,7 @@ for ($numero = $inicioPaginas; $numero <= $finPaginas; $numero++) {
                             $proveedor = trim((string) ($producto['proveedor_nombre'] ?? ''));
                             $categoria = trim((string) ($producto['categoria_nombre'] ?? ''));
                             ?>
-                            <article class="inventory-card">
+                            <article class="inventory-card <?php echo $vistaGlobal ? 'is-global' : ''; ?>">
                                 <div class="inventory-card-media">
                                     <?php if ($imagen !== ''): ?>
                                         <img
@@ -409,22 +770,53 @@ for ($numero = $inicioPaginas; $numero <= $finPaginas; $numero++) {
                                     <div class="inventory-card-prices">
                                         <div>
                                             <span>Compra</span>
-                                            <strong>$<?php echo number_format((float) $producto['precio_compra'], 2); ?></strong>
+                                            <strong>
+                                                <?php if ($vistaGlobal): ?>
+                                                    <?php echo inventario_h(
+                                                        inventario_rango_precio(
+                                                            $producto['precio_compra_min'] ?? null,
+                                                            $producto['precio_compra_max'] ?? null
+                                                        )
+                                                    ); ?>
+                                                <?php else: ?>
+                                                    $<?php echo number_format((float) $producto['precio_compra'], 2); ?>
+                                                <?php endif; ?>
+                                            </strong>
                                         </div>
                                         <div>
                                             <span>Venta</span>
-                                            <strong>$<?php echo number_format((float) $producto['precio_venta'], 2); ?></strong>
+                                            <strong>
+                                                <?php if ($vistaGlobal): ?>
+                                                    <?php echo inventario_h(
+                                                        inventario_rango_precio(
+                                                            $producto['precio_venta_min'] ?? null,
+                                                            $producto['precio_venta_max'] ?? null
+                                                        )
+                                                    ); ?>
+                                                <?php else: ?>
+                                                    $<?php echo number_format((float) $producto['precio_venta'], 2); ?>
+                                                <?php endif; ?>
+                                            </strong>
                                         </div>
                                     </div>
 
                                     <div class="inventory-card-stockline">
                                         <div>
-                                            <span>Stock</span>
+                                            <span>
+                                                <?php echo $vistaGlobal ? 'Stock total' : 'Stock'; ?>
+                                            </span>
                                             <strong><?php echo number_format((int) $producto['stock']); ?></strong>
                                         </div>
                                         <div>
-                                            <span>Mínimo</span>
-                                            <strong><?php echo number_format((int) $producto['stock_minimo']); ?></strong>
+                                            <span>
+                                                <?php echo $vistaGlobal ? 'Sucursales' : 'Mínimo'; ?>
+                                            </span>
+                                            <strong>
+                                                <?php echo $vistaGlobal
+                                                    ? number_format((int) ($producto['sucursales_count'] ?? 0))
+                                                    : number_format((int) $producto['stock_minimo']);
+                                                ?>
+                                            </strong>
                                         </div>
                                     </div>
 
@@ -432,6 +824,19 @@ for ($numero = $inicioPaginas; $numero <= $finPaginas; $numero++) {
                                         <i class="fas fa-truck-field"></i>
                                         <span><?php echo inventario_h($proveedor !== '' ? $proveedor : 'Sin proveedor'); ?></span>
                                     </div>
+
+                                    <?php if ($vistaGlobal): ?>
+                                        <div class="inventory-card-coverage">
+                                            <i class="fas fa-building-circle-check"></i>
+                                            <span>
+                                                <?php echo number_format((int) ($producto['sucursales_activas'] ?? 0)); ?>
+                                                <?php echo (int) ($producto['sucursales_activas'] ?? 0) === 1
+                                                    ? 'sede activa'
+                                                    : 'sedes activas';
+                                                ?>
+                                            </span>
+                                        </div>
+                                    <?php endif; ?>
                                 </div>
                             </article>
                         <?php endforeach; ?>
@@ -442,7 +847,7 @@ for ($numero = $inicioPaginas; $numero <= $finPaginas; $numero++) {
                             <strong>Página <?php echo $pagina; ?> de <?php echo $totalPaginas; ?></strong>
                             <span>
                                 Mostrando <?php echo number_format($desde); ?>–<?php echo number_format($hasta); ?>
-                                de <?php echo number_format($totalProductos); ?> productos
+                                de <?php echo number_format($totalProductos); ?> productos <?php echo $vistaGlobal ? 'consolidados' : ''; ?>
                             </span>
                         </div>
 
@@ -507,7 +912,7 @@ for ($numero = $inicioPaginas; $numero <= $finPaginas; $numero++) {
                         <span><i class="fas fa-box-open"></i></span>
                         <h2>No se encontraron productos</h2>
                         <p>No hay productos que coincidan con los filtros seleccionados.</p>
-                        <a href="inventario.php">Limpiar filtros</a>
+                        <a href="<?php echo inventario_h(inventario_url(['vista' => $vistaGlobal ? 'global' : 'sucursal'])); ?>">Limpiar filtros</a>
                     </div>
                 <?php endif; ?>
             </section>

@@ -560,3 +560,210 @@ color: #fff;
 .module-title { font-size: .96rem; }
 .limit-control { gap: 5px; }
 }
+
+/* HISTORIAL DE STOCK MULTISUCURSAL */
+
+.stock-context-header {
+    gap: 16px;
+}
+
+.stock-header-actions {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 9px;
+}
+
+.stock-context-badge {
+    min-width: 0;
+    max-width: 260px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 42px;
+    padding: 7px 10px;
+    border: 1px solid #dbeafe;
+    border-radius: 11px;
+    background: #eff6ff;
+    color: #1e3a8a;
+}
+
+.stock-context-badge.global {
+    border-color: #bbf7d0;
+    background: #f0fdf4;
+    color: #047857;
+}
+
+.stock-context-badge > i {
+    width: 28px;
+    height: 28px;
+    display: grid;
+    place-items: center;
+    flex: 0 0 28px;
+    border-radius: 8px;
+    background: rgba(37, 99, 235, .10);
+}
+
+.stock-context-badge.global > i {
+    background: rgba(16, 185, 129, .13);
+}
+
+.stock-context-badge > span {
+    min-width: 0;
+}
+
+.stock-context-badge strong,
+.stock-context-badge small {
+    display: block;
+    overflow: hidden;
+    line-height: 1.2;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.stock-context-badge strong {
+    font-size: .75rem;
+    font-weight: 800;
+}
+
+.stock-context-badge small {
+    margin-top: 2px;
+    color: #64748b;
+    font-size: .61rem;
+    font-weight: 700;
+}
+
+.col-branch {
+    width: 142px;
+}
+
+.stock-branch-badge {
+    min-width: 0;
+    max-width: 100%;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 5px 7px;
+    border: 1px solid #dbeafe;
+    border-radius: 8px;
+    background: #f8fbff;
+    color: #1e3a8a;
+}
+
+.stock-branch-badge > i {
+    flex: 0 0 auto;
+    font-size: .68rem;
+}
+
+.stock-branch-badge > span {
+    min-width: 0;
+}
+
+.stock-branch-badge strong,
+.stock-branch-badge small {
+    display: block;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.stock-branch-badge strong {
+    font-size: .69rem;
+    line-height: 1.2;
+}
+
+.stock-branch-badge small {
+    margin-top: 2px;
+    color: #64748b;
+    font-size: .58rem;
+    font-weight: 700;
+    line-height: 1.15;
+}
+
+.stock-table.is-global .col-date {
+    width: 116px;
+}
+
+.stock-table.is-global .col-product {
+    width: 130px;
+}
+
+.stock-table.is-global .col-type {
+    width: 108px;
+}
+
+.stock-table.is-global .col-qty {
+    width: 68px;
+}
+
+.stock-table.is-global .col-stock {
+    width: 72px;
+}
+
+.stock-table.is-global .col-reason {
+    width: 135px;
+}
+
+.stock-table.is-global .col-user {
+    width: 105px;
+}
+
+@media (max-width: 1200px) {
+    .stock-context-header {
+        align-items: flex-start;
+    }
+
+    .stock-header-actions {
+        flex: 0 0 auto;
+    }
+
+    .stock-context-badge {
+        max-width: 220px;
+    }
+}
+
+@media (max-width: 768px) {
+    .stock-context-header {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .stock-header-actions {
+        width: 100%;
+        justify-content: space-between;
+    }
+
+    .stock-context-badge {
+        max-width: calc(100% - 115px);
+    }
+
+    .stock-table tbody td.col-branch {
+        align-items: center;
+    }
+
+    .stock-branch-badge {
+        justify-self: end;
+        max-width: 210px;
+    }
+}
+
+@media (max-width: 460px) {
+    .stock-header-actions {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .stock-context-badge {
+        width: 100%;
+        max-width: none;
+    }
+
+    .results-chip {
+        align-self: flex-start;
+    }
+
+    .stock-branch-badge {
+        max-width: 165px;
+    }
+}

@@ -7,6 +7,7 @@ if (!isset($_SESSION['user_id'])) {
 }
 
 require_once 'config/database.php';
+require_once __DIR__ . '/includes/sucursal_context.php';
 
 $database = new Database();
 $conn = $database->getConnection();
@@ -22,146 +23,410 @@ function bindParams(mysqli_stmt $stmt, string $types, array $params): void
     }
 }
 
+$usuario_id = (int) $_SESSION['user_id'];
+$rol_usuario = strtolower(trim((string) (
+    $_SESSION['user_rol_base']
+    ?? $_SESSION['user_rol']
+    ?? 'recepcionista'
+)));
+
+if ($rol_usuario === 'administrador') {
+    $rol_usuario = 'admin';
+}
+
+$puede_vista_global = $rol_usuario === 'admin';
+$vista_solicitada = strtolower(trim((string) (
+    $_GET['vista'] ?? ''
+)));
+
+if ($vista_solicitada === 'global' && $puede_vista_global) {
+    sucursal_activar_vista_global(
+        $conn,
+        $usuario_id
+    );
+} elseif ($vista_solicitada === 'sucursal') {
+    sucursal_desactivar_vista_global();
+}
+
+$vista_global =
+    $puede_vista_global
+    && function_exists('sucursal_dashboard_vista_global')
+    && sucursal_dashboard_vista_global();
+
+$sucursal_id = (int) (
+    $_SESSION['sucursal_id'] ?? 0
+);
+
+$sucursales_asignadas = sucursal_obtener_asignadas(
+    $conn,
+    $usuario_id
+);
+
+/*
+ * El administrador debe poder consultar el consolidado. Si una instalación
+ * antigua todavía no tiene sus asignaciones, se utilizan las sedes activas.
+ */
+if ($sucursales_asignadas === [] && $puede_vista_global) {
+    $resultado_sucursales = $conn->query(
+        "SELECT id, clave, nombre, es_matriz
+         FROM sucursales
+         WHERE estado = 'activa'
+         ORDER BY es_matriz DESC, nombre ASC"
+    );
+
+    if ($resultado_sucursales) {
+        while (
+            $fila_sucursal =
+                $resultado_sucursales->fetch_assoc()
+        ) {
+            $sucursales_asignadas[] = $fila_sucursal;
+        }
+    }
+}
+
+$sucursales_ids = [];
+$sucursal_actual = null;
+
+foreach ($sucursales_asignadas as $sucursal_asignada) {
+    $id_asignado = (int) (
+        $sucursal_asignada['id'] ?? 0
+    );
+
+    if ($id_asignado <= 0) {
+        continue;
+    }
+
+    $sucursales_ids[] = $id_asignado;
+
+    if ($id_asignado === $sucursal_id) {
+        $sucursal_actual = $sucursal_asignada;
+    }
+}
+
+$sucursales_ids = array_values(
+    array_unique($sucursales_ids)
+);
+
+if ($sucursales_ids === []) {
+    die(
+        'No tienes sucursales activas disponibles '
+        . 'para consultar el historial de stock.'
+    );
+}
+
+if (!$vista_global && !$sucursal_actual) {
+    die(
+        'Selecciona una sucursal válida antes de '
+        . 'consultar los movimientos de stock.'
+    );
+}
+
+$sucursal_nombre = $vista_global
+    ? 'Todas las sucursales'
+    : trim((string) (
+        $sucursal_actual['nombre'] ?? 'Sucursal'
+    ));
+
+$sucursal_clave = $vista_global
+    ? 'GLOBAL'
+    : trim((string) (
+        $sucursal_actual['clave'] ?? ''
+    ));
+
+$total_sedes = count($sucursales_ids);
+
 $limites_permitidos = [10, 20, 50, 100];
-$registros_por_pagina = isset($_GET['limite']) ? (int) $_GET['limite'] : 20;
-if (!in_array($registros_por_pagina, $limites_permitidos, true)) {
+$registros_por_pagina = isset($_GET['limite'])
+    ? (int) $_GET['limite']
+    : 20;
+
+if (
+    !in_array(
+        $registros_por_pagina,
+        $limites_permitidos,
+        true
+    )
+) {
     $registros_por_pagina = 20;
 }
 
-$pagina_actual = max(1, isset($_GET['pagina']) ? (int) $_GET['pagina'] : 1);
-$busqueda = trim((string) ($_GET['busqueda'] ?? ''));
-$tipo_filtro = trim((string) ($_GET['tipo'] ?? 'todos'));
-$fecha_desde = trim((string) ($_GET['fecha_desde'] ?? ''));
-$fecha_hasta = trim((string) ($_GET['fecha_hasta'] ?? ''));
+$pagina_actual = max(
+    1,
+    isset($_GET['pagina'])
+        ? (int) $_GET['pagina']
+        : 1
+);
 
-$tipos_permitidos = ['todos', 'inicial', 'entrada', 'salida', 'correccion', 'ajuste_minimo'];
-if (!in_array($tipo_filtro, $tipos_permitidos, true)) {
+$busqueda = trim((string) (
+    $_GET['busqueda'] ?? ''
+));
+
+$tipo_filtro = trim((string) (
+    $_GET['tipo'] ?? 'todos'
+));
+
+$fecha_desde = trim((string) (
+    $_GET['fecha_desde'] ?? ''
+));
+
+$fecha_hasta = trim((string) (
+    $_GET['fecha_hasta'] ?? ''
+));
+
+$tipos_permitidos = [
+    'todos',
+    'inicial',
+    'entrada',
+    'salida',
+    'correccion',
+    'ajuste_minimo',
+];
+
+if (
+    !in_array(
+        $tipo_filtro,
+        $tipos_permitidos,
+        true
+    )
+) {
     $tipo_filtro = 'todos';
 }
 
-$where_con_join = [];
-$params_con_join = [];
-$types_con_join = '';
+/*
+ * Todas las consultas —tabla, conteo y tarjetas— utilizan exactamente
+ * las mismas condiciones para que sus cifras siempre coincidan.
+ */
+$where = [];
+$params = [];
+$types = '';
 
-$where_sin_join = [];
-$params_sin_join = [];
-$types_sin_join = '';
+if ($vista_global) {
+    $marcadores = implode(
+        ',',
+        array_fill(
+            0,
+            count($sucursales_ids),
+            '?'
+        )
+    );
+
+    $where[] = "m.sucursal_id IN ($marcadores)";
+
+    foreach ($sucursales_ids as $id_sede) {
+        $params[] = $id_sede;
+        $types .= 'i';
+    }
+} else {
+    $where[] = 'm.sucursal_id = ?';
+    $params[] = $sucursal_id;
+    $types .= 'i';
+}
 
 if ($busqueda !== '') {
-    $where_con_join[] = '(p.nombre LIKE ? OR m.motivo LIKE ? OR m.observaciones LIKE ?)';
+    $where[] = "(
+        p.nombre LIKE ?
+        OR m.motivo LIKE ?
+        OR m.observaciones LIKE ?
+        OR s.nombre LIKE ?
+        OR s.clave LIKE ?
+    )";
+
     $termino = '%' . $busqueda . '%';
-    $params_con_join[] = $termino;
-    $params_con_join[] = $termino;
-    $params_con_join[] = $termino;
-    $types_con_join .= 'sss';
+
+    for ($i = 0; $i < 5; $i++) {
+        $params[] = $termino;
+        $types .= 's';
+    }
 }
 
 if ($tipo_filtro !== 'todos') {
-    $where_con_join[] = 'm.tipo_movimiento = ?';
-    $params_con_join[] = $tipo_filtro;
-    $types_con_join .= 's';
-
-    $where_sin_join[] = 'tipo_movimiento = ?';
-    $params_sin_join[] = $tipo_filtro;
-    $types_sin_join .= 's';
+    $where[] = 'm.tipo_movimiento = ?';
+    $params[] = $tipo_filtro;
+    $types .= 's';
 }
 
 if ($fecha_desde !== '' && $fecha_hasta !== '') {
-    $where_con_join[] = 'DATE(m.fecha_movimiento) BETWEEN ? AND ?';
-    $params_con_join[] = $fecha_desde;
-    $params_con_join[] = $fecha_hasta;
-    $types_con_join .= 'ss';
+    $where[] =
+        'DATE(m.fecha_movimiento) BETWEEN ? AND ?';
 
-    $where_sin_join[] = 'DATE(fecha_movimiento) BETWEEN ? AND ?';
-    $params_sin_join[] = $fecha_desde;
-    $params_sin_join[] = $fecha_hasta;
-    $types_sin_join .= 'ss';
+    $params[] = $fecha_desde;
+    $params[] = $fecha_hasta;
+    $types .= 'ss';
 } elseif ($fecha_desde !== '') {
-    $where_con_join[] = 'DATE(m.fecha_movimiento) >= ?';
-    $params_con_join[] = $fecha_desde;
-    $types_con_join .= 's';
+    $where[] =
+        'DATE(m.fecha_movimiento) >= ?';
 
-    $where_sin_join[] = 'DATE(fecha_movimiento) >= ?';
-    $params_sin_join[] = $fecha_desde;
-    $types_sin_join .= 's';
+    $params[] = $fecha_desde;
+    $types .= 's';
 } elseif ($fecha_hasta !== '') {
-    $where_con_join[] = 'DATE(m.fecha_movimiento) <= ?';
-    $params_con_join[] = $fecha_hasta;
-    $types_con_join .= 's';
+    $where[] =
+        'DATE(m.fecha_movimiento) <= ?';
 
-    $where_sin_join[] = 'DATE(fecha_movimiento) <= ?';
-    $params_sin_join[] = $fecha_hasta;
-    $types_sin_join .= 's';
+    $params[] = $fecha_hasta;
+    $types .= 's';
 }
 
-$where_sql_con_join = $where_con_join ? 'WHERE ' . implode(' AND ', $where_con_join) : '';
-$where_sql_sin_join = $where_sin_join ? 'WHERE ' . implode(' AND ', $where_sin_join) : '';
+$where_sql = 'WHERE ' . implode(
+    ' AND ',
+    $where
+);
 
-$count_sql = "SELECT COUNT(*) AS total
-              FROM movimientos_stock m
-              INNER JOIN productos p ON p.id = m.producto_id
-              $where_sql_con_join";
+$joins_sql = "
+    FROM movimientos_stock m
+    INNER JOIN productos p
+        ON p.id = m.producto_id
+    INNER JOIN usuarios u
+        ON u.id = m.usuario_id
+    LEFT JOIN sucursales s
+        ON s.id = m.sucursal_id
+";
+
+$count_sql = "
+    SELECT COUNT(*) AS total
+    $joins_sql
+    $where_sql
+";
+
 $count_stmt = $conn->prepare($count_sql);
+
 if (!$count_stmt) {
-    die('Error en la consulta COUNT: ' . $conn->error);
+    die(
+        'Error en la consulta COUNT: '
+        . $conn->error
+    );
 }
-bindParams($count_stmt, $types_con_join, $params_con_join);
+
+$params_count = $params;
+
+bindParams(
+    $count_stmt,
+    $types,
+    $params_count
+);
+
 $count_stmt->execute();
-$total_registros = (int) ($count_stmt->get_result()->fetch_assoc()['total'] ?? 0);
+
+$total_registros = (int) (
+    $count_stmt
+        ->get_result()
+        ->fetch_assoc()['total']
+    ?? 0
+);
+
 $count_stmt->close();
 
-$total_paginas = max(1, (int) ceil($total_registros / $registros_por_pagina));
+$total_paginas = max(
+    1,
+    (int) ceil(
+        $total_registros
+        / $registros_por_pagina
+    )
+);
+
 if ($pagina_actual > $total_paginas) {
     $pagina_actual = $total_paginas;
 }
-$offset = ($pagina_actual - 1) * $registros_por_pagina;
 
-$sql = "SELECT
-            m.*,
-            p.nombre AS producto_nombre,
-            u.nombre AS usuario_nombre
-        FROM movimientos_stock m
-        INNER JOIN productos p ON p.id = m.producto_id
-        INNER JOIN usuarios u ON u.id = m.usuario_id
-        $where_sql_con_join
-        ORDER BY m.fecha_movimiento DESC
-        LIMIT ? OFFSET ?";
+$offset =
+    ($pagina_actual - 1)
+    * $registros_por_pagina;
+
+$sql = "
+    SELECT
+        m.*,
+        p.nombre AS producto_nombre,
+        u.nombre AS usuario_nombre,
+        s.nombre AS sucursal_nombre,
+        s.clave AS sucursal_clave,
+        s.es_matriz AS sucursal_es_matriz
+    $joins_sql
+    $where_sql
+    ORDER BY
+        m.fecha_movimiento DESC,
+        m.id DESC
+    LIMIT ? OFFSET ?
+";
 
 $stmt = $conn->prepare($sql);
+
 if (!$stmt) {
-    die('Error en la consulta principal: ' . $conn->error);
+    die(
+        'Error en la consulta principal: '
+        . $conn->error
+    );
 }
-$params_paginacion = $params_con_join;
-$params_paginacion[] = $registros_por_pagina;
+
+$params_paginacion = $params;
+$params_paginacion[] =
+    $registros_por_pagina;
 $params_paginacion[] = $offset;
-$types_paginacion = $types_con_join . 'ii';
-bindParams($stmt, $types_paginacion, $params_paginacion);
+
+$types_paginacion = $types . 'ii';
+
+bindParams(
+    $stmt,
+    $types_paginacion,
+    $params_paginacion
+);
+
 $stmt->execute();
+
 $result = $stmt->get_result();
 $movimientos = [];
+
 while ($row = $result->fetch_assoc()) {
     $movimientos[] = $row;
 }
+
 $stmt->close();
 
-$resumen_sql = "SELECT
-                    tipo_movimiento,
-                    COUNT(*) AS total,
-                    COALESCE(SUM(ABS(cantidad)), 0) AS suma_cantidad
-                FROM movimientos_stock
-                $where_sql_sin_join
-                GROUP BY tipo_movimiento";
-$resumen_stmt = $conn->prepare($resumen_sql);
+$resumen_sql = "
+    SELECT
+        m.tipo_movimiento,
+        COUNT(*) AS total,
+        COALESCE(
+            SUM(ABS(m.cantidad)),
+            0
+        ) AS suma_cantidad
+    $joins_sql
+    $where_sql
+    GROUP BY m.tipo_movimiento
+";
+
+$resumen_stmt = $conn->prepare(
+    $resumen_sql
+);
+
 if (!$resumen_stmt) {
-    die('Error en la consulta de resumen: ' . $conn->error);
+    die(
+        'Error en la consulta de resumen: '
+        . $conn->error
+    );
 }
-bindParams($resumen_stmt, $types_sin_join, $params_sin_join);
+
+$params_resumen = $params;
+
+bindParams(
+    $resumen_stmt,
+    $types,
+    $params_resumen
+);
+
 $resumen_stmt->execute();
-$resumen_result = $resumen_stmt->get_result();
+
+$resumen_result =
+    $resumen_stmt->get_result();
+
 $resumen = [];
-while ($row = $resumen_result->fetch_assoc()) {
-    $resumen[$row['tipo_movimiento']] = $row;
+
+while (
+    $row =
+        $resumen_result->fetch_assoc()
+) {
+    $resumen[$row['tipo_movimiento']] =
+        $row;
 }
+
 $resumen_stmt->close();
 
 $filtros_activos = 0;
@@ -207,7 +472,14 @@ function tipoMovimientoMeta(string $tipo): array
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.0/dist/css/bootstrap.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/admin-lte@3.2/dist/css/adminlte.min.css">
-    <link rel="stylesheet" href="css/historial_stock.css">
+    <?php
+    $historialStockCss =
+        __DIR__ . '/css/historial_stock.css';
+    ?>
+    <link
+        rel="stylesheet"
+        href="css/historial_stock.css?v=<?php echo is_file($historialStockCss) ? (int) filemtime($historialStockCss) : time(); ?>"
+    >
 </head>
 <body>
 <div class="dashboard-layout">
@@ -215,19 +487,59 @@ function tipoMovimientoMeta(string $tipo): array
 
     <main class="main-content">
         <div class="stock-page">
-            <header class="page-header">
+            <header class="page-header stock-context-header">
                 <div class="page-title-wrap">
-                    <span class="page-title-icon"><i class="fas fa-boxes-stacked"></i></span>
+                    <span class="page-title-icon">
+                        <i class="fas fa-boxes-stacked"></i>
+                    </span>
+
                     <div>
-                        <h1 class="page-title">Historial de movimientos de stock</h1>
-                        <p class="page-subtitle">Consulta entradas, salidas y ajustes realizados en el inventario.</p>
+                        <h1 class="page-title">
+                            Historial de movimientos de stock
+                        </h1>
+
+                        <p class="page-subtitle">
+                            <?php echo $vista_global
+                                ? 'Consulta consolidada de entradas, salidas y ajustes de todas las sucursales.'
+                                : 'Consulta los movimientos realizados en el inventario de ' . htmlspecialchars($sucursal_nombre, ENT_QUOTES, 'UTF-8') . '.';
+                            ?>
+                        </p>
                     </div>
                 </div>
-                <span class="results-chip">
-                    <i class="fas fa-list-check"></i>
-                    <strong><?php echo number_format($total_registros); ?></strong>
-                    <span>movimientos</span>
-                </span>
+
+                <div class="stock-header-actions">
+                    <span class="stock-context-badge <?php echo $vista_global ? 'global' : 'branch'; ?>">
+                        <i class="fas <?php echo $vista_global ? 'fa-chart-pie' : 'fa-building'; ?>"></i>
+
+                        <span>
+                            <strong>
+                                <?php echo htmlspecialchars(
+                                    $sucursal_nombre,
+                                    ENT_QUOTES,
+                                    'UTF-8'
+                                ); ?>
+                            </strong>
+
+                            <small>
+                                <?php echo htmlspecialchars(
+                                    $vista_global
+                                        ? $total_sedes . ($total_sedes === 1 ? ' sede consolidada' : ' sedes consolidadas')
+                                        : ($sucursal_clave !== '' ? $sucursal_clave : 'Sucursal activa'),
+                                    ENT_QUOTES,
+                                    'UTF-8'
+                                ); ?>
+                            </small>
+                        </span>
+                    </span>
+
+                    <span class="results-chip">
+                        <i class="fas fa-list-check"></i>
+                        <strong>
+                            <?php echo number_format($total_registros); ?>
+                        </strong>
+                        <span>movimientos</span>
+                    </span>
+                </div>
             </header>
 
             <section class="stats-grid" aria-label="Resumen de movimientos">
@@ -277,6 +589,12 @@ function tipoMovimientoMeta(string $tipo): array
 
                 <div class="filter-body">
                     <form method="GET" id="filtrosForm" autocomplete="off">
+                        <input
+                            type="hidden"
+                            name="vista"
+                            id="vistaStock"
+                            value="<?php echo $vista_global ? 'global' : 'sucursal'; ?>"
+                        >
                         <div class="filters-grid">
                             <div class="field-group search-field">
                                 <label class="field-label" for="busquedaInput">Buscar producto o motivo</label>
@@ -287,7 +605,7 @@ function tipoMovimientoMeta(string $tipo): array
                                         name="busqueda"
                                         id="busquedaInput"
                                         class="filter-control has-icon filter-input"
-                                        placeholder="Nombre, motivo u observación..."
+                                        placeholder="<?php echo $vista_global ? 'Producto, sede, motivo u observación...' : 'Nombre, motivo u observación...'; ?>"
                                         value="<?php echo htmlspecialchars($busqueda, ENT_QUOTES, 'UTF-8'); ?>"
                                     >
                                 </div>
@@ -352,10 +670,13 @@ function tipoMovimientoMeta(string $tipo): array
 
                 <?php if ($movimientos): ?>
                     <div class="stock-table-wrap">
-                        <table class="stock-table" aria-label="Historial de movimientos de stock">
+                        <table class="stock-table <?php echo $vista_global ? 'is-global' : ''; ?>" aria-label="Historial de movimientos de stock">
                             <thead>
                                 <tr>
                                     <th class="col-date">Fecha y hora</th>
+                                    <?php if ($vista_global): ?>
+                                        <th class="col-branch">Sucursal</th>
+                                    <?php endif; ?>
                                     <th class="col-product">Producto</th>
                                     <th class="col-type">Tipo</th>
                                     <th class="col-qty">Cantidad</th>
@@ -380,6 +701,42 @@ function tipoMovimientoMeta(string $tipo): array
                                             <span><?php echo date('H:i:s', $fechaTimestamp); ?></span>
                                         </span>
                                     </td>
+
+                                    <?php if ($vista_global): ?>
+                                        <td data-label="Sucursal" class="col-branch">
+                                            <span class="stock-branch-badge">
+                                                <i class="fas fa-building"></i>
+
+                                                <span>
+                                                    <strong>
+                                                        <?php echo htmlspecialchars(
+                                                            (string) (
+                                                                $mov['sucursal_nombre']
+                                                                ?? 'Sin sucursal'
+                                                            ),
+                                                            ENT_QUOTES,
+                                                            'UTF-8'
+                                                        ); ?>
+                                                    </strong>
+
+                                                    <small>
+                                                        <?php echo htmlspecialchars(
+                                                            (string) (
+                                                                $mov['sucursal_clave']
+                                                                ?? ''
+                                                            ),
+                                                            ENT_QUOTES,
+                                                            'UTF-8'
+                                                        ); ?>
+
+                                                        <?php if ((int) ($mov['sucursal_es_matriz'] ?? 0) === 1): ?>
+                                                            · Matriz
+                                                        <?php endif; ?>
+                                                    </small>
+                                                </span>
+                                            </span>
+                                        </td>
+                                    <?php endif; ?>
                                     <td data-label="Producto" class="col-product">
                                         <span class="product-name"><?php echo htmlspecialchars((string) $mov['producto_nombre'], ENT_QUOTES, 'UTF-8'); ?></span>
                                     </td>
@@ -492,6 +849,7 @@ $(function () {
 
     function getCurrentFilters() {
         return {
+            vista: $('#vistaStock').val() || 'sucursal',
             busqueda: $('#busquedaInput').val().trim(),
             tipo: $('#tipoSelect').val(),
             fechaDesde: $('#fechaDesde').val(),
@@ -504,6 +862,7 @@ $(function () {
         const filters = getCurrentFilters();
         const params = new URLSearchParams();
 
+        params.set('vista', filters.vista);
         if (filters.busqueda) params.set('busqueda', filters.busqueda);
         if (filters.tipo && filters.tipo !== 'todos') params.set('tipo', filters.tipo);
         if (filters.fechaDesde) params.set('fecha_desde', filters.fechaDesde);
@@ -529,7 +888,8 @@ $(function () {
     });
 
     $('#borrarFiltrosBtn').on('click', function () {
-        window.location.href = '?pagina=1&limite=20';
+        const vista = $('#vistaStock').val() || 'sucursal';
+        window.location.href = 'historial_stock.php?vista=' + encodeURIComponent(vista) + '&pagina=1&limite=20';
     });
 
     $('#pagination').on('click', 'a.page-link', function (event) {

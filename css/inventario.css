@@ -648,3 +648,209 @@ body {
         width: 100%;
     }
 }
+
+/* Inventario multisucursal: estilos adicionales y aislados. */
+
+.inventory-context-header {
+    gap: 18px;
+}
+
+.inventory-header-actions {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+.inventory-context-badge {
+    min-width: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    padding: 8px 11px;
+    border: 1px solid #dbeafe;
+    border-radius: 11px;
+    background: #eff6ff;
+    color: #1e3a8a;
+}
+
+.inventory-context-badge.global {
+    border-color: #bbf7d0;
+    background: #f0fdf4;
+    color: #047857;
+}
+
+.inventory-context-badge > i {
+    width: 29px;
+    height: 29px;
+    display: grid;
+    place-items: center;
+    flex: 0 0 29px;
+    border-radius: 8px;
+    background: rgba(37, 99, 235, .11);
+}
+
+.inventory-context-badge.global > i {
+    background: rgba(16, 185, 129, .13);
+}
+
+.inventory-context-badge span {
+    min-width: 0;
+    display: block;
+}
+
+.inventory-context-badge strong,
+.inventory-context-badge small {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.inventory-context-badge strong {
+    font-size: .76rem;
+    font-weight: 850;
+    line-height: 1.2;
+}
+
+.inventory-context-badge small {
+    margin-top: 2px;
+    color: #64748b;
+    font-size: .62rem;
+    font-weight: 700;
+    line-height: 1.2;
+}
+
+.inventory-card.is-global .inventory-card-prices strong {
+    font-size: .82rem;
+    line-height: 1.25;
+}
+
+.inventory-card.is-global .inventory-card-stockline > div:last-child strong {
+    color: #1e3a8a;
+}
+
+.inventory-card-coverage {
+    min-height: 30px;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-top: 8px;
+    padding: 6px 8px;
+    border: 1px solid #dbeafe;
+    border-radius: 8px;
+    background: #f8fbff;
+    color: #1d4ed8;
+    font-size: .69rem;
+    font-weight: 800;
+}
+
+.inventory-card-coverage i {
+    flex: 0 0 auto;
+}
+
+@media (max-width: 900px) {
+    .inventory-context-header {
+        align-items: flex-start !important;
+    }
+
+    .inventory-header-actions {
+        width: 100%;
+        justify-content: space-between;
+    }
+
+    .inventory-context-badge {
+        max-width: calc(100% - 98px);
+    }
+}
+
+@media (max-width: 560px) {
+    .inventory-header-actions {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .inventory-context-badge {
+        width: 100%;
+        max-width: none;
+    }
+
+    .inventory-catalog-total {
+        align-self: flex-start;
+    }
+}
+
+
+/* CORRECCIÓN FINAL DE TARJETAS DEL INVENTARIO */
+
+.inventory-grid {
+    align-items: stretch !important;
+    grid-auto-flow: row !important;
+}
+
+.inventory-grid > .inventory-card {
+    grid-column: auto !important;
+    grid-row: auto !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    height: auto !important;
+    min-height: 176px !important;
+    align-self: stretch !important;
+}
+
+.inventory-grid > .inventory-card .inventory-card-body {
+    min-width: 0 !important;
+    overflow: hidden !important;
+}
+
+.inventory-grid > .inventory-card .inventory-card-prices,
+.inventory-grid > .inventory-card .inventory-card-stockline {
+    width: 100% !important;
+    min-width: 0 !important;
+}
+
+.inventory-grid > .inventory-card .inventory-card-prices > div,
+.inventory-grid > .inventory-card .inventory-card-stockline > div {
+    min-width: 0 !important;
+    width: auto !important;
+}
+
+@media (min-width: 1700px) {
+    .inventory-grid {
+        grid-template-columns:
+            repeat(5, minmax(0, 1fr)) !important;
+    }
+}
+
+@media (min-width: 1451px) and (max-width: 1699px) {
+    .inventory-grid {
+        grid-template-columns:
+            repeat(4, minmax(0, 1fr)) !important;
+    }
+}
+
+@media (min-width: 1051px) and (max-width: 1450px) {
+    .inventory-grid {
+        grid-template-columns:
+            repeat(3, minmax(0, 1fr)) !important;
+    }
+}
+
+@media (min-width: 621px) and (max-width: 1050px) {
+    .inventory-grid {
+        grid-template-columns:
+            repeat(2, minmax(0, 1fr)) !important;
+    }
+}
+
+@media (max-width: 620px) {
+    .inventory-grid {
+        grid-template-columns:
+            minmax(0, 1fr) !important;
+    }
+
+    .inventory-grid > .inventory-card {
+        min-height: 164px !important;
+    }
+}

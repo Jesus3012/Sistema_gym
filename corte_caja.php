@@ -3,6 +3,7 @@
 require_once __DIR__ . '/includes/auth_guard.php';
 require_once __DIR__ . '/config/database.php';
 require_once __DIR__ . '/includes/caja_helper.php';
+require_once __DIR__ . '/includes/sucursal_context.php';
 
 date_default_timezone_set('America/Mexico_City');
 
@@ -27,6 +28,82 @@ if (!$conn instanceof mysqli) {
 }
 
 $conn->set_charset('utf8mb4');
+
+$usuarioRolBase = strtolower(trim((string) (
+    $_SESSION['user_rol_base'] ?? $usuarioRol
+)));
+
+$esAdministradorCaja = in_array(
+    $usuarioRolBase,
+    array('admin', 'administrador'),
+    true
+);
+
+try {
+    $sucursalActiva = function_exists('sucursal_inicializar_sesion')
+        ? sucursal_inicializar_sesion($conn)
+        : null;
+} catch (Throwable $errorSucursal) {
+    die(htmlspecialchars($errorSucursal->getMessage(), ENT_QUOTES, 'UTF-8'));
+}
+
+$vistaSolicitadaCaja = strtolower(trim((string) (
+    $_GET['vista'] ?? ''
+)));
+
+if (
+    $esAdministradorCaja
+    && $vistaSolicitadaCaja === 'global'
+    && function_exists('sucursal_activar_vista_global')
+) {
+    sucursal_activar_vista_global($conn, $usuarioId);
+}
+
+if (
+    $vistaSolicitadaCaja === 'sucursal'
+    && function_exists('sucursal_desactivar_vista_global')
+) {
+    sucursal_desactivar_vista_global();
+}
+
+$vistaGlobalCaja = $esAdministradorCaja
+    && function_exists('sucursal_dashboard_vista_global')
+    && sucursal_dashboard_vista_global();
+
+$sucursalId = (int) ($_SESSION['sucursal_id'] ?? 0);
+
+if (!$vistaGlobalCaja) {
+    if (
+        function_exists('sucursal_buscar_asignada')
+        && $sucursalId > 0
+    ) {
+        $sucursalActiva = sucursal_buscar_asignada(
+            $conn,
+            $usuarioId,
+            $sucursalId
+        );
+    }
+
+    if (!is_array($sucursalActiva)) {
+        die('No existe una sucursal operativa seleccionada.');
+    }
+
+    $zonaCaja = trim((string) (
+        $sucursalActiva['zona_horaria']
+        ?? 'America/Mexico_City'
+    ));
+
+    if ($zonaCaja !== '') {
+        date_default_timezone_set($zonaCaja);
+    }
+}
+
+$puedeOperarCajaSucursal = !$vistaGlobalCaja
+    && is_array($sucursalActiva)
+    && (
+        $esAdministradorCaja
+        || (int) ($sucursalActiva['puede_operar_caja'] ?? 0) === 1
+    );
 
 if (empty($_SESSION['csrf_corte_caja'])) {
     $_SESSION['csrf_corte_caja'] = bin2hex(random_bytes(32));
@@ -126,75 +203,145 @@ function paginasCorteCaja($paginaActual, $totalPaginas) {
     return $paginas;
 }
 
-function contarCortesCerradosPaginados($conn, $usuarioId, $esAdmin) {
-    if ($esAdmin) {
-        $resultado = $conn->query("SELECT COUNT(*) AS total FROM cajas WHERE estado = 'cerrada'");
+function contarCortesCerradosPaginados(
+    $conn,
+    $usuarioId,
+    $esAdmin,
+    $sucursalId,
+    $vistaGlobal
+) {
+    if ($esAdmin && $vistaGlobal) {
+        $resultado = $conn->query(
+            "SELECT COUNT(*) AS total
+             FROM cajas
+             WHERE estado = 'cerrada'"
+        );
+
         if (!$resultado) {
-            throw new RuntimeException('No fue posible contar el historial de cortes.');
+            throw new RuntimeException(
+                'No fue posible contar el historial de cortes.'
+            );
         }
+
         return (int) $resultado->fetch_assoc()['total'];
     }
 
-    $stmt = $conn->prepare(
-        "SELECT COUNT(*) AS total
-         FROM cajas
-         WHERE estado = 'cerrada'
-           AND usuario_apertura_id = ?"
-    );
-
-    if (!$stmt) {
-        throw new RuntimeException('No fue posible preparar el conteo del historial.');
+    if ($esAdmin) {
+        $stmt = $conn->prepare(
+            "SELECT COUNT(*) AS total
+             FROM cajas
+             WHERE estado = 'cerrada'
+               AND sucursal_id = ?"
+        );
+        $stmt->bind_param('i', $sucursalId);
+    } else {
+        $stmt = $conn->prepare(
+            "SELECT COUNT(*) AS total
+             FROM cajas
+             WHERE estado = 'cerrada'
+               AND sucursal_id = ?
+               AND usuario_apertura_id = ?"
+        );
+        $stmt->bind_param(
+            'ii',
+            $sucursalId,
+            $usuarioId
+        );
     }
 
-    $stmt->bind_param('i', $usuarioId);
+    if (!$stmt) {
+        throw new RuntimeException(
+            'No fue posible preparar el conteo del historial.'
+        );
+    }
+
     $stmt->execute();
     $resultado = $stmt->get_result();
-    $total = $resultado ? (int) $resultado->fetch_assoc()['total'] : 0;
+    $total = $resultado
+        ? (int) $resultado->fetch_assoc()['total']
+        : 0;
     $stmt->close();
 
     return $total;
 }
 
-function listarCortesCerradosPaginados($conn, $usuarioId, $esAdmin, $limite, $offset) {
+function listarCortesCerradosPaginados(
+    $conn,
+    $usuarioId,
+    $esAdmin,
+    $sucursalId,
+    $vistaGlobal,
+    $limite,
+    $offset
+) {
     $limite = max(1, (int) $limite);
     $offset = max(0, (int) $offset);
 
-    $seleccion = "SELECT c.*, COALESCE(u.nombre, 'Usuario no disponible') AS usuario_apertura
+    $seleccion = "SELECT c.*,
+                         COALESCE(
+                             u.nombre,
+                             'Usuario no disponible'
+                         ) AS usuario_apertura,
+                         s.nombre AS sucursal_nombre,
+                         s.clave AS sucursal_clave,
+                         s.es_matriz AS sucursal_es_matriz
                   FROM cajas c
-                  LEFT JOIN usuarios u ON u.id = c.usuario_apertura_id";
+                  LEFT JOIN usuarios u
+                      ON u.id = c.usuario_apertura_id
+                  INNER JOIN sucursales s
+                      ON s.id = c.sucursal_id";
 
-    if ($esAdmin) {
+    if ($esAdmin && $vistaGlobal) {
         $stmt = $conn->prepare(
             $seleccion . "
              WHERE c.estado = 'cerrada'
              ORDER BY c.fecha_cierre DESC, c.id DESC
              LIMIT ? OFFSET ?"
         );
-
-        if (!$stmt) {
-            throw new RuntimeException('No fue posible preparar el historial de cortes.');
-        }
-
         $stmt->bind_param('ii', $limite, $offset);
+    } elseif ($esAdmin) {
+        $stmt = $conn->prepare(
+            $seleccion . "
+             WHERE c.estado = 'cerrada'
+               AND c.sucursal_id = ?
+             ORDER BY c.fecha_cierre DESC, c.id DESC
+             LIMIT ? OFFSET ?"
+        );
+        $stmt->bind_param(
+            'iii',
+            $sucursalId,
+            $limite,
+            $offset
+        );
     } else {
         $stmt = $conn->prepare(
             $seleccion . "
              WHERE c.estado = 'cerrada'
+               AND c.sucursal_id = ?
                AND c.usuario_apertura_id = ?
              ORDER BY c.fecha_cierre DESC, c.id DESC
              LIMIT ? OFFSET ?"
         );
+        $stmt->bind_param(
+            'iiii',
+            $sucursalId,
+            $usuarioId,
+            $limite,
+            $offset
+        );
+    }
 
-        if (!$stmt) {
-            throw new RuntimeException('No fue posible preparar el historial de cortes.');
-        }
-
-        $stmt->bind_param('iii', $usuarioId, $limite, $offset);
+    if (!$stmt) {
+        throw new RuntimeException(
+            'No fue posible preparar el historial de cortes.'
+        );
     }
 
     $stmt->execute();
     $resultado = $stmt->get_result();
-    $filas = $resultado ? $resultado->fetch_all(MYSQLI_ASSOC) : array();
+    $filas = $resultado
+        ? $resultado->fetch_all(MYSQLI_ASSOC)
+        : array();
     $stmt->close();
 
     return $filas;
@@ -209,6 +356,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $accion = trim((string) ($_POST['accion'] ?? ''));
 
+        if ($vistaGlobalCaja) {
+            throw new RuntimeException(
+                'Selecciona una sucursal concreta antes de operar una caja.'
+            );
+        }
+
+        if (!$puedeOperarCajaSucursal) {
+            throw new RuntimeException(
+                'No tienes autorización para operar caja en esta sucursal.'
+            );
+        }
+
         if ($accion === 'abrir_caja') {
             $montoInicial = validarMontoCaja((string) ($_POST['monto_inicial'] ?? ''), true);
             $observaciones = trim((string) ($_POST['observaciones_apertura'] ?? ''));
@@ -219,31 +378,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             $conn->begin_transaction();
 
-            $cajaExistente = obtenerCajaAbierta($conn, $usuarioId, true);
+            $cajaExistente = obtenerCajaAbierta($conn, $usuarioId, $sucursalId, true);
             if ($cajaExistente) {
                 throw new RuntimeException('Ya tienes una caja abierta con folio ' . $cajaExistente['folio'] . '.');
             }
 
             $stmt = $conn->prepare(
                 "INSERT INTO cajas (
+                    sucursal_id,
                     usuario_apertura_id,
                     fecha_apertura,
                     monto_inicial,
                     estado,
                     observaciones_apertura
-                ) VALUES (?, NOW(), ?, 'abierta', ?)"
+                ) VALUES (?, ?, NOW(), ?, 'abierta', ?)"
             );
 
             if (!$stmt) {
                 throw new RuntimeException('No se pudo preparar la apertura de caja.');
             }
 
-            $stmt->bind_param('ids', $usuarioId, $montoInicial, $observaciones);
+            $stmt->bind_param('iids', $sucursalId, $usuarioId, $montoInicial, $observaciones);
             $stmt->execute();
             $cajaId = (int) $conn->insert_id;
             $stmt->close();
 
-            $folio = 'CAJ-' . date('Ymd') . '-' . str_pad((string) $cajaId, 6, '0', STR_PAD_LEFT);
+            $claveFolio = preg_replace('/[^A-Z0-9]/', '', strtoupper((string) ($sucursalActiva['clave'] ?? 'SUC')));
+            $folio = 'CAJ-' . $claveFolio . '-' . date('Ymd') . '-' . str_pad((string) $cajaId, 6, '0', STR_PAD_LEFT);
             $stmt = $conn->prepare("UPDATE cajas SET folio = ? WHERE id = ?");
             $stmt->bind_param('si', $folio, $cajaId);
             $stmt->execute();
@@ -259,7 +420,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         if ($accion === 'movimiento_manual') {
-            $caja = obtenerCajaAbierta($conn, $usuarioId);
+            $caja = obtenerCajaAbierta($conn, $usuarioId, $sucursalId);
             if (!$caja) {
                 throw new RuntimeException('Primero debes abrir una caja.');
             }
@@ -310,7 +471,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             $conn->begin_transaction();
 
-            $caja = obtenerCajaAbierta($conn, $usuarioId, true);
+            $caja = obtenerCajaAbierta($conn, $usuarioId, $sucursalId, true);
             if (!$caja) {
                 throw new RuntimeException('No tienes una caja abierta para cerrar.');
             }
@@ -375,6 +536,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         observaciones_cierre = ?,
                         estado = 'cerrada'
                     WHERE id = ?
+                      AND sucursal_id = ?
                       AND estado = 'abierta'";
 
             $stmt = $conn->prepare($sql);
@@ -383,7 +545,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             $stmt->bind_param(
-                'dddddddddddddddddiiiissi',
+                'dddddddddddddddddiiiissii',
                 $ventasEfectivo,
                 $ventasTarjeta,
                 $ventasTransferencia,
@@ -407,7 +569,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $usuarioId,
                 $fechaCierre,
                 $observaciones,
-                $cajaId
+                $cajaId,
+                $sucursalId
             );
             $stmt->execute();
 
@@ -429,7 +592,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ],
             ];
 
-            header('Location: corte_caja_detalle.php?id=' . $cajaId . '&cerrada=1');
+            header('Location: corte_caja_detalle.php?id=' . $cajaId . '&cerrada=1&vista=sucursal');
             exit();
         }
 
@@ -462,7 +625,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $flash = $_SESSION['caja_flash'] ?? null;
 unset($_SESSION['caja_flash']);
 
-$cajaAbierta = obtenerCajaAbierta($conn, $usuarioId);
+$cajaAbierta = $vistaGlobalCaja
+    ? null
+    : obtenerCajaAbierta($conn, $usuarioId, $sucursalId);
 $resumen = null;
 $operaciones = array();
 $totalOperaciones = 0;
@@ -498,8 +663,13 @@ $paginaCortes = max(1, (int) (isset($_GET['pagina_cortes']) ? $_GET['pagina_cort
 $porPaginaCortes = 8;
 
 try {
-    $esAdministradorCaja = $usuarioRol === 'admin';
-    $totalCortes = contarCortesCerradosPaginados($conn, $usuarioId, $esAdministradorCaja);
+    $totalCortes = contarCortesCerradosPaginados(
+        $conn,
+        $usuarioId,
+        $esAdministradorCaja,
+        $sucursalId,
+        $vistaGlobalCaja
+    );
     $totalPaginasCortes = max(1, (int) ceil($totalCortes / $porPaginaCortes));
     $paginaCortes = min($paginaCortes, $totalPaginasCortes);
     $offsetCortes = ($paginaCortes - 1) * $porPaginaCortes;
@@ -507,6 +677,8 @@ try {
         $conn,
         $usuarioId,
         $esAdministradorCaja,
+        $sucursalId,
+        $vistaGlobalCaja,
         $porPaginaCortes,
         $offsetCortes
     );
@@ -527,6 +699,7 @@ try {
     >
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <link rel="stylesheet" href="css/corte_caja.css?v=<?= is_file(__DIR__ . '/css/corte_caja.css') ? filemtime(__DIR__ . '/css/corte_caja.css') : '1' ?>">
+    <link rel="stylesheet" href="css/corte_caja_multisucursal.css?v=<?= is_file(__DIR__ . '/css/corte_caja_multisucursal.css') ? filemtime(__DIR__ . '/css/corte_caja_multisucursal.css') : '1' ?>">
 </head>
 <body>
 <?php require_once __DIR__ . '/includes/sidebar.php'; ?>
@@ -535,18 +708,60 @@ try {
     <div class="caja-shell">
         <header class="caja-topbar">
             <div class="caja-heading">
-                <span class="caja-eyebrow"><i class="fas fa-cash-register"></i> Control de efectivo</span>
                 <h1>Corte de Caja</h1>
                 <p>Administra la apertura, los movimientos y el cierre de cada turno.</p>
             </div>
 
-            <span class="caja-status <?= $cajaAbierta ? 'abierta' : 'cerrada' ?>">
-                <span class="caja-status-dot"></span>
-                <?= $cajaAbierta ? 'Caja abierta' : 'Sin caja abierta' ?>
-            </span>
+            <div class="caja-topbar-context">
+                <span class="caja-branch-badge <?= $vistaGlobalCaja ? 'global' : '' ?>">
+                    <i class="fas <?= $vistaGlobalCaja ? 'fa-chart-pie' : 'fa-building' ?>"></i>
+                    <?= hCaja(
+                        $vistaGlobalCaja
+                            ? 'Todas las sucursales'
+                            : ($sucursalActiva['nombre'] ?? 'Sucursal')
+                    ) ?>
+                </span>
+
+                <span class="caja-status <?= $vistaGlobalCaja ? 'global' : ($cajaAbierta ? 'abierta' : 'cerrada') ?>">
+                    <span class="caja-status-dot"></span>
+                    <?= $vistaGlobalCaja
+                        ? 'Vista consolidada'
+                        : ($cajaAbierta ? 'Caja abierta' : 'Sin caja abierta') ?>
+                </span>
+            </div>
         </header>
 
-        <?php if (!$cajaAbierta): ?>
+        <?php if ($vistaGlobalCaja): ?>
+            <section class="caja-global-view caja-card">
+                <span class="caja-global-view-icon">
+                    <i class="fas fa-building-circle-check"></i>
+                </span>
+
+                <div>
+                    <span class="caja-global-view-kicker">Consulta consolidada</span>
+                    <h2>Cortes de todas las sucursales</h2>
+                    <p>
+                        Esta vista es únicamente informativa. Selecciona una sucursal
+                        concreta desde el menú lateral para abrir, mover o cerrar una caja.
+                    </p>
+                </div>
+            </section>
+        <?php elseif (!$puedeOperarCajaSucursal): ?>
+            <section class="caja-global-view caja-card is-warning">
+                <span class="caja-global-view-icon">
+                    <i class="fas fa-user-lock"></i>
+                </span>
+
+                <div>
+                    <span class="caja-global-view-kicker">Operación restringida</span>
+                    <h2>No puedes operar caja en esta sucursal</h2>
+                    <p>
+                        Puedes consultar el historial disponible, pero la apertura,
+                        los movimientos y el cierre están deshabilitados para tu asignación.
+                    </p>
+                </div>
+            </section>
+        <?php elseif (!$cajaAbierta): ?>
             <section class="caja-open-layout">
                 <article class="caja-card caja-open-panel">
                     <div class="caja-open-hero">
@@ -842,7 +1057,7 @@ try {
             <div class="caja-card-head caja-history-head">
                 <div>
                     <h2><i class="fas fa-box-archive"></i> Historial de cortes</h2>
-                    <p>Consulta las cajas cerradas y revisa sus importes principales.</p>
+                    <p><?= hCaja($vistaGlobalCaja ? 'Consulta consolidada por sucursal.' : 'Cajas cerradas de la sucursal seleccionada.') ?></p>
                 </div>
                 <span class="caja-head-badge"><?= (int) $totalCortes ?> cortes</span>
             </div>
@@ -861,6 +1076,7 @@ try {
                         <thead>
                         <tr>
                             <th>Folio</th>
+                            <th>Sucursal</th>
                             <th>Responsable</th>
                             <th>Apertura</th>
                             <th>Cierre</th>
@@ -888,6 +1104,14 @@ try {
                                 <td data-label="Folio">
                                     <span class="caja-history-folio">
                                         <?= hCaja($corte['folio']) ?>
+                                    </span>
+                                </td>
+
+                                <td data-label="Sucursal">
+                                    <span class="caja-branch-table-pill">
+                                        <i class="fas fa-building"></i>
+                                        <?= hCaja($corte['sucursal_nombre']) ?>
+                                        <small><?= hCaja($corte['sucursal_clave']) ?></small>
                                     </span>
                                 </td>
 
@@ -929,7 +1153,7 @@ try {
                                 <td data-label="Acciones">
                                     <a
                                         class="caja-btn caja-btn-soft caja-history-action"
-                                        href="corte_caja_detalle.php?id=<?= (int) $corte['id'] ?>"
+                                        href="corte_caja_detalle.php?id=<?= (int) $corte['id'] ?>&vista=<?= $vistaGlobalCaja ? 'global' : 'sucursal' ?>"
                                     >
                                         Ver detalle
                                         <i class="fas fa-arrow-right"></i>

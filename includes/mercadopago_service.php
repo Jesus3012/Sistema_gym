@@ -275,6 +275,16 @@ function mp_validate_paid_order_for_sale(
 
     $local = mp_get_local_operation($conn, $orderId, true);
 
+    $sucursalSesion = (int) ($_SESSION['sucursal_id'] ?? 0);
+    if (
+        $sucursalSesion <= 0
+        || (int) ($local['sucursal_id'] ?? 0) !== $sucursalSesion
+    ) {
+        throw new RuntimeException(
+            'La orden de Mercado Pago pertenece a otra sucursal.'
+        );
+    }
+
     if (!empty($local['venta_id'])) {
         throw new RuntimeException(
             'Esta orden de Mercado Pago ya fue vinculada a la venta #' .
@@ -366,6 +376,7 @@ function mp_refund_sale_if_needed(
 ): ?array {
     $sql = "SELECT
                 v.id,
+                v.sucursal_id AS venta_sucursal_id,
                 v.metodo_pago,
                 v.total,
                 m.id AS mp_operacion_id,
@@ -395,6 +406,16 @@ function mp_refund_sale_if_needed(
 
     if ($row['metodo_pago'] !== 'tarjeta') {
         return null;
+    }
+
+    if (
+        (int) ($row['venta_sucursal_id'] ?? 0) <= 0
+        || (int) ($row['venta_sucursal_id'] ?? 0)
+            !== (int) ($row['mp_sucursal_id'] ?? 0)
+    ) {
+        throw new RuntimeException(
+            'La venta y la operación de Mercado Pago pertenecen a sucursales distintas.'
+        );
     }
 
     if (empty($row['order_id']) || empty($row['payment_id'])) {

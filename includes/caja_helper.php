@@ -96,6 +96,7 @@ function cajaResolverFuenteMembresias($conn) {
             'monto' => $columnas['monto'],
             'metodo_pago' => $columnas['metodo_pago'],
             'usuario_id' => $columnas['usuario_id'],
+            'sucursal_id' => isset($columnas['sucursal_id']) ? $columnas['sucursal_id'] : null,
             'fecha' => $columnaFecha,
             'estado' => isset($columnas['estado']) ? $columnas['estado'] : null,
             'cliente_id' => isset($columnas['cliente_id']) ? $columnas['cliente_id'] : null,
@@ -129,11 +130,43 @@ function cajaEjecutarConParametros($stmt, $tipos, $valores) {
 /**
  * Devuelve la caja abierta del usuario, si existe.
  */
-function obtenerCajaAbierta($conn, $usuarioId, $forUpdate = false) {
-    $sql = "SELECT c.*, u.nombre AS usuario_apertura
+function obtenerCajaAbierta(
+    $conn,
+    $usuarioId,
+    $sucursalId = null,
+    $forUpdate = false
+) {
+    /*
+     * Compatibilidad con llamadas antiguas:
+     * obtenerCajaAbierta($conn, $usuarioId, true)
+     */
+    if (is_bool($sucursalId)) {
+        $forUpdate = $sucursalId;
+        $sucursalId = null;
+    }
+
+    if ($sucursalId === null) {
+        $sucursalId = (int) ($_SESSION['sucursal_id'] ?? 0);
+    }
+
+    $sucursalId = (int) $sucursalId;
+
+    if ($sucursalId <= 0) {
+        return null;
+    }
+
+    $sql = "SELECT c.*,
+                   u.nombre AS usuario_apertura,
+                   s.nombre AS sucursal_nombre,
+                   s.clave AS sucursal_clave,
+                   s.es_matriz AS sucursal_es_matriz
             FROM cajas c
-            INNER JOIN usuarios u ON u.id = c.usuario_apertura_id
+            INNER JOIN usuarios u
+                ON u.id = c.usuario_apertura_id
+            INNER JOIN sucursales s
+                ON s.id = c.sucursal_id
             WHERE c.usuario_apertura_id = ?
+              AND c.sucursal_id = ?
               AND c.estado = 'abierta'
             ORDER BY c.id DESC
             LIMIT 1";
@@ -143,11 +176,14 @@ function obtenerCajaAbierta($conn, $usuarioId, $forUpdate = false) {
     }
 
     $stmt = $conn->prepare($sql);
+
     if (!$stmt) {
-        throw new RuntimeException('No se pudo preparar la consulta de caja abierta.');
+        throw new RuntimeException(
+            'No se pudo preparar la consulta de caja abierta.'
+        );
     }
 
-    $stmt->bind_param('i', $usuarioId);
+    $stmt->bind_param('ii', $usuarioId, $sucursalId);
     $stmt->execute();
     $resultado = $stmt->get_result();
     $caja = $resultado->fetch_assoc();
@@ -162,16 +198,31 @@ function obtenerCajaAbierta($conn, $usuarioId, $forUpdate = false) {
 function obtenerCajaPorId($conn, $cajaId) {
     $sql = "SELECT c.*,
                    ua.nombre AS usuario_apertura,
-                   uc.nombre AS usuario_cierre
+                   uc.nombre AS usuario_cierre,
+                   s.nombre AS sucursal_nombre,
+                   s.clave AS sucursal_clave,
+                   s.telefono AS sucursal_telefono,
+                   s.email AS sucursal_email,
+                   s.direccion AS sucursal_direccion,
+                   s.logo AS sucursal_logo,
+                   s.zona_horaria AS sucursal_zona_horaria,
+                   s.es_matriz AS sucursal_es_matriz
             FROM cajas c
-            INNER JOIN usuarios ua ON ua.id = c.usuario_apertura_id
-            LEFT JOIN usuarios uc ON uc.id = c.usuario_cierre_id
+            INNER JOIN usuarios ua
+                ON ua.id = c.usuario_apertura_id
+            LEFT JOIN usuarios uc
+                ON uc.id = c.usuario_cierre_id
+            INNER JOIN sucursales s
+                ON s.id = c.sucursal_id
             WHERE c.id = ?
             LIMIT 1";
 
     $stmt = $conn->prepare($sql);
+
     if (!$stmt) {
-        throw new RuntimeException('No se pudo preparar la consulta del corte.');
+        throw new RuntimeException(
+            'No se pudo preparar la consulta del corte.'
+        );
     }
 
     $stmt->bind_param('i', $cajaId);
@@ -196,6 +247,7 @@ function obtenerCajaPorId($conn, $cajaId) {
  */
 function resumenVentasCaja(
     $conn,
+    $sucursalId,
     $usuarioId,
     $fechaInicio,
     $fechaFin
@@ -255,12 +307,16 @@ function resumenVentasCaja(
                             END
                         ) AS total_devuelto
                     FROM ventas_modificaciones
-                    WHERE tipo_modificacion IN ('cancelacion', 'devolucion_parcial')
+                    WHERE tipo_modificacion IN (
+                        'cancelacion',
+                        'devolucion_parcial'
+                    )
                       AND fecha_modificacion <= ?
                     GROUP BY venta_id
                 ) dev ON dev.venta_id = v.id
                 WHERE v.fecha_venta >= ?
                   AND v.fecha_venta <= ?
+                  AND v.sucursal_id = ?
                   AND v.estado <> 'pendiente'
                   AND (
                         v.usuario_id = ?
@@ -271,7 +327,10 @@ function resumenVentasCaja(
                               AND vm_rel.usuario_id = ?
                               AND vm_rel.fecha_modificacion >= ?
                               AND vm_rel.fecha_modificacion <= ?
-                              AND vm_rel.tipo_modificacion IN ('cancelacion', 'devolucion_parcial')
+                              AND vm_rel.tipo_modificacion IN (
+                                  'cancelacion',
+                                  'devolucion_parcial'
+                              )
                         )
                   )
             ) ventas_turno";
@@ -280,15 +339,17 @@ function resumenVentasCaja(
 
     if (!$stmt) {
         throw new RuntimeException(
-            'No se pudo consultar las ventas del corte. Detalle MySQL: ' . $conn->error
+            'No se pudo consultar las ventas del corte. Detalle MySQL: ' .
+            $conn->error
         );
     }
 
     $stmt->bind_param(
-        'sssiiss',
+        'sssiiiss',
         $fechaFin,
         $fechaInicio,
         $fechaFin,
+        $sucursalId,
         $usuarioId,
         $usuarioId,
         $fechaInicio,
@@ -300,23 +361,19 @@ function resumenVentasCaja(
         $stmt->close();
 
         throw new RuntimeException(
-            'No se pudo ejecutar la consulta de ventas. Detalle MySQL: ' . $detalle
+            'No se pudo ejecutar la consulta de ventas. Detalle MySQL: ' .
+            $detalle
         );
     }
 
-    $fila = $stmt->get_result()->fetch_assoc();
-
-    if (!$fila) {
-        $fila = array();
-    }
-
+    $fila = $stmt->get_result()->fetch_assoc() ?: array();
     $stmt->close();
 
     return array(
-        'operaciones' => (int) (isset($fila['operaciones']) ? $fila['operaciones'] : 0),
-        'efectivo' => cajaMonto(isset($fila['efectivo']) ? $fila['efectivo'] : 0),
-        'tarjeta' => cajaMonto(isset($fila['tarjeta']) ? $fila['tarjeta'] : 0),
-        'transferencia' => cajaMonto(isset($fila['transferencia']) ? $fila['transferencia'] : 0),
+        'operaciones' => (int) ($fila['operaciones'] ?? 0),
+        'efectivo' => cajaMonto($fila['efectivo'] ?? 0),
+        'tarjeta' => cajaMonto($fila['tarjeta'] ?? 0),
+        'transferencia' => cajaMonto($fila['transferencia'] ?? 0),
     );
 }
 
@@ -326,20 +383,22 @@ function resumenVentasCaja(
  */
 function resumenMembresiasCaja(
     $conn,
+    $sucursalId,
     $usuarioId,
     $fechaInicio,
     $fechaFin
 ) {
     $fuente = cajaResolverFuenteMembresias($conn);
 
-    if ($fuente === null) {
+    if ($fuente === null || empty($fuente['sucursal_id'])) {
         return array(
             'operaciones' => 0,
             'efectivo' => 0.00,
             'tarjeta' => 0.00,
             'transferencia' => 0.00,
             'fuente' => null,
-            'advertencia' => 'No se encontró una tabla compatible para consultar pagos de membresías. Revisa pagos o historial_pagos.',
+            'advertencia' =>
+                'No se encontró una fuente de membresías compatible con sucursal_id.',
         );
     }
 
@@ -347,9 +406,11 @@ function resumenMembresiasCaja(
     $colMonto = cajaIdentificador($fuente['monto']);
     $colMetodo = cajaIdentificador($fuente['metodo_pago']);
     $colUsuario = cajaIdentificador($fuente['usuario_id']);
+    $colSucursal = cajaIdentificador($fuente['sucursal_id']);
     $colFecha = cajaIdentificador($fuente['fecha']);
 
     $condicionEstado = '';
+
     if (!empty($fuente['estado'])) {
         $colEstado = cajaIdentificador($fuente['estado']);
         $condicionEstado = " AND {$colEstado} = 'completado'";
@@ -357,42 +418,63 @@ function resumenMembresiasCaja(
 
     $sql = "SELECT
                 COUNT(*) AS operaciones,
-                COALESCE(SUM(CASE WHEN {$colMetodo} = 'efectivo' THEN {$colMonto} ELSE 0 END), 0) AS efectivo,
-                COALESCE(SUM(CASE WHEN {$colMetodo} = 'tarjeta' THEN {$colMonto} ELSE 0 END), 0) AS tarjeta,
-                COALESCE(SUM(CASE WHEN {$colMetodo} = 'transferencia' THEN {$colMonto} ELSE 0 END), 0) AS transferencia
+                COALESCE(SUM(CASE
+                    WHEN {$colMetodo} = 'efectivo'
+                        THEN {$colMonto}
+                    ELSE 0
+                END), 0) AS efectivo,
+                COALESCE(SUM(CASE
+                    WHEN {$colMetodo} = 'tarjeta'
+                        THEN {$colMonto}
+                    ELSE 0
+                END), 0) AS tarjeta,
+                COALESCE(SUM(CASE
+                    WHEN {$colMetodo} = 'transferencia'
+                        THEN {$colMonto}
+                    ELSE 0
+                END), 0) AS transferencia
             FROM {$tabla}
             WHERE {$colUsuario} = ?
+              AND {$colSucursal} = ?
               AND {$colFecha} >= ?
               AND {$colFecha} <= ?
               {$condicionEstado}";
 
     $stmt = $conn->prepare($sql);
+
     if (!$stmt) {
         throw new RuntimeException(
-            'No se pudo consultar los pagos de membresías. Detalle MySQL: ' . $conn->error
+            'No se pudo consultar los pagos de membresías. Detalle MySQL: ' .
+            $conn->error
         );
     }
 
-    $stmt->bind_param('iss', $usuarioId, $fechaInicio, $fechaFin);
+    $stmt->bind_param(
+        'iiss',
+        $usuarioId,
+        $sucursalId,
+        $fechaInicio,
+        $fechaFin
+    );
+
     if (!$stmt->execute()) {
         $detalle = $stmt->error;
         $stmt->close();
+
         throw new RuntimeException(
-            'No se pudo ejecutar la consulta de membresías. Detalle MySQL: ' . $detalle
+            'No se pudo ejecutar la consulta de membresías. Detalle MySQL: ' .
+            $detalle
         );
     }
 
-    $fila = $stmt->get_result()->fetch_assoc();
-    if (!$fila) {
-        $fila = array();
-    }
+    $fila = $stmt->get_result()->fetch_assoc() ?: array();
     $stmt->close();
 
     return array(
-        'operaciones' => (int) (isset($fila['operaciones']) ? $fila['operaciones'] : 0),
-        'efectivo' => cajaMonto(isset($fila['efectivo']) ? $fila['efectivo'] : 0),
-        'tarjeta' => cajaMonto(isset($fila['tarjeta']) ? $fila['tarjeta'] : 0),
-        'transferencia' => cajaMonto(isset($fila['transferencia']) ? $fila['transferencia'] : 0),
+        'operaciones' => (int) ($fila['operaciones'] ?? 0),
+        'efectivo' => cajaMonto($fila['efectivo'] ?? 0),
+        'tarjeta' => cajaMonto($fila['tarjeta'] ?? 0),
+        'transferencia' => cajaMonto($fila['transferencia'] ?? 0),
         'fuente' => $fuente['tabla'],
         'advertencia' => null,
     );
@@ -407,14 +489,11 @@ function resumenMembresiasCaja(
  */
 function resumenDevolucionesCaja(
     $conn,
+    $sucursalId,
     $usuarioId,
     $fechaInicio,
     $fechaFin
 ) {
-    /*
-     * La devolución se descuenta una sola vez, en el momento en que se realiza.
-     * Para cancelaciones sin monto_devuelto se usa el total original del ticket.
-     */
     $montoSql = "CASE
                     WHEN vm.monto_devuelto IS NOT NULL
                      AND vm.monto_devuelto > 0
@@ -442,7 +521,8 @@ function resumenDevolucionesCaja(
                     ELSE 0
                 END), 0) AS transferencia
             FROM ventas_modificaciones vm
-            INNER JOIN ventas v ON v.id = vm.venta_id
+            INNER JOIN ventas v
+                ON v.id = vm.venta_id
             LEFT JOIN (
                 SELECT venta_id, MAX(total) AS total_original
                 FROM tickets_venta
@@ -450,8 +530,12 @@ function resumenDevolucionesCaja(
             ) tv ON tv.venta_id = v.id
             WHERE vm.fecha_modificacion >= ?
               AND vm.fecha_modificacion <= ?
+              AND v.sucursal_id = ?
               AND v.estado <> 'pendiente'
-              AND vm.tipo_modificacion IN ('cancelacion', 'devolucion_parcial')
+              AND vm.tipo_modificacion IN (
+                  'cancelacion',
+                  'devolucion_parcial'
+              )
               AND (
                     v.usuario_id = ?
                     OR vm.usuario_id = ?
@@ -461,14 +545,16 @@ function resumenDevolucionesCaja(
 
     if (!$stmt) {
         throw new RuntimeException(
-            'No se pudo consultar las devoluciones del corte. Detalle MySQL: ' . $conn->error
+            'No se pudo consultar las devoluciones del corte. Detalle MySQL: ' .
+            $conn->error
         );
     }
 
     $stmt->bind_param(
-        'ssii',
+        'ssiii',
         $fechaInicio,
         $fechaFin,
+        $sucursalId,
         $usuarioId,
         $usuarioId
     );
@@ -478,23 +564,19 @@ function resumenDevolucionesCaja(
         $stmt->close();
 
         throw new RuntimeException(
-            'No se pudo ejecutar la consulta de devoluciones. Detalle MySQL: ' . $detalle
+            'No se pudo ejecutar la consulta de devoluciones. Detalle MySQL: ' .
+            $detalle
         );
     }
 
-    $fila = $stmt->get_result()->fetch_assoc();
-
-    if (!$fila) {
-        $fila = array();
-    }
-
+    $fila = $stmt->get_result()->fetch_assoc() ?: array();
     $stmt->close();
 
     return array(
-        'operaciones' => (int) (isset($fila['operaciones']) ? $fila['operaciones'] : 0),
-        'efectivo' => cajaMonto(isset($fila['efectivo']) ? $fila['efectivo'] : 0),
-        'tarjeta' => cajaMonto(isset($fila['tarjeta']) ? $fila['tarjeta'] : 0),
-        'transferencia' => cajaMonto(isset($fila['transferencia']) ? $fila['transferencia'] : 0),
+        'operaciones' => (int) ($fila['operaciones'] ?? 0),
+        'efectivo' => cajaMonto($fila['efectivo'] ?? 0),
+        'tarjeta' => cajaMonto($fila['tarjeta'] ?? 0),
+        'transferencia' => cajaMonto($fila['transferencia'] ?? 0),
     );
 }
 
@@ -536,36 +618,85 @@ function calcularResumenCaja(
 ) {
     $fechaInicio = (string) $caja['fecha_apertura'];
     $fechaFin = $fechaFin
-        ?? (!empty($caja['fecha_cierre']) ? (string) $caja['fecha_cierre'] : date('Y-m-d H:i:s'));
+        ?? (!empty($caja['fecha_cierre'])
+            ? (string) $caja['fecha_cierre']
+            : date('Y-m-d H:i:s'));
+
     $usuarioId = (int) $caja['usuario_apertura_id'];
+    $sucursalId = (int) ($caja['sucursal_id'] ?? 0);
     $cajaId = (int) $caja['id'];
 
-    $ventas = resumenVentasCaja($conn, $usuarioId, $fechaInicio, $fechaFin);
-    $membresias = resumenMembresiasCaja($conn, $usuarioId, $fechaInicio, $fechaFin);
-    $devoluciones = resumenDevolucionesCaja($conn, $usuarioId, $fechaInicio, $fechaFin);
-    $manuales = resumenMovimientosManuales($conn, $cajaId);
+    if ($sucursalId <= 0) {
+        throw new RuntimeException(
+            'El corte no tiene una sucursal válida asignada.'
+        );
+    }
+
+    $ventas = resumenVentasCaja(
+        $conn,
+        $sucursalId,
+        $usuarioId,
+        $fechaInicio,
+        $fechaFin
+    );
+
+    $membresias = resumenMembresiasCaja(
+        $conn,
+        $sucursalId,
+        $usuarioId,
+        $fechaInicio,
+        $fechaFin
+    );
+
+    $devoluciones = resumenDevolucionesCaja(
+        $conn,
+        $sucursalId,
+        $usuarioId,
+        $fechaInicio,
+        $fechaFin
+    );
+
+    $manuales = resumenMovimientosManuales(
+        $conn,
+        $cajaId
+    );
 
     $montoInicial = cajaMonto($caja['monto_inicial'] ?? 0);
 
-    $totalVentas = $ventas['efectivo'] + $ventas['tarjeta'] + $ventas['transferencia'];
-    $totalMembresias = $membresias['efectivo'] + $membresias['tarjeta'] + $membresias['transferencia'];
-    $totalDevoluciones = $devoluciones['efectivo'] + $devoluciones['tarjeta'] + $devoluciones['transferencia'];
+    $totalVentas =
+        $ventas['efectivo'] +
+        $ventas['tarjeta'] +
+        $ventas['transferencia'];
+
+    $totalMembresias =
+        $membresias['efectivo'] +
+        $membresias['tarjeta'] +
+        $membresias['transferencia'];
+
+    $totalDevoluciones =
+        $devoluciones['efectivo'] +
+        $devoluciones['tarjeta'] +
+        $devoluciones['transferencia'];
+
     $totalBruto = $totalVentas + $totalMembresias;
     $totalNeto = $totalBruto - $totalDevoluciones;
 
-    $efectivoEsperado = $montoInicial
-        + $ventas['efectivo']
-        + $membresias['efectivo']
-        + $manuales['entradas']
-        - $manuales['salidas']
-        - $devoluciones['efectivo'];
+    $efectivoEsperado =
+        $montoInicial +
+        $ventas['efectivo'] +
+        $membresias['efectivo'] +
+        $manuales['entradas'] -
+        $manuales['salidas'] -
+        $devoluciones['efectivo'];
 
     $advertencias = array();
+
     if (!empty($membresias['advertencia'])) {
         $advertencias[] = $membresias['advertencia'];
     }
 
-    return [
+    return array(
+        'sucursal_id' => $sucursalId,
         'fecha_inicio' => $fechaInicio,
         'fecha_fin' => $fechaFin,
         'monto_inicial' => $montoInicial,
@@ -580,17 +711,22 @@ function calcularResumenCaja(
         'total_neto' => cajaMonto($totalNeto),
         'efectivo_esperado' => cajaMonto($efectivoEsperado),
         'total_tarjeta_neto' => cajaMonto(
-            $ventas['tarjeta'] + $membresias['tarjeta'] - $devoluciones['tarjeta']
+            $ventas['tarjeta'] +
+            $membresias['tarjeta'] -
+            $devoluciones['tarjeta']
         ),
         'total_transferencia_neto' => cajaMonto(
-            $ventas['transferencia'] + $membresias['transferencia'] - $devoluciones['transferencia']
+            $ventas['transferencia'] +
+            $membresias['transferencia'] -
+            $devoluciones['transferencia']
         ),
-        'operaciones' => $ventas['operaciones']
-            + $membresias['operaciones']
-            + $devoluciones['operaciones']
-            + $manuales['operaciones'],
+        'operaciones' =>
+            $ventas['operaciones'] +
+            $membresias['operaciones'] +
+            $devoluciones['operaciones'] +
+            $manuales['operaciones'],
         'advertencias' => $advertencias,
-    ];
+    );
 }
 
 /**
@@ -681,9 +817,16 @@ function listarOperacionesCaja(
     }
 
     $usuarioId = (int) $caja['usuario_apertura_id'];
+    $sucursalId = (int) ($caja['sucursal_id'] ?? 0);
     $cajaId = (int) $caja['id'];
     $limite = max(1, (int) $limite);
     $offset = max(0, (int) $offset);
+
+    if ($sucursalId <= 0) {
+        throw new RuntimeException(
+            'El corte no tiene una sucursal válida asignada.'
+        );
+    }
 
     $montoDevolucion = "CASE
                             WHEN vm.monto_devuelto IS NOT NULL
@@ -734,12 +877,16 @@ function listarOperacionesCaja(
                             END
                         ) AS total_devuelto
                     FROM ventas_modificaciones
-                    WHERE tipo_modificacion IN ('cancelacion', 'devolucion_parcial')
+                    WHERE tipo_modificacion IN (
+                        'cancelacion',
+                        'devolucion_parcial'
+                    )
                       AND fecha_modificacion <= ?
                     GROUP BY venta_id
                 ) dev ON dev.venta_id = v.id
                 WHERE v.fecha_venta >= ?
                   AND v.fecha_venta <= ?
+                  AND v.sucursal_id = ?
                   AND v.estado <> 'pendiente'
                   AND (
                         v.usuario_id = ?
@@ -750,14 +897,18 @@ function listarOperacionesCaja(
                               AND vm_rel.usuario_id = ?
                               AND vm_rel.fecha_modificacion >= ?
                               AND vm_rel.fecha_modificacion <= ?
-                              AND vm_rel.tipo_modificacion IN ('cancelacion', 'devolucion_parcial')
+                              AND vm_rel.tipo_modificacion IN (
+                                  'cancelacion',
+                                  'devolucion_parcial'
+                              )
                         )
                   )";
 
-    $tipos .= 'sssiiss';
+    $tipos .= 'sssiiiss';
     $parametros[] = $fechaFin;
     $parametros[] = $fechaInicio;
     $parametros[] = $fechaFin;
+    $parametros[] = $sucursalId;
     $parametros[] = $usuarioId;
     $parametros[] = $usuarioId;
     $parametros[] = $fechaInicio;
@@ -765,12 +916,13 @@ function listarOperacionesCaja(
 
     $fuente = cajaResolverFuenteMembresias($conn);
 
-    if ($fuente !== null) {
+    if ($fuente !== null && !empty($fuente['sucursal_id'])) {
         $tabla = cajaIdentificador($fuente['tabla']);
         $colId = cajaIdentificador($fuente['id']);
         $colMonto = cajaIdentificador($fuente['monto']);
         $colMetodo = cajaIdentificador($fuente['metodo_pago']);
         $colUsuario = cajaIdentificador($fuente['usuario_id']);
+        $colSucursal = cajaIdentificador($fuente['sucursal_id']);
         $colFecha = cajaIdentificador($fuente['fecha']);
 
         $joinCliente = '';
@@ -778,10 +930,16 @@ function listarOperacionesCaja(
 
         if (!empty($fuente['cliente_id'])) {
             $colCliente = cajaIdentificador($fuente['cliente_id']);
-            $joinCliente = " LEFT JOIN clientes c ON c.id = p.{$colCliente}";
+            $joinCliente =
+                " LEFT JOIN clientes c ON c.id = p.{$colCliente}";
             $conceptoCliente = ", CASE
                                     WHEN c.id IS NOT NULL
-                                        THEN CONCAT(' · ', c.nombre, ' ', c.apellido)
+                                        THEN CONCAT(
+                                            ' · ',
+                                            c.nombre,
+                                            ' ',
+                                            c.apellido
+                                        )
                                     ELSE ''
                                   END";
         }
@@ -790,13 +948,18 @@ function listarOperacionesCaja(
 
         if (!empty($fuente['estado'])) {
             $colEstado = cajaIdentificador($fuente['estado']);
-            $condicionEstado = " AND p.{$colEstado} = 'completado'";
+            $condicionEstado =
+                " AND p.{$colEstado} = 'completado'";
         }
 
         $partes[] = "SELECT
                         p.{$colFecha} AS fecha,
                         'Pago de membresía' AS origen,
-                        CONCAT('Pago #', p.{$colId}{$conceptoCliente}) AS concepto,
+                        CONCAT(
+                            'Pago #',
+                            p.{$colId}
+                            {$conceptoCliente}
+                        ) AS concepto,
                         p.{$colMetodo} AS metodo_pago,
                         'entrada' AS naturaleza,
                         p.{$colMonto} AS monto,
@@ -804,12 +967,14 @@ function listarOperacionesCaja(
                     FROM {$tabla} p
                     {$joinCliente}
                     WHERE p.{$colUsuario} = ?
+                      AND p.{$colSucursal} = ?
                       AND p.{$colFecha} >= ?
                       AND p.{$colFecha} <= ?
                       {$condicionEstado}";
 
-        $tipos .= 'iss';
+        $tipos .= 'iiss';
         $parametros[] = $usuarioId;
+        $parametros[] = $sucursalId;
         $parametros[] = $fechaInicio;
         $parametros[] = $fechaFin;
     }
@@ -835,7 +1000,8 @@ function listarOperacionesCaja(
                     {$montoDevolucion} AS monto,
                     vm.id AS referencia_id
                 FROM ventas_modificaciones vm
-                INNER JOIN ventas v ON v.id = vm.venta_id
+                INNER JOIN ventas v
+                    ON v.id = vm.venta_id
                 LEFT JOIN (
                     SELECT venta_id, MAX(total) AS total_original
                     FROM tickets_venta
@@ -843,16 +1009,21 @@ function listarOperacionesCaja(
                 ) tv_dev ON tv_dev.venta_id = v.id
                 WHERE vm.fecha_modificacion >= ?
                   AND vm.fecha_modificacion <= ?
+                  AND v.sucursal_id = ?
                   AND v.estado <> 'pendiente'
-                  AND vm.tipo_modificacion IN ('cancelacion', 'devolucion_parcial')
+                  AND vm.tipo_modificacion IN (
+                      'cancelacion',
+                      'devolucion_parcial'
+                  )
                   AND (
                         v.usuario_id = ?
                         OR vm.usuario_id = ?
                   )";
 
-    $tipos .= 'ssii';
+    $tipos .= 'ssiii';
     $parametros[] = $fechaInicio;
     $parametros[] = $fechaFin;
+    $parametros[] = $sucursalId;
     $parametros[] = $usuarioId;
     $parametros[] = $usuarioId;
 
@@ -888,7 +1059,8 @@ function listarOperacionesCaja(
 
     if (!$stmt) {
         throw new RuntimeException(
-            'No se pudo preparar el historial de operaciones. Detalle MySQL: ' . $conn->error
+            'No se pudo preparar el historial de operaciones. Detalle MySQL: ' .
+            $conn->error
         );
     }
 
@@ -897,7 +1069,8 @@ function listarOperacionesCaja(
         $stmt->close();
 
         throw new RuntimeException(
-            'No se pudo consultar el historial de operaciones. Detalle MySQL: ' . $detalle
+            'No se pudo consultar el historial de operaciones. Detalle MySQL: ' .
+            $detalle
         );
     }
 
@@ -905,9 +1078,7 @@ function listarOperacionesCaja(
     $filas = array();
 
     while ($fila = $resultado->fetch_assoc()) {
-        $fila['monto'] = cajaMonto(
-            isset($fila['monto']) ? $fila['monto'] : 0
-        );
+        $fila['monto'] = cajaMonto($fila['monto'] ?? 0);
         $filas[] = $fila;
     }
 
@@ -923,40 +1094,69 @@ function listarCortesRecientes(
     $conn,
     $usuarioId,
     $esAdmin,
-    $limite = 15
+    $limite = 15,
+    $sucursalId = 0,
+    $vistaGlobal = false
 ) {
-    if ($esAdmin) {
-        $sql = "SELECT c.*, ua.nombre AS usuario_apertura, uc.nombre AS usuario_cierre
-                FROM cajas c
-                INNER JOIN usuarios ua ON ua.id = c.usuario_apertura_id
-                LEFT JOIN usuarios uc ON uc.id = c.usuario_cierre_id
-                WHERE c.estado = 'cerrada'
-                ORDER BY c.fecha_cierre DESC, c.id DESC
-                LIMIT ?";
-        $stmt = $conn->prepare($sql);
-        if (!$stmt) {
-            throw new RuntimeException('No se pudo consultar los cortes recientes.');
-        }
+    $limite = max(1, (int) $limite);
+    $sucursalId = (int) $sucursalId;
+
+    $seleccion = "SELECT c.*,
+                         ua.nombre AS usuario_apertura,
+                         uc.nombre AS usuario_cierre,
+                         s.nombre AS sucursal_nombre,
+                         s.clave AS sucursal_clave
+                  FROM cajas c
+                  INNER JOIN usuarios ua
+                      ON ua.id = c.usuario_apertura_id
+                  LEFT JOIN usuarios uc
+                      ON uc.id = c.usuario_cierre_id
+                  INNER JOIN sucursales s
+                      ON s.id = c.sucursal_id";
+
+    if ($esAdmin && $vistaGlobal) {
+        $stmt = $conn->prepare(
+            $seleccion . "
+             WHERE c.estado = 'cerrada'
+             ORDER BY c.fecha_cierre DESC, c.id DESC
+             LIMIT ?"
+        );
         $stmt->bind_param('i', $limite);
+    } elseif ($esAdmin) {
+        $stmt = $conn->prepare(
+            $seleccion . "
+             WHERE c.estado = 'cerrada'
+               AND c.sucursal_id = ?
+             ORDER BY c.fecha_cierre DESC, c.id DESC
+             LIMIT ?"
+        );
+        $stmt->bind_param('ii', $sucursalId, $limite);
     } else {
-        $sql = "SELECT c.*, ua.nombre AS usuario_apertura, uc.nombre AS usuario_cierre
-                FROM cajas c
-                INNER JOIN usuarios ua ON ua.id = c.usuario_apertura_id
-                LEFT JOIN usuarios uc ON uc.id = c.usuario_cierre_id
-                WHERE c.estado = 'cerrada'
-                  AND c.usuario_apertura_id = ?
-                ORDER BY c.fecha_cierre DESC, c.id DESC
-                LIMIT ?";
-        $stmt = $conn->prepare($sql);
-        if (!$stmt) {
-            throw new RuntimeException('No se pudo consultar los cortes recientes.');
-        }
-        $stmt->bind_param('ii', $usuarioId, $limite);
+        $stmt = $conn->prepare(
+            $seleccion . "
+             WHERE c.estado = 'cerrada'
+               AND c.sucursal_id = ?
+               AND c.usuario_apertura_id = ?
+             ORDER BY c.fecha_cierre DESC, c.id DESC
+             LIMIT ?"
+        );
+        $stmt->bind_param(
+            'iii',
+            $sucursalId,
+            $usuarioId,
+            $limite
+        );
+    }
+
+    if (!$stmt) {
+        throw new RuntimeException(
+            'No se pudo consultar los cortes recientes.'
+        );
     }
 
     $stmt->execute();
     $resultado = $stmt->get_result();
-    $cortes = [];
+    $cortes = array();
 
     while ($fila = $resultado->fetch_assoc()) {
         $cortes[] = $fila;

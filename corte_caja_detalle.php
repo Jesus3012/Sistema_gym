@@ -6,6 +6,7 @@
 require_once __DIR__ . '/includes/auth_guard.php';
 require_once __DIR__ . '/config/database.php';
 require_once __DIR__ . '/includes/caja_helper.php';
+require_once __DIR__ . '/includes/sucursal_context.php';
 
 date_default_timezone_set('America/Mexico_City');
 
@@ -37,6 +38,56 @@ if (!$conn instanceof mysqli) {
 
 $conn->set_charset('utf8mb4');
 
+$usuarioRolBase = strtolower(trim((string) (
+    $_SESSION['user_rol_base'] ?? $usuarioRol
+)));
+
+$esAdministradorCaja = in_array(
+    $usuarioRolBase,
+    array('admin', 'administrador'),
+    true
+);
+
+try {
+    if (function_exists('sucursal_inicializar_sesion')) {
+        sucursal_inicializar_sesion($conn);
+    }
+} catch (Throwable $errorSucursal) {
+    die(htmlspecialchars(
+        $errorSucursal->getMessage(),
+        ENT_QUOTES,
+        'UTF-8'
+    ));
+}
+
+$vistaSolicitadaCaja = strtolower(trim((string) (
+    $_GET['vista'] ?? ''
+)));
+
+if (
+    $esAdministradorCaja
+    && $vistaSolicitadaCaja === 'global'
+    && function_exists('sucursal_activar_vista_global')
+) {
+    sucursal_activar_vista_global($conn, $usuarioId);
+}
+
+if (
+    $vistaSolicitadaCaja === 'sucursal'
+    && function_exists('sucursal_desactivar_vista_global')
+) {
+    sucursal_desactivar_vista_global();
+}
+
+$vistaGlobalCaja = $esAdministradorCaja
+    && function_exists('sucursal_dashboard_vista_global')
+    && sucursal_dashboard_vista_global();
+
+$sucursalIdSesion = (int) ($_SESSION['sucursal_id'] ?? 0);
+$rutaRegresoCaja = 'corte_caja.php?vista=' . (
+    $vistaGlobalCaja ? 'global' : 'sucursal'
+);
+
 $caja = obtenerCajaPorId($conn, $cajaId);
 
 if (!$caja) {
@@ -44,9 +95,23 @@ if (!$caja) {
     die('El corte solicitado no existe.');
 }
 
-if ($usuarioRol !== 'admin' && (int) $caja['usuario_apertura_id'] !== $usuarioId) {
-    $_SESSION['mensaje_acceso'] = 'Solo puedes consultar los cortes de caja realizados por tu usuario.';
-    header('Location: corte_caja.php?error=acceso_denegado');
+if (
+    !$vistaGlobalCaja
+    && (int) $caja['sucursal_id'] !== $sucursalIdSesion
+) {
+    $_SESSION['mensaje_acceso'] =
+        'El corte pertenece a otra sucursal. Cambia de sede para consultarlo.';
+    header('Location: ' . $rutaRegresoCaja . '&error=sucursal_distinta');
+    exit();
+}
+
+if (
+    !$esAdministradorCaja
+    && (int) $caja['usuario_apertura_id'] !== $usuarioId
+) {
+    $_SESSION['mensaje_acceso'] =
+        'Solo puedes consultar los cortes realizados por tu usuario.';
+    header('Location: ' . $rutaRegresoCaja . '&error=acceso_denegado');
     exit();
 }
 
@@ -58,7 +123,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
     && (string) ($_POST['accion'] ?? '') === 'recalcular_corte'
 ) {
     try {
-        if ($usuarioRol !== 'admin') {
+        if (!$esAdministradorCaja) {
             throw new RuntimeException('Solo un administrador puede recalcular un corte cerrado.');
         }
 
@@ -77,6 +142,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
             "SELECT id
              FROM cajas
              WHERE id = ?
+               AND sucursal_id = ?
                AND estado = 'cerrada'
              FOR UPDATE"
         );
@@ -85,7 +151,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
             throw new RuntimeException('No se pudo bloquear el corte para recalcularlo.');
         }
 
-        $stmtLock->bind_param('i', $cajaId);
+        $sucursalCajaId = (int) $caja['sucursal_id'];
+        $stmtLock->bind_param('ii', $cajaId, $sucursalCajaId);
         $stmtLock->execute();
         $resultadoLock = $stmtLock->get_result();
         $filaLock = $resultadoLock->fetch_assoc();
@@ -161,6 +228,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
                         operaciones_membresias = ?,
                         operaciones_devoluciones = ?
                       WHERE id = ?
+                        AND sucursal_id = ?
                         AND estado = 'cerrada'";
 
         $stmtUpdate = $conn->prepare($sqlUpdate);
@@ -171,7 +239,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
         }
 
         $stmtUpdate->bind_param(
-            'ddddddddddddddddiiii',
+            'ddddddddddddddddiiiii',
             $ventasEfectivo,
             $ventasTarjeta,
             $ventasTransferencia,
@@ -191,7 +259,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
             $operacionesVentas,
             $operacionesMembresias,
             $operacionesDevoluciones,
-            $cajaId
+            $cajaId,
+            $sucursalCajaId
         );
 
         if (!$stmtUpdate->execute()) {
@@ -211,7 +280,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
             'mensaje' => 'Los importes del corte se actualizaron con las ventas y devoluciones correctas.',
         );
 
-        header('Location: corte_caja_detalle.php?id=' . $cajaId);
+        header('Location: corte_caja_detalle.php?id=' . $cajaId . '&vista=' . ($vistaGlobalCaja ? 'global' : 'sucursal'));
         exit();
     } catch (Throwable $errorRecalculo) {
         try {
@@ -225,7 +294,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
             'mensaje' => $errorRecalculo->getMessage(),
         );
 
-        header('Location: corte_caja_detalle.php?id=' . $cajaId);
+        header('Location: corte_caja_detalle.php?id=' . $cajaId . '&vista=' . ($vistaGlobalCaja ? 'global' : 'sucursal'));
         exit();
     }
 }
@@ -264,6 +333,27 @@ $resultadoGym = $conn->query(
 
 if ($resultadoGym && $filaGym = $resultadoGym->fetch_assoc()) {
     $gimnasio = array_merge($gimnasio, $filaGym);
+}
+
+/*
+ * El documento y la pantalla muestran la sede propietaria del corte.
+ * La configuración general solo funciona como respaldo.
+ */
+$gimnasio['nombre'] = trim((string) (
+    $caja['sucursal_nombre'] ?? $gimnasio['nombre']
+));
+$gimnasio['telefono'] = trim((string) (
+    $caja['sucursal_telefono'] ?? $gimnasio['telefono']
+));
+$gimnasio['email'] = trim((string) (
+    $caja['sucursal_email'] ?? $gimnasio['email']
+));
+$gimnasio['direccion'] = trim((string) (
+    $caja['sucursal_direccion'] ?? $gimnasio['direccion']
+));
+
+if (!empty($caja['sucursal_logo'])) {
+    $gimnasio['logo'] = $caja['sucursal_logo'];
 }
 
 $logoDisponible = false;
@@ -512,6 +602,12 @@ $totalTransferenciaIngresos =
             white-space: nowrap;
         }
 
+        .detail-badge.branch {
+            color: #dbeafe;
+            background: rgba(37, 99, 235, .18);
+            border: 1px solid rgba(191, 219, 254, .28);
+        }
+
         .detail-badge.closed {
             color: #eff6ff;
             background: rgba(255,255,255,.12);
@@ -538,7 +634,7 @@ $totalTransferenciaIngresos =
 
         .detail-meta {
             display: grid;
-            grid-template-columns: repeat(4, minmax(0, 1fr));
+            grid-template-columns: repeat(5, minmax(0, 1fr));
             gap: 12px;
             margin: 16px 0;
         }
@@ -902,7 +998,7 @@ $totalTransferenciaIngresos =
         }
 
         .print-info-table td {
-            width: 25%;
+            width: 20%;
             padding: 6px 7px;
             vertical-align: top;
             font-size: 9px;
@@ -1153,6 +1249,10 @@ $totalTransferenciaIngresos =
             <table class="print-info-table">
                 <tr>
                     <td>
+                        <span>Sucursal</span>
+                        <strong><?= hDetalle($caja['sucursal_nombre']) ?></strong>
+                    </td>
+                    <td>
                         <span>Responsable</span>
                         <strong><?= hDetalle($caja['usuario_apertura']) ?></strong>
                     </td>
@@ -1352,13 +1452,13 @@ $totalTransferenciaIngresos =
     <main class="main-content detail-page">
         <div class="detail-shell">
             <div class="detail-toolbar">
-                <a href="corte_caja.php" class="detail-btn detail-btn-soft">
+                <a href="<?= hDetalle($rutaRegresoCaja) ?>" class="detail-btn detail-btn-soft">
                     <i class="fas fa-arrow-left"></i>
                     Regresar
                 </a>
 
                 <div class="detail-toolbar-actions">
-                    <?php if ($usuarioRol === 'admin' && $esCerrada): ?>
+                    <?php if ($esAdministradorCaja && $esCerrada): ?>
                         <form method="post" id="formRecalcularCorte" style="margin:0;">
                             <input
                                 type="hidden"
@@ -1375,7 +1475,7 @@ $totalTransferenciaIngresos =
                     <?php endif; ?>
 
                     <a
-                        href="corte_caja_detalle.php?id=<?= $cajaId ?>&imprimir=1"
+                        href="corte_caja_detalle.php?id=<?= $cajaId ?>&imprimir=1&vista=<?= $vistaGlobalCaja ? 'global' : 'sucursal' ?>"
                         target="_blank"
                         rel="noopener"
                         class="detail-btn detail-btn-primary"
@@ -1394,6 +1494,11 @@ $totalTransferenciaIngresos =
                     </div>
 
                     <div class="detail-hero-badges">
+                        <span class="detail-badge branch">
+                            <i class="fas fa-building"></i>
+                            <?= hDetalle($caja['sucursal_nombre']) ?>
+                        </span>
+
                         <span class="detail-badge closed">
                             <i class="fas <?= $esCerrada ? 'fa-lock' : 'fa-lock-open' ?>"></i>
                             <?= $esCerrada ? 'Caja cerrada' : 'Caja abierta' ?>
@@ -1410,6 +1515,14 @@ $totalTransferenciaIngresos =
             </header>
 
             <section class="detail-meta">
+                <article class="detail-card detail-meta-card">
+                    <span class="detail-meta-label">Sucursal</span>
+                    <strong class="detail-meta-value">
+                        <?= hDetalle($caja['sucursal_nombre']) ?>
+                        · <?= hDetalle($caja['sucursal_clave']) ?>
+                    </strong>
+                </article>
+
                 <article class="detail-card detail-meta-card">
                     <span class="detail-meta-label">Responsable</span>
                     <strong class="detail-meta-value"><?= hDetalle($caja['usuario_apertura']) ?></strong>
@@ -1535,7 +1648,7 @@ $totalTransferenciaIngresos =
                             <?php for ($pagina = 1; $pagina <= $totalPaginas; $pagina++): ?>
                                 <a
                                     class="detail-page-link <?= $pagina === $paginaActual ? 'active' : '' ?>"
-                                    href="?id=<?= $cajaId ?>&pagina=<?= $pagina ?>"
+                                    href="?id=<?= $cajaId ?>&pagina=<?= $pagina ?>&vista=<?= $vistaGlobalCaja ? 'global' : 'sucursal' ?>"
                                 ><?= $pagina ?></a>
                             <?php endfor; ?>
                         </nav>

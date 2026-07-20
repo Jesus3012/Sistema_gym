@@ -3,6 +3,7 @@
 
 require_once __DIR__ . '/includes/auth_guard.php';
 require_once __DIR__ . '/config/database.php';
+require_once __DIR__ . '/includes/sucursal_context.php';
 
 date_default_timezone_set('America/Mexico_City');
 
@@ -104,6 +105,163 @@ function obtenerEmpresaReportes($conn)
     return $empresa;
 }
 
+
+$usuarioId = isset($_SESSION['user_id'])
+    ? (int) $_SESSION['user_id']
+    : 0;
+
+$usuarioNombre = isset($_SESSION['user_name'])
+    ? (string) $_SESSION['user_name']
+    : 'Usuario';
+
+$usuarioRol = isset($_SESSION['user_rol'])
+    ? (string) $_SESSION['user_rol']
+    : '';
+
+$usuarioRolBase = strtolower(trim((string) (
+    $_SESSION['user_rol_base'] ?? $usuarioRol
+)));
+
+$puedeVistaGlobalReportes = in_array(
+    $usuarioRolBase,
+    array('admin', 'administrador'),
+    true
+);
+
+try {
+    if (function_exists('sucursal_inicializar_sesion')) {
+        sucursal_inicializar_sesion($conn);
+    }
+} catch (Throwable $errorSucursal) {
+    if (
+        isset($_GET['action'])
+        && $_GET['action'] === 'datos'
+    ) {
+        reporteJson(409, array(
+            'success' => false,
+            'message' => $errorSucursal->getMessage()
+        ));
+    }
+
+    die(htmlspecialchars(
+        $errorSucursal->getMessage(),
+        ENT_QUOTES,
+        'UTF-8'
+    ));
+}
+
+$vistaSolicitadaReportes = strtolower(trim((string) (
+    $_GET['vista'] ?? ''
+)));
+
+if (
+    $vistaSolicitadaReportes === 'global'
+    && $puedeVistaGlobalReportes
+) {
+    sucursal_activar_vista_global(
+        $conn,
+        $usuarioId
+    );
+} elseif ($vistaSolicitadaReportes === 'sucursal') {
+    sucursal_desactivar_vista_global();
+}
+
+$vistaGlobalReportes =
+    $puedeVistaGlobalReportes
+    && function_exists('sucursal_dashboard_vista_global')
+    && sucursal_dashboard_vista_global();
+
+$sucursalIdReportes = (int) (
+    $_SESSION['sucursal_id'] ?? 0
+);
+
+$sucursalActualReportes = null;
+
+if ($sucursalIdReportes > 0) {
+    $sucursalActualReportes = sucursal_buscar_asignada(
+        $conn,
+        $usuarioId,
+        $sucursalIdReportes
+    );
+}
+
+if (!$sucursalActualReportes) {
+    if (
+        isset($_GET['action'])
+        && $_GET['action'] === 'datos'
+    ) {
+        reporteJson(409, array(
+            'success' => false,
+            'message' =>
+                'Selecciona una sucursal operativa antes de generar reportes.'
+        ));
+    }
+
+    $_SESSION['error'] =
+        'Selecciona una sucursal operativa antes de abrir reportes.';
+
+    header('Location: dashboard.php');
+    exit;
+}
+
+date_default_timezone_set((string) (
+    $sucursalActualReportes['zona_horaria']
+    ?? 'America/Mexico_City'
+));
+
+$totalSucursalesReportes = 0;
+
+$resultadoTotalSucursales = $conn->query(
+    "SELECT COUNT(*) AS total
+     FROM sucursales
+     WHERE estado = 'activa'"
+);
+
+if (
+    $resultadoTotalSucursales
+    && $filaTotalSucursales =
+        $resultadoTotalSucursales->fetch_assoc()
+) {
+    $totalSucursalesReportes = (int) (
+        $filaTotalSucursales['total'] ?? 0
+    );
+}
+
+$contextoNombreReportes = $vistaGlobalReportes
+    ? 'Todas las sucursales'
+    : (string) $sucursalActualReportes['nombre'];
+
+$contextoClaveReportes = $vistaGlobalReportes
+    ? 'GLOBAL'
+    : (string) $sucursalActualReportes['clave'];
+
+$contextoDetalleReportes = $vistaGlobalReportes
+    ? (
+        $totalSucursalesReportes === 1
+            ? '1 sede activa'
+            : $totalSucursalesReportes . ' sedes activas'
+    )
+    : (
+        $contextoClaveReportes
+        . (
+            (int) (
+                $sucursalActualReportes['es_matriz'] ?? 0
+            ) === 1
+                ? ' · Matriz'
+                : ' · Sucursal'
+        )
+    );
+
+$contextoReportes = array(
+    'vista_global' => $vistaGlobalReportes,
+    'sucursal_id' => $vistaGlobalReportes
+        ? 0
+        : $sucursalIdReportes,
+    'nombre' => $contextoNombreReportes,
+    'clave' => $contextoClaveReportes,
+    'detalle' => $contextoDetalleReportes
+);
+
 /*
  * Endpoint interno.
  * El mismo reportes.php entrega los datos en JSON antes de cargar el sidebar.
@@ -186,6 +344,12 @@ if (
             $tipos = '';
             $parametros = array();
 
+            if (!$vistaGlobalReportes) {
+                $condiciones[] = 'i.sucursal_id = ?';
+                $tipos .= 'i';
+                $parametros[] = $sucursalIdReportes;
+            }
+
             if ($busqueda !== '') {
                 $texto = '%' . $busqueda . '%';
 
@@ -194,10 +358,14 @@ if (
                     OR c.telefono LIKE ?
                     OR c.email LIKE ?
                     OR p.nombre LIKE ?
+                    OR s.nombre LIKE ?
+                    OR s.clave LIKE ?
                     OR CAST(i.id AS CHAR) LIKE ?
                 )";
 
-                $tipos .= 'sssss';
+                $tipos .= 'sssssss';
+                $parametros[] = $texto;
+                $parametros[] = $texto;
                 $parametros[] = $texto;
                 $parametros[] = $texto;
                 $parametros[] = $texto;
@@ -231,6 +399,9 @@ if (
 
             $sql = "SELECT
                         i.id,
+                        i.sucursal_id,
+                        s.nombre AS sucursal_nombre,
+                        s.clave AS sucursal_clave,
                         c.id AS cliente_id,
                         c.nombre AS cliente_nombre,
                         c.apellido AS cliente_apellido,
@@ -245,6 +416,8 @@ if (
                         i.fecha_registro,
                         DATEDIFF(i.fecha_fin, CURDATE()) AS dias_restantes
                     FROM inscripciones i
+                    INNER JOIN sucursales s
+                        ON s.id = i.sucursal_id
                     INNER JOIN clientes c
                         ON c.id = i.cliente_id
                     INNER JOIN planes p
@@ -293,6 +466,12 @@ if (
             $tipos = '';
             $parametros = array();
 
+            if (!$vistaGlobalReportes) {
+                $condiciones[] = 'v.sucursal_id = ?';
+                $tipos .= 'i';
+                $parametros[] = $sucursalIdReportes;
+            }
+
             if ($busqueda !== '') {
                 $texto = '%' . $busqueda . '%';
 
@@ -301,9 +480,13 @@ if (
                     OR CONCAT(c.nombre, ' ', c.apellido) LIKE ?
                     OR u.nombre LIKE ?
                     OR detalle.productos LIKE ?
+                    OR s.nombre LIKE ?
+                    OR s.clave LIKE ?
                 )";
 
-                $tipos .= 'ssss';
+                $tipos .= 'ssssss';
+                $parametros[] = $texto;
+                $parametros[] = $texto;
                 $parametros[] = $texto;
                 $parametros[] = $texto;
                 $parametros[] = $texto;
@@ -336,6 +519,9 @@ if (
 
             $sql = "SELECT
                         v.id,
+                        v.sucursal_id,
+                        s.nombre AS sucursal_nombre,
+                        s.clave AS sucursal_clave,
                         v.fecha_venta,
                         v.cliente_id,
                         CASE
@@ -368,6 +554,8 @@ if (
                         COALESCE(detalle.productos, 'Sin detalle')
                             AS productos
                     FROM ventas v
+                    INNER JOIN sucursales s
+                        ON s.id = v.sucursal_id
                     LEFT JOIN clientes c
                         ON c.id = v.cliente_id
                     INNER JOIN usuarios u
@@ -455,6 +643,8 @@ if (
         while ($fila = $resultado->fetch_assoc()) {
             if ($tipo === 'inscripciones') {
                 $fila['id'] = (int) $fila['id'];
+                $fila['sucursal_id'] =
+                    (int) $fila['sucursal_id'];
                 $fila['cliente_id'] = (int) $fila['cliente_id'];
                 $fila['plan_id'] = (int) $fila['plan_id'];
                 $fila['precio_pagado'] =
@@ -466,6 +656,8 @@ if (
                 }
             } else {
                 $fila['id'] = (int) $fila['id'];
+                $fila['sucursal_id'] =
+                    (int) $fila['sucursal_id'];
 
                 if ($fila['cliente_id'] !== null) {
                     $fila['cliente_id'] =
@@ -496,6 +688,7 @@ if (
         reporteJson(200, array(
             'success' => true,
             'tipo' => $tipo,
+            'contexto' => $contextoReportes,
             'datos' => $datos,
             'total' => count($datos),
             'limitado' => count($datos) >= 5000
@@ -508,34 +701,70 @@ if (
     }
 }
 
-$usuarioId = isset($_SESSION['user_id'])
-    ? (int) $_SESSION['user_id']
-    : 0;
-
-$usuarioNombre = isset($_SESSION['user_name'])
-    ? (string) $_SESSION['user_name']
-    : 'Usuario';
-
-$usuarioRol = isset($_SESSION['user_rol'])
-    ? (string) $_SESSION['user_rol']
-    : '';
-
 $empresa = obtenerEmpresaReportes($conn);
 
-$planes = array();
-$resultadoPlanes = $conn->query(
-    "SELECT id, nombre
-     FROM planes
-     ORDER BY nombre ASC"
-);
+if (!$vistaGlobalReportes) {
+    foreach (
+        array(
+            'nombre',
+            'telefono',
+            'email',
+            'direccion',
+            'logo'
+        ) as $campoEmpresa
+    ) {
+        $valorSucursal = trim((string) (
+            $sucursalActualReportes[$campoEmpresa] ?? ''
+        ));
 
-if ($resultadoPlanes) {
+        if ($valorSucursal !== '') {
+            $empresa[$campoEmpresa] = $valorSucursal;
+        }
+    }
+}
+
+$empresa['contexto_nombre'] = $contextoNombreReportes;
+$empresa['contexto_clave'] = $contextoClaveReportes;
+$empresa['vista_global'] = $vistaGlobalReportes;
+
+$planes = array();
+
+$sqlPlanes = "
+    SELECT DISTINCT
+        p.id,
+        p.nombre
+    FROM inscripciones i
+    INNER JOIN planes p
+        ON p.id = i.plan_id
+";
+
+if (!$vistaGlobalReportes) {
+    $sqlPlanes .= " WHERE i.sucursal_id = ?";
+}
+
+$sqlPlanes .= " ORDER BY p.nombre ASC";
+
+$stmtPlanes = $conn->prepare($sqlPlanes);
+
+if ($stmtPlanes) {
+    if (!$vistaGlobalReportes) {
+        $stmtPlanes->bind_param(
+            'i',
+            $sucursalIdReportes
+        );
+    }
+
+    $stmtPlanes->execute();
+    $resultadoPlanes = $stmtPlanes->get_result();
+
     while ($plan = $resultadoPlanes->fetch_assoc()) {
         $planes[] = array(
             'id' => (int) $plan['id'],
             'nombre' => (string) $plan['nombre']
         );
     }
+
+    $stmtPlanes->close();
 }
 ?>
 <!DOCTYPE html>
@@ -564,1471 +793,14 @@ if ($resultadoPlanes) {
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 
-    <style>
-        :root {
-            --report-primary: #0a2540;
-            --report-primary-soft: #edf4fb;
-            --report-blue: #2563eb;
-            --report-blue-dark: #1d4ed8;
-            --report-cyan: #0891b2;
-            --report-green: #17875d;
-            --report-orange: #d97706;
-            --report-red: #c2414b;
-            --report-purple: #7c3aed;
-            --report-text: #172033;
-            --report-muted: #667085;
-            --report-border: #dce4ed;
-            --report-bg: #f4f7fb;
-            --report-card: #ffffff;
-            --report-shadow: 0 14px 36px rgba(15, 36, 58, 0.07);
-        }
 
-        * {
-            box-sizing: border-box;
-        }
-
-        body {
-            margin: 0;
-            background: var(--report-bg);
-            color: var(--report-text);
-            font-family:
-                Inter,
-                ui-sans-serif,
-                system-ui,
-                -apple-system,
-                BlinkMacSystemFont,
-                "Segoe UI",
-                sans-serif;
-        }
-
-        .main-content {
-            min-height: 100vh;
-            margin-left: 270px;
-            transition: margin-left 0.3s ease;
-        }
-
-        body.sidebar-collapsed .main-content {
-            margin-left: 70px;
-        }
-
-        .report-page {
-            min-height: 100vh;
-            padding: 24px;
-            background:
-                radial-gradient(
-                    circle at top right,
-                    rgba(37, 99, 235, 0.08),
-                    transparent 28%
-                ),
-                radial-gradient(
-                    circle at bottom left,
-                    rgba(8, 145, 178, 0.05),
-                    transparent 26%
-                ),
-                var(--report-bg);
-        }
-
-        .report-shell {
-            width: min(1500px, 100%);
-            margin: 0 auto;
-        }
-
-        .report-topbar {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            gap: 18px;
-            margin-bottom: 18px;
-        }
-
-        .report-eyebrow {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            margin-bottom: 8px;
-            color: var(--report-blue);
-            font-size: 0.73rem;
-            font-weight: 900;
-            letter-spacing: 0.08em;
-            text-transform: uppercase;
-        }
-
-        .report-heading h1 {
-            margin: 0;
-            color: var(--report-primary);
-            font-size: clamp(1.75rem, 3vw, 2.35rem);
-            line-height: 1.05;
-        }
-
-        .report-heading p {
-            max-width: 760px;
-            margin: 8px 0 0;
-            color: var(--report-muted);
-            line-height: 1.55;
-        }
-
-        .report-user-chip {
-            display: inline-flex;
-            align-items: center;
-            gap: 11px;
-            padding: 10px 13px;
-            border: 1px solid var(--report-border);
-            border-radius: 13px;
-            background: rgba(255, 255, 255, 0.9);
-            box-shadow: 0 8px 24px rgba(15, 36, 58, 0.05);
-            white-space: nowrap;
-        }
-
-        .report-user-chip i {
-            width: 36px;
-            height: 36px;
-            display: grid;
-            place-items: center;
-            border-radius: 10px;
-            color: var(--report-blue);
-            background: var(--report-primary-soft);
-        }
-
-        .report-user-chip strong,
-        .report-user-chip small {
-            display: block;
-        }
-
-        .report-user-chip strong {
-            color: var(--report-primary);
-            font-size: 0.84rem;
-        }
-
-        .report-user-chip small {
-            margin-top: 2px;
-            color: var(--report-muted);
-            font-size: 0.71rem;
-            text-transform: capitalize;
-        }
-
-        .report-card {
-            background: var(--report-card);
-            border: 1px solid var(--report-border);
-            border-radius: 18px;
-            box-shadow: var(--report-shadow);
-        }
-
-        .report-type-grid {
-            display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 14px;
-            margin-bottom: 18px;
-        }
-
-        .report-type {
-            position: relative;
-            display: flex;
-            align-items: center;
-            gap: 14px;
-            min-height: 92px;
-            padding: 17px 18px;
-            border: 1px solid var(--report-border);
-            border-radius: 16px;
-            background: #fff;
-            cursor: pointer;
-            text-align: left;
-            transition:
-                transform 0.18s ease,
-                border-color 0.18s ease,
-                box-shadow 0.18s ease,
-                background 0.18s ease;
-        }
-
-        .report-type:hover {
-            transform: translateY(-2px);
-            border-color: #b8c9df;
-            box-shadow: 0 10px 25px rgba(15, 36, 58, 0.08);
-        }
-
-        .report-type.active {
-            border-color: rgba(37, 99, 235, 0.42);
-            background:
-                linear-gradient(
-                    135deg,
-                    rgba(37, 99, 235, 0.09),
-                    rgba(8, 145, 178, 0.04)
-                ),
-                #fff;
-            box-shadow:
-                inset 4px 0 0 var(--report-blue),
-                0 10px 25px rgba(37, 99, 235, 0.1);
-        }
-
-        .report-type-icon {
-            width: 48px;
-            height: 48px;
-            flex: 0 0 48px;
-            display: grid;
-            place-items: center;
-            border-radius: 14px;
-            color: var(--report-blue);
-            background: var(--report-primary-soft);
-            font-size: 1.2rem;
-        }
-
-        .report-type[data-type="ventas"] .report-type-icon {
-            color: var(--report-purple);
-            background: #f2edff;
-        }
-
-        .report-type-copy strong,
-        .report-type-copy span {
-            display: block;
-        }
-
-        .report-type-copy strong {
-            color: var(--report-primary);
-            font-size: 0.98rem;
-        }
-
-        .report-type-copy span {
-            margin-top: 4px;
-            color: var(--report-muted);
-            font-size: 0.78rem;
-            line-height: 1.4;
-        }
-
-        .report-type-check {
-            position: absolute;
-            top: 13px;
-            right: 13px;
-            width: 23px;
-            height: 23px;
-            display: grid;
-            place-items: center;
-            border: 1px solid var(--report-border);
-            border-radius: 50%;
-            color: transparent;
-            background: #fff;
-            font-size: 0.7rem;
-        }
-
-        .report-type.active .report-type-check {
-            color: #fff;
-            border-color: var(--report-blue);
-            background: var(--report-blue);
-        }
-
-        .report-filter-card {
-            margin-bottom: 18px;
-            overflow: visible;
-        }
-
-        .report-filter-head {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 14px;
-            padding: 18px 20px 14px;
-            border-bottom: 1px solid #e8edf3;
-        }
-
-        .report-filter-title {
-            display: flex;
-            align-items: center;
-            gap: 11px;
-        }
-
-        .report-filter-title i {
-            width: 38px;
-            height: 38px;
-            display: grid;
-            place-items: center;
-            border-radius: 11px;
-            color: var(--report-blue);
-            background: var(--report-primary-soft);
-        }
-
-        .report-filter-title h2 {
-            margin: 0;
-            color: var(--report-primary);
-            font-size: 1rem;
-        }
-
-        .report-filter-title p {
-            margin: 3px 0 0;
-            color: var(--report-muted);
-            font-size: 0.75rem;
-        }
-
-        .report-filter-count {
-            display: inline-flex;
-            align-items: center;
-            gap: 7px;
-            padding: 7px 10px;
-            border-radius: 999px;
-            color: #42526a;
-            background: #eef3f8;
-            border: 1px solid #d9e3ed;
-            font-size: 0.72rem;
-            font-weight: 850;
-        }
-
-        .report-filter-body {
-            padding: 18px 20px 20px;
-        }
-
-        .report-filter-grid {
-            display: grid;
-            grid-template-columns:
-                minmax(220px, 1.25fr)
-                minmax(170px, 0.75fr)
-                minmax(170px, 0.75fr)
-                minmax(280px, 1fr);
-            gap: 13px;
-            align-items: end;
-        }
-
-        .report-field {
-            min-width: 0;
-        }
-
-        .report-field label {
-            display: block;
-            margin-bottom: 7px;
-            color: #46556a;
-            font-size: 0.73rem;
-            font-weight: 850;
-            text-transform: uppercase;
-            letter-spacing: 0.035em;
-        }
-
-        .report-control {
-            position: relative;
-        }
-
-        .report-control > i {
-            position: absolute;
-            top: 50%;
-            left: 12px;
-            transform: translateY(-50%);
-            color: #8190a5;
-            font-size: 0.86rem;
-            pointer-events: none;
-        }
-
-        .report-control input,
-        .report-control select {
-            width: 100%;
-            height: 44px;
-            border: 1px solid #cfd9e5;
-            border-radius: 11px;
-            background: #fff;
-            color: var(--report-text);
-            font: inherit;
-            font-size: 0.86rem;
-            transition:
-                border-color 0.18s ease,
-                box-shadow 0.18s ease;
-        }
-
-        .report-control input {
-            padding: 0 40px 0 38px;
-        }
-
-        .report-control select {
-            padding: 0 34px 0 12px;
-        }
-
-        .report-control input:focus,
-        .report-control select:focus {
-            outline: none;
-            border-color: #6b9bea;
-            box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.1);
-        }
-
-        .report-date-clear {
-            position: absolute;
-            top: 50%;
-            right: 8px;
-            width: 28px;
-            height: 28px;
-            display: grid;
-            place-items: center;
-            transform: translateY(-50%);
-            border: 0;
-            border-radius: 8px;
-            color: #8190a5;
-            background: transparent;
-            cursor: pointer;
-        }
-
-        .report-date-clear:hover {
-            color: var(--report-red);
-            background: #fff0f2;
-        }
-
-        .report-date-quick {
-            display: flex;
-            gap: 7px;
-            margin-top: 9px;
-            flex-wrap: wrap;
-        }
-
-        .report-quick-btn {
-            min-height: 30px;
-            padding: 5px 10px;
-            border: 1px solid #dbe4ed;
-            border-radius: 999px;
-            color: #546176;
-            background: #f8fafc;
-            font: inherit;
-            font-size: 0.7rem;
-            font-weight: 750;
-            cursor: pointer;
-        }
-
-        .report-quick-btn:hover,
-        .report-quick-btn.active {
-            color: var(--report-blue);
-            border-color: #bfd1ed;
-            background: var(--report-primary-soft);
-        }
-
-        .report-filter-actions {
-            display: flex;
-            justify-content: flex-end;
-            gap: 9px;
-            margin-top: 17px;
-            padding-top: 15px;
-            border-top: 1px dashed #dfe6ee;
-        }
-
-        .report-btn {
-            min-height: 41px;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-            padding: 9px 15px;
-            border: 0;
-            border-radius: 10px;
-            font: inherit;
-            font-size: 0.82rem;
-            font-weight: 850;
-            cursor: pointer;
-            text-decoration: none;
-            transition:
-                transform 0.18s ease,
-                box-shadow 0.18s ease,
-                opacity 0.18s ease;
-        }
-
-        .report-btn:hover:not(:disabled) {
-            transform: translateY(-1px);
-        }
-
-        .report-btn:disabled {
-            opacity: 0.48;
-            cursor: not-allowed;
-        }
-
-        .report-btn-primary {
-            color: #fff;
-            background:
-                linear-gradient(
-                    135deg,
-                    var(--report-blue),
-                    var(--report-blue-dark)
-                );
-            box-shadow: 0 8px 18px rgba(37, 99, 235, 0.2);
-        }
-
-        .report-btn-soft {
-            color: var(--report-primary);
-            background: #eef3f8;
-            border: 1px solid #d8e1eb;
-        }
-
-        .report-btn-excel {
-            color: #fff;
-            background: linear-gradient(135deg, #17875d, #116847);
-            box-shadow: 0 8px 18px rgba(23, 135, 93, 0.18);
-        }
-
-        .report-btn-pdf {
-            color: #fff;
-            background: linear-gradient(135deg, #c2414b, #9f2935);
-            box-shadow: 0 8px 18px rgba(194, 65, 75, 0.17);
-        }
-
-        .report-stats-grid {
-            display: grid;
-            grid-template-columns: repeat(4, minmax(0, 1fr));
-            gap: 13px;
-            margin-bottom: 18px;
-        }
-
-        .report-stat {
-            position: relative;
-            min-height: 112px;
-            padding: 17px;
-            overflow: hidden;
-        }
-
-        .report-stat::after {
-            content: "";
-            position: absolute;
-            top: -24px;
-            right: -24px;
-            width: 88px;
-            height: 88px;
-            border-radius: 50%;
-            background: rgba(37, 99, 235, 0.06);
-        }
-
-        .report-stat-top {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            gap: 10px;
-        }
-
-        .report-stat-icon {
-            width: 38px;
-            height: 38px;
-            display: grid;
-            place-items: center;
-            border-radius: 11px;
-            color: var(--report-blue);
-            background: var(--report-primary-soft);
-        }
-
-        .report-stat:nth-child(2) .report-stat-icon {
-            color: var(--report-green);
-            background: #eaf7f1;
-        }
-
-        .report-stat:nth-child(3) .report-stat-icon {
-            color: var(--report-orange);
-            background: #fff6e7;
-        }
-
-        .report-stat:nth-child(4) .report-stat-icon {
-            color: var(--report-purple);
-            background: #f2edff;
-        }
-
-        .report-stat-label {
-            color: var(--report-muted);
-            font-size: 0.72rem;
-            font-weight: 850;
-            text-transform: uppercase;
-            letter-spacing: 0.04em;
-        }
-
-        .report-stat-value {
-            display: block;
-            margin-top: 10px;
-            color: var(--report-primary);
-            font-size: 1.45rem;
-            font-weight: 900;
-        }
-
-        .report-stat-note {
-            display: block;
-            margin-top: 4px;
-            color: #8290a4;
-            font-size: 0.7rem;
-        }
-
-        .report-table-card {
-            overflow: hidden;
-        }
-
-        .report-table-head {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 14px;
-            padding: 18px 20px;
-            border-bottom: 1px solid #e8edf3;
-        }
-
-        .report-table-head h2 {
-            margin: 0;
-            color: var(--report-primary);
-            font-size: 1.05rem;
-        }
-
-        .report-table-head p {
-            margin: 4px 0 0;
-            color: var(--report-muted);
-            font-size: 0.76rem;
-        }
-
-        .report-export-actions {
-            display: flex;
-            gap: 8px;
-            flex-wrap: wrap;
-        }
-
-        .report-table-wrap {
-            overflow-x: auto;
-        }
-
-        .report-table {
-            width: 100%;
-            min-width: 980px;
-            border-collapse: collapse;
-        }
-
-        .report-table th,
-        .report-table td {
-            padding: 13px 14px;
-            text-align: left;
-            border-bottom: 1px solid #e7edf3;
-            vertical-align: middle;
-        }
-
-        .report-table th {
-            color: #46556a;
-            background: #f6f8fb;
-            font-size: 0.7rem;
-            font-weight: 900;
-            letter-spacing: 0.04em;
-            text-transform: uppercase;
-            white-space: nowrap;
-            cursor: pointer;
-            user-select: none;
-        }
-
-        .report-table th:hover {
-            color: var(--report-blue);
-            background: #f0f5fb;
-        }
-
-        .report-table th i {
-            margin-left: 5px;
-            color: #9aa6b7;
-            font-size: 0.68rem;
-        }
-
-        .report-table td {
-            color: #334155;
-            font-size: 0.8rem;
-        }
-
-        .report-table tbody tr:hover {
-            background: #fafcff;
-        }
-
-        .report-primary-cell {
-            color: var(--report-primary);
-            font-weight: 800;
-        }
-
-        .report-secondary-cell {
-            display: block;
-            margin-top: 3px;
-            color: #7b8798;
-            font-size: 0.69rem;
-        }
-
-        .report-money {
-            color: var(--report-primary);
-            font-weight: 900;
-            white-space: nowrap;
-        }
-
-        .report-money.positive {
-            color: var(--report-green);
-        }
-
-        .report-money.negative {
-            color: var(--report-red);
-        }
-
-        .report-products {
-            max-width: 320px;
-            line-height: 1.4;
-        }
-
-        .report-products-text {
-            display: -webkit-box;
-            overflow: hidden;
-            -webkit-box-orient: vertical;
-            -webkit-line-clamp: 2;
-        }
-
-        .report-pill {
-            display: inline-flex;
-            align-items: center;
-            gap: 5px;
-            padding: 5px 8px;
-            border-radius: 999px;
-            font-size: 0.68rem;
-            font-weight: 850;
-            white-space: nowrap;
-        }
-
-        .report-pill.active,
-        .report-pill.completed {
-            color: #136342;
-            background: #e9f7f0;
-            border: 1px solid #c1e8d5;
-        }
-
-        .report-pill.expired,
-        .report-pill.cancelled {
-            color: #9b2f3b;
-            background: #fff0f2;
-            border: 1px solid #f0c6cc;
-        }
-
-        .report-pill.pending,
-        .report-pill.warning {
-            color: #8c5707;
-            background: #fff7e8;
-            border: 1px solid #f1d49e;
-        }
-
-        .report-pill.neutral {
-            color: #4b5a6f;
-            background: #eef3f7;
-            border: 1px solid #d9e2ea;
-        }
-
-        .report-empty,
-        .report-loading {
-            padding: 56px 20px;
-            text-align: center;
-            color: var(--report-muted);
-        }
-
-        .report-empty i,
-        .report-loading i {
-            display: block;
-            margin-bottom: 12px;
-            color: #a3afbf;
-            font-size: 2.6rem;
-        }
-
-        .report-loading i {
-            color: var(--report-blue);
-            animation: reportSpin 0.9s linear infinite;
-        }
-
-        @keyframes reportSpin {
-            to {
-                transform: rotate(360deg);
-            }
-        }
-
-        .report-pagination-bar {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 15px;
-            padding: 14px 20px;
-            background: #fafbfd;
-            border-top: 1px solid #e7edf3;
-            flex-wrap: wrap;
-        }
-
-        .report-pagination-info {
-            color: var(--report-muted);
-            font-size: 0.76rem;
-        }
-
-        .report-pagination {
-            display: flex;
-            gap: 5px;
-            flex-wrap: wrap;
-        }
-
-        .report-page-btn {
-            min-width: 35px;
-            height: 35px;
-            padding: 0 9px;
-            display: grid;
-            place-items: center;
-            border: 1px solid #d8e1eb;
-            border-radius: 9px;
-            color: var(--report-primary);
-            background: #fff;
-            font: inherit;
-            font-size: 0.76rem;
-            font-weight: 850;
-            cursor: pointer;
-        }
-
-        .report-page-btn:hover:not(:disabled),
-        .report-page-btn.active {
-            color: #fff;
-            border-color: var(--report-blue);
-            background: var(--report-blue);
-        }
-
-        .report-page-btn:disabled {
-            opacity: 0.42;
-            cursor: not-allowed;
-        }
-
-        .report-page-size {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            color: var(--report-muted);
-            font-size: 0.75rem;
-        }
-
-        .report-page-size select {
-            height: 35px;
-            border: 1px solid #d8e1eb;
-            border-radius: 9px;
-            padding: 0 28px 0 10px;
-            background: #fff;
-            color: var(--report-primary);
-            font: inherit;
-            font-size: 0.76rem;
-            font-weight: 750;
-        }
-
-        /* Calendario Flatpickr */
-        .flatpickr-calendar {
-            width: 330px !important;
-            border: 1px solid #d9e3ed !important;
-            border-radius: 16px !important;
-            box-shadow: 0 18px 45px rgba(15, 36, 58, 0.16) !important;
-            overflow: hidden;
-            font-family: inherit !important;
-        }
-
-        .flatpickr-months {
-            padding: 9px 7px 4px;
-            background:
-                linear-gradient(
-                    135deg,
-                    var(--report-primary),
-                    #16446f
-                );
-        }
-
-        .flatpickr-months .flatpickr-month {
-            color: #fff !important;
-            fill: #fff !important;
-            height: 40px;
-        }
-
-        .flatpickr-current-month {
-            padding-top: 7px !important;
-            font-size: 0.92rem !important;
-        }
-
-        .flatpickr-current-month .flatpickr-monthDropdown-months,
-        .flatpickr-current-month input.cur-year {
-            color: #fff !important;
-            font-weight: 800 !important;
-        }
-
-        .flatpickr-current-month .flatpickr-monthDropdown-months {
-            background: transparent !important;
-        }
-
-        .flatpickr-prev-month,
-        .flatpickr-next-month {
-            top: 10px !important;
-            color: #fff !important;
-            fill: #fff !important;
-        }
-
-        .flatpickr-weekdays {
-            padding-top: 8px;
-            background: #f4f7fb;
-        }
-
-        span.flatpickr-weekday {
-            color: #66758a !important;
-            font-size: 0.68rem !important;
-            font-weight: 900 !important;
-        }
-
-        .flatpickr-days {
-            padding: 7px 7px 10px;
-        }
-
-        .flatpickr-day {
-            border-radius: 9px !important;
-            color: #354257 !important;
-            font-weight: 650 !important;
-        }
-
-        .flatpickr-day:hover {
-            border-color: var(--report-primary-soft) !important;
-            background: var(--report-primary-soft) !important;
-        }
-
-        .flatpickr-day.today {
-            color: var(--report-blue) !important;
-            border-color: #93b4ec !important;
-        }
-
-        .flatpickr-day.selected,
-        .flatpickr-day.startRange,
-        .flatpickr-day.endRange {
-            color: #fff !important;
-            border-color: var(--report-blue) !important;
-            background:
-                linear-gradient(
-                    135deg,
-                    var(--report-blue),
-                    var(--report-blue-dark)
-                ) !important;
-            box-shadow: none !important;
-        }
-
-        .flatpickr-day.inRange {
-            border-color: #e7effc !important;
-            background: #e7effc !important;
-            box-shadow:
-                -5px 0 0 #e7effc,
-                5px 0 0 #e7effc !important;
-        }
-
-        @media (max-width: 1200px) {
-            .report-filter-grid {
-                grid-template-columns: repeat(2, minmax(0, 1fr));
-            }
-
-            .report-stats-grid {
-                grid-template-columns: repeat(2, minmax(0, 1fr));
-            }
-        }
-
-        @media (max-width: 900px) {
-            .report-topbar {
-                flex-direction: column;
-            }
-
-            .report-user-chip {
-                width: 100%;
-            }
-
-            .report-type-grid {
-                grid-template-columns: 1fr;
-            }
-
-            .report-table-head {
-                align-items: flex-start;
-                flex-direction: column;
-            }
-        }
-
-        @media (max-width: 768px) {
-            .main-content {
-                margin-left: 0 !important;
-            }
-
-            .report-page {
-                padding: 76px 14px 18px;
-            }
-
-            .report-filter-grid,
-            .report-stats-grid {
-                grid-template-columns: 1fr;
-            }
-
-            .report-filter-head,
-            .report-filter-actions,
-            .report-pagination-bar {
-                align-items: stretch;
-                flex-direction: column;
-            }
-
-            .report-filter-actions .report-btn,
-            .report-export-actions .report-btn {
-                flex: 1;
-            }
-
-            .report-export-actions {
-                width: 100%;
-            }
-        }
-
-        @media (max-width: 390px) {
-            .flatpickr-calendar {
-                width: calc(100vw - 24px) !important;
-            }
-        }
-
-
-        /* ==========================================================
-           DISEÑO ADMINISTRATIVO SOBRIO
-           ========================================================== */
-        :root {
-            --report-primary: #15263a;
-            --report-primary-soft: #eef2f6;
-            --report-blue: #2f66b3;
-            --report-blue-dark: #255390;
-            --report-green: #2f7d5a;
-            --report-orange: #a86712;
-            --report-red: #b54752;
-            --report-purple: #6652a3;
-            --report-text: #243244;
-            --report-muted: #68768a;
-            --report-border: #dbe2ea;
-            --report-bg: #f3f5f8;
-            --report-card: #ffffff;
-            --report-shadow: 0 3px 12px rgba(24, 39, 58, 0.055);
-        }
-
-        .report-page {
-            padding: 24px;
-            background: var(--report-bg);
-        }
-
-        .report-shell {
-            width: min(1460px, 100%);
-        }
-
-        .report-topbar {
-            align-items: center;
-            margin-bottom: 16px;
-            padding-bottom: 16px;
-            border-bottom: 1px solid #dfe5ec;
-        }
-
-        .report-eyebrow {
-            display: none;
-        }
-
-        .report-heading h1 {
-            font-size: clamp(1.55rem, 2.4vw, 2rem);
-            line-height: 1.15;
-            letter-spacing: -0.025em;
-        }
-
-        .report-heading p {
-            margin-top: 5px;
-            font-size: 0.86rem;
-            line-height: 1.45;
-        }
-
-        .report-user-chip {
-            padding: 8px 11px;
-            border-radius: 9px;
-            background: #ffffff;
-            box-shadow: none;
-        }
-
-        .report-user-chip i {
-            width: 31px;
-            height: 31px;
-            border-radius: 8px;
-            color: #526277;
-            background: #edf1f5;
-            font-size: 0.82rem;
-        }
-
-        .report-card {
-            border-radius: 11px;
-            box-shadow: var(--report-shadow);
-        }
-
-        /* Pestañas compactas */
-        .report-type-grid {
-            width: fit-content;
-            max-width: 100%;
-            display: flex;
-            gap: 4px;
-            margin-bottom: 16px;
-            padding: 4px;
-            border: 1px solid #d8e0e8;
-            border-radius: 10px;
-            background: #e9eef3;
-        }
-
-        .report-type {
-            min-height: 42px;
-            gap: 8px;
-            padding: 8px 14px;
-            border: 0;
-            border-radius: 7px;
-            background: transparent;
-            box-shadow: none;
-        }
-
-        .report-type:hover {
-            transform: none;
-            border-color: transparent;
-            background: rgba(255, 255, 255, 0.56);
-            box-shadow: none;
-        }
-
-        .report-type.active {
-            border: 0;
-            background: #ffffff;
-            box-shadow: 0 1px 4px rgba(18, 35, 54, 0.14);
-        }
-
-        .report-type-icon {
-            width: 27px;
-            height: 27px;
-            flex-basis: 27px;
-            border-radius: 7px;
-            color: #526277;
-            background: transparent;
-            font-size: 0.88rem;
-        }
-
-        .report-type[data-type="ventas"] .report-type-icon {
-            color: #526277;
-            background: transparent;
-        }
-
-        .report-type.active .report-type-icon {
-            color: var(--report-blue);
-            background: #edf3fb;
-        }
-
-        .report-type-copy strong {
-            font-size: 0.84rem;
-        }
-
-        .report-type-copy span,
-        .report-type-check {
-            display: none;
-        }
-
-        /* Filtros */
-        .report-filter-card {
-            margin-bottom: 16px;
-        }
-
-        .report-filter-head {
-            padding: 15px 17px 12px;
-        }
-
-        .report-filter-title {
-            gap: 9px;
-        }
-
-        .report-filter-title i {
-            width: 32px;
-            height: 32px;
-            border-radius: 8px;
-            color: #526277;
-            background: #edf1f5;
-            font-size: 0.82rem;
-        }
-
-        .report-filter-title h2 {
-            font-size: 0.94rem;
-        }
-
-        .report-filter-title p {
-            margin-top: 2px;
-            font-size: 0.72rem;
-        }
-
-        .report-filter-meta {
-            display: flex;
-            align-items: center;
-            justify-content: flex-end;
-            gap: 8px;
-            flex-wrap: wrap;
-        }
-
-        .report-live-status {
-            display: inline-flex;
-            align-items: center;
-            gap: 7px;
-            min-height: 29px;
-            padding: 5px 9px;
-            border: 1px solid #dce3ea;
-            border-radius: 7px;
-            color: #667487;
-            background: #f8fafc;
-            font-size: 0.69rem;
-            font-weight: 750;
-            white-space: nowrap;
-        }
-
-        .report-live-dot {
-            width: 7px;
-            height: 7px;
-            border-radius: 50%;
-            background: #7a8797;
-        }
-
-        .report-live-status.ready .report-live-dot {
-            background: #4d8b6d;
-        }
-
-        .report-live-status.loading .report-live-dot {
-            background: #2f66b3;
-            animation: reportPulse 0.9s ease-in-out infinite;
-        }
-
-        .report-live-status.error .report-live-dot {
-            background: #b54752;
-        }
-
-        @keyframes reportPulse {
-            0%, 100% {
-                opacity: 0.38;
-                transform: scale(0.8);
-            }
-
-            50% {
-                opacity: 1;
-                transform: scale(1.15);
-            }
-        }
-
-        .report-filter-count {
-            min-height: 29px;
-            padding: 5px 9px;
-            border-radius: 7px;
-            font-size: 0.69rem;
-        }
-
-        .report-filter-body {
-            padding: 15px 17px 17px;
-        }
-
-        .report-filter-grid {
-            gap: 11px;
-        }
-
-        .report-field label {
-            margin-bottom: 6px;
-            font-size: 0.68rem;
-            letter-spacing: 0.025em;
-        }
-
-        .report-control input,
-        .report-control select {
-            height: 41px;
-            border-radius: 8px;
-            font-size: 0.81rem;
-        }
-
-        .report-date-quick {
-            margin-top: 7px;
-        }
-
-        .report-quick-btn {
-            min-height: 27px;
-            padding: 4px 9px;
-            border-radius: 7px;
-            font-size: 0.66rem;
-        }
-
-        .report-filter-actions {
-            margin-top: 13px;
-            padding-top: 12px;
-        }
-
-        .report-btn {
-            min-height: 38px;
-            padding: 8px 13px;
-            border-radius: 8px;
-            font-size: 0.77rem;
-        }
-
-        .report-btn-primary,
-        .report-btn-excel,
-        .report-btn-pdf {
-            box-shadow: none;
-        }
-
-        .report-btn-primary {
-            background: var(--report-blue);
-        }
-
-        .report-btn-primary:hover:not(:disabled) {
-            background: var(--report-blue-dark);
-        }
-
-        .report-btn-excel {
-            background: #347456;
-        }
-
-        .report-btn-pdf {
-            background: #a9414b;
-        }
-
-        .report-btn-soft {
-            color: #536176;
-            background: #f5f7f9;
-        }
-
-        /* Indicadores */
-        .report-stats-grid {
-            gap: 11px;
-            margin-bottom: 16px;
-        }
-
-        .report-stat {
-            min-height: 94px;
-            padding: 15px;
-            border-top: 3px solid #6f8daf;
-        }
-
-        .report-stat:nth-child(2) {
-            border-top-color: #5d8b72;
-        }
-
-        .report-stat:nth-child(3) {
-            border-top-color: #a47b44;
-        }
-
-        .report-stat:nth-child(4) {
-            border-top-color: #776b9d;
-        }
-
-        .report-stat::after {
-            display: none;
-        }
-
-        .report-stat-icon {
-            width: 30px;
-            height: 30px;
-            border-radius: 8px;
-            color: #64748b !important;
-            background: #f0f3f6 !important;
-            font-size: 0.78rem;
-        }
-
-        .report-stat-label {
-            font-size: 0.67rem;
-        }
-
-        .report-stat-value {
-            margin-top: 7px;
-            font-size: 1.27rem;
-        }
-
-        /* Tabla */
-        .report-table-head {
-            padding: 15px 17px;
-        }
-
-        .report-table-head h2 {
-            font-size: 0.98rem;
-        }
-
-        .report-table-head p {
-            margin-top: 3px;
-            font-size: 0.72rem;
-        }
-
-        .report-table th,
-        .report-table td {
-            padding: 11px 12px;
-        }
-
-        .report-table th {
-            color: #526176;
-            background: #f3f6f9;
-            font-size: 0.66rem;
-        }
-
-        .report-table td {
-            font-size: 0.77rem;
-        }
-
-        .report-table tbody tr:nth-child(even) {
-            background: #fbfcfd;
-        }
-
-        .report-table tbody tr:hover {
-            background: #f2f6fa;
-        }
-
-        .report-table-wrap {
-            transition: opacity 0.18s ease;
-        }
-
-        .report-table-wrap.is-updating {
-            opacity: 0.52;
-            pointer-events: none;
-        }
-
-        .report-pill {
-            padding: 4px 7px;
-            border-radius: 6px;
-            font-size: 0.64rem;
-        }
-
-        .report-pagination-bar {
-            padding: 11px 17px;
-        }
-
-        .report-page-btn {
-            min-width: 32px;
-            height: 32px;
-            border-radius: 7px;
-            font-size: 0.7rem;
-        }
-
-        .report-page-size select {
-            height: 32px;
-            border-radius: 7px;
-        }
-
-        /* Calendario más formal */
-        .flatpickr-calendar {
-            border-radius: 11px !important;
-            box-shadow: 0 12px 34px rgba(15, 36, 58, 0.16) !important;
-        }
-
-        .flatpickr-months {
-            background: #1e3147;
-        }
-
-        .flatpickr-day {
-            border-radius: 6px !important;
-            font-weight: 600 !important;
-        }
-
-        .flatpickr-day.selected,
-        .flatpickr-day.startRange,
-        .flatpickr-day.endRange {
-            background: #2f66b3 !important;
-            border-color: #2f66b3 !important;
-        }
-
-        @media (max-width: 900px) {
-            .report-type-grid {
-                width: 100%;
-            }
-
-            .report-type {
-                flex: 1;
-            }
-        }
-
-        @media (max-width: 768px) {
-            .report-filter-meta {
-                width: 100%;
-                justify-content: flex-start;
-            }
-
-            .report-type-grid {
-                display: grid;
-                grid-template-columns: 1fr;
-            }
-        }
-
-        @media print {
-            .sidebar,
-            .mobile-menu-toggle {
-                display: none !important;
-            }
-
-            .main-content {
-                margin-left: 0 !important;
-            }
-        }
-    </style>
+    <?php
+    $reportesCss = __DIR__ . '/css/reportes.css';
+    ?>
+    <link
+        rel="stylesheet"
+        href="css/reportes.css?v=<?php echo is_file($reportesCss) ? (int) filemtime($reportesCss) : time(); ?>"
+    >
 </head>
 <body>
 <?php require_once __DIR__ . '/includes/sidebar.php'; ?>
@@ -2041,34 +813,71 @@ if ($resultadoPlanes) {
                     <h1>Reportes del sistema</h1>
 
                     <p>
-                        Consulta la información del gimnasio, aplica filtros
-                        y descarga el resultado en Excel o PDF.
+                        <?php if ($vistaGlobalReportes): ?>
+                            Consulta inscripciones y ventas consolidadas de
+                            todas las sucursales, aplica filtros y exporta
+                            el resultado.
+                        <?php else: ?>
+                            Consulta la actividad de
+                            <strong>
+                                <?php echo htmlspecialchars(
+                                    $contextoNombreReportes,
+                                    ENT_QUOTES,
+                                    'UTF-8'
+                                ); ?>
+                            </strong>,
+                            aplica filtros y descarga el resultado.
+                        <?php endif; ?>
                     </p>
                 </div>
 
-                <div class="report-user-chip">
-                    <i class="fas fa-user"></i>
+                <div class="report-topbar-actions">
+                    <div class="report-context-chip <?php echo $vistaGlobalReportes ? 'global' : 'branch'; ?>">
+                        <i class="fas <?php echo $vistaGlobalReportes ? 'fa-chart-pie' : 'fa-building'; ?>"></i>
 
-                    <div>
-                        <strong>
-                            <?php
-                            echo htmlspecialchars(
-                                $usuarioNombre,
-                                ENT_QUOTES,
-                                'UTF-8'
-                            );
-                            ?>
-                        </strong>
+                        <div>
+                            <strong>
+                                <?php echo htmlspecialchars(
+                                    $contextoNombreReportes,
+                                    ENT_QUOTES,
+                                    'UTF-8'
+                                ); ?>
+                            </strong>
 
-                        <small>
-                            <?php
-                            echo htmlspecialchars(
-                                $usuarioRol,
-                                ENT_QUOTES,
-                                'UTF-8'
-                            );
-                            ?>
-                        </small>
+                            <small>
+                                <?php echo htmlspecialchars(
+                                    $contextoDetalleReportes,
+                                    ENT_QUOTES,
+                                    'UTF-8'
+                                ); ?>
+                            </small>
+                        </div>
+                    </div>
+
+                    <div class="report-user-chip">
+                        <i class="fas fa-user"></i>
+
+                        <div>
+                            <strong>
+                                <?php
+                                echo htmlspecialchars(
+                                    $usuarioNombre,
+                                    ENT_QUOTES,
+                                    'UTF-8'
+                                );
+                                ?>
+                            </strong>
+
+                            <small>
+                                <?php
+                                echo htmlspecialchars(
+                                    $usuarioRol,
+                                    ENT_QUOTES,
+                                    'UTF-8'
+                                );
+                                ?>
+                            </small>
+                        </div>
                     </div>
                 </div>
             </header>
@@ -2505,6 +1314,13 @@ if ($resultadoPlanes) {
         );
     ?>;
 
+    const contexto = <?php
+        echo json_encode(
+            $contextoReportes,
+            JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+        );
+    ?>;
+
     const usuario = {
         nombre: <?php
             echo json_encode(
@@ -2667,6 +1483,18 @@ if ($resultadoPlanes) {
             }
         ]
     };
+
+    if (contexto.vista_global) {
+        columnConfig.inscripciones.unshift({
+            key: 'sucursal_nombre',
+            label: 'Sucursal'
+        });
+
+        columnConfig.ventas.splice(2, 0, {
+            key: 'sucursal_nombre',
+            label: 'Sucursal'
+        });
+    }
 
     const datePicker = flatpickr(dom.dateRange, {
         mode: 'range',
@@ -2953,7 +1781,7 @@ if ($resultadoPlanes) {
                 'Detalle de inscripciones';
 
             dom.tableSubtitle.textContent =
-                'Listado de membresías según los filtros seleccionados.';
+                'Listado de membresías · ' + contexto.nombre + '.';
         } else {
             dom.search.placeholder =
                 'Ticket, cliente, vendedor o producto...';
@@ -2962,14 +1790,19 @@ if ($resultadoPlanes) {
                 'Detalle de ventas de productos';
 
             dom.tableSubtitle.textContent =
-                'Listado de ventas con importe original, devoluciones y total neto.';
+                'Ventas, devoluciones y total neto · '
+                + contexto.nombre
+                + '.';
         }
     }
 
     function getFilterParams() {
         const params = new URLSearchParams({
             action: 'datos',
-            tipo: reportType
+            tipo: reportType,
+            vista: contexto.vista_global
+                ? 'global'
+                : 'sucursal'
         });
 
         const search = dom.search.value.trim();
@@ -3411,6 +2244,23 @@ if ($resultadoPlanes) {
             });
     }
 
+    function renderBranchCell(row) {
+        if (!contexto.vista_global) {
+            return '';
+        }
+
+        return `
+            <td class="report-branch-cell">
+                <span class="report-branch-name">
+                    ${escapeHtml(row.sucursal_nombre || 'Sucursal')}
+                </span>
+                <span class="report-branch-key">
+                    ${escapeHtml(row.sucursal_clave || 'SIN CLAVE')}
+                </span>
+            </td>
+        `;
+    }
+
     function renderInscriptionRow(row) {
         const client = [
             row.cliente_nombre,
@@ -3423,6 +2273,7 @@ if ($resultadoPlanes) {
 
         return `
             <tr>
+                ${renderBranchCell(row)}
                 <td>
                     <span class="report-primary-cell">
                         ${escapeHtml(client)}
@@ -3459,6 +2310,7 @@ if ($resultadoPlanes) {
                     </span>
                 </td>
                 <td>${formatDate(row.fecha_venta, true)}</td>
+                ${renderBranchCell(row)}
                 <td class="report-products">
                     <span
                         class="report-products-text"
@@ -3650,7 +2502,9 @@ if ($resultadoPlanes) {
     }
 
     function getFiltersDescription() {
-        const filters = [];
+        const filters = [
+            'Vista: ' + contexto.nombre
+        ];
 
         if (dom.search.value.trim()) {
             filters.push('Búsqueda: ' + dom.search.value.trim());
@@ -3704,9 +2558,11 @@ if ($resultadoPlanes) {
     }
 
     function getReportName() {
-        return reportType === 'inscripciones'
+        const base = reportType === 'inscripciones'
             ? 'Reporte de Inscripciones'
             : 'Reporte de Ventas de Productos';
+
+        return base + ' · ' + contexto.nombre;
     }
 
     function getExportRows() {
@@ -3714,6 +2570,10 @@ if ($resultadoPlanes) {
             return rows.map(function (row) {
                 return {
                     Folio: row.id,
+                    Sucursal:
+                        (row.sucursal_nombre || 'Sucursal')
+                        + ' · '
+                        + (row.sucursal_clave || 'SIN CLAVE'),
                     Cliente: [
                         row.cliente_nombre,
                         row.cliente_apellido
@@ -3737,6 +2597,10 @@ if ($resultadoPlanes) {
             return {
                 Ticket: '#' + String(row.id).padStart(8, '0'),
                 Fecha: row.fecha_venta || '',
+                Sucursal:
+                    (row.sucursal_nombre || 'Sucursal')
+                    + ' · '
+                    + (row.sucursal_clave || 'SIN CLAVE'),
                 Productos: row.productos || '',
                 Unidades: Number(row.unidades || 0),
                 Cliente: row.cliente_nombre || '',
@@ -3786,6 +2650,8 @@ if ($resultadoPlanes) {
                 ['Fecha de generación', generated],
                 ['Responsable', usuario.nombre],
                 ['Perfil', capitalize(usuario.rol)],
+                ['Vista', contexto.nombre],
+                ['Contexto', contexto.detalle],
                 ['Filtros aplicados', getFiltersDescription()],
                 ['Total de registros', rows.length],
                 [],
@@ -3824,6 +2690,7 @@ if ($resultadoPlanes) {
                 reportType === 'inscripciones'
                     ? [
                         { wch: 10 },
+                        { wch: 28 },
                         { wch: 30 },
                         { wch: 16 },
                         { wch: 32 },
@@ -3837,6 +2704,7 @@ if ($resultadoPlanes) {
                     : [
                         { wch: 15 },
                         { wch: 20 },
+                        { wch: 28 },
                         { wch: 52 },
                         { wch: 11 },
                         { wch: 27 },
@@ -4008,6 +2876,96 @@ if ($resultadoPlanes) {
                 analysisSheet,
                 'Análisis'
             );
+
+            if (contexto.vista_global) {
+                const branchMap = new Map();
+
+                rows.forEach(function (row) {
+                    const key =
+                        (row.sucursal_nombre || 'Sucursal')
+                        + ' · '
+                        + (row.sucursal_clave || 'SIN CLAVE');
+
+                    if (!branchMap.has(key)) {
+                        branchMap.set(key, {
+                            registros: 0,
+                            importe: 0
+                        });
+                    }
+
+                    const current =
+                        branchMap.get(key);
+
+                    current.registros++;
+                    current.importe += Number(
+                        reportType === 'inscripciones'
+                            ? row.precio_pagado
+                            : row.total_neto
+                    ) || 0;
+                });
+
+                const branchRows = [
+                    ['Sucursal', 'Registros', 'Importe']
+                ];
+
+                let branchTotalRecords = 0;
+                let branchTotalAmount = 0;
+
+                branchMap.forEach(function (value, key) {
+                    branchRows.push([
+                        key,
+                        value.registros,
+                        value.importe
+                    ]);
+
+                    branchTotalRecords += value.registros;
+                    branchTotalAmount += value.importe;
+                });
+
+                branchRows.push([]);
+                branchRows.push([
+                    'TOTAL',
+                    branchTotalRecords,
+                    branchTotalAmount
+                ]);
+
+                const branchSheet =
+                    XLSX.utils.aoa_to_sheet(branchRows);
+
+                branchSheet['!cols'] = [
+                    { wch: 34 },
+                    { wch: 14 },
+                    { wch: 19 }
+                ];
+
+                const branchRange =
+                    XLSX.utils.decode_range(
+                        branchSheet['!ref']
+                    );
+
+                for (
+                    let row = 1;
+                    row <= branchRange.e.r;
+                    row++
+                ) {
+                    const address =
+                        XLSX.utils.encode_cell({
+                            r: row,
+                            c: 2
+                        });
+
+                    if (branchSheet[address]) {
+                        branchSheet[address].z =
+                            '$#,##0.00';
+                    }
+                }
+
+                XLSX.utils.book_append_sheet(
+                    workbook,
+                    branchSheet,
+                    'Sucursales'
+                );
+            }
 
             const now = new Date();
             const stamp =
@@ -4238,6 +3196,12 @@ if ($resultadoPlanes) {
             const statData = getStatsForExport();
             const infoRows = [
                 [
+                    'Vista',
+                    contexto.nombre
+                    + ' · '
+                    + contexto.detalle
+                ],
+                [
                     'Periodo',
                     startDate || endDate
                         ? (
@@ -4367,6 +3331,7 @@ if ($resultadoPlanes) {
 
                 headers = [
                     'Folio',
+                    'Sucursal',
                     'Cliente',
                     'Teléfono',
                     'Plan',
@@ -4380,6 +3345,7 @@ if ($resultadoPlanes) {
                 body = exportRows.map(function (row) {
                     return [
                         row.Folio,
+                        row.Sucursal,
                         row.Cliente,
                         row.Teléfono,
                         row.Plan,
@@ -4398,6 +3364,7 @@ if ($resultadoPlanes) {
                     '',
                     '',
                     '',
+                    '',
                     'TOTAL',
                     formatMoney(totalIncome),
                     ''
@@ -4405,12 +3372,15 @@ if ($resultadoPlanes) {
 
                 columnStyles = {
                     1: {
-                        cellWidth: 37
-                    },
-                    3: {
                         cellWidth: 28
                     },
-                    7: {
+                    2: {
+                        cellWidth: 34
+                    },
+                    4: {
+                        cellWidth: 25
+                    },
+                    8: {
                         halign: 'right'
                     }
                 };
@@ -4438,6 +3408,7 @@ if ($resultadoPlanes) {
                 headers = [
                     'Ticket',
                     'Fecha',
+                    'Sucursal',
                     'Productos',
                     'Unid.',
                     'Cliente',
@@ -4452,6 +3423,7 @@ if ($resultadoPlanes) {
                     return [
                         row.Ticket,
                         row.Fecha,
+                        row.Sucursal,
                         row.Productos,
                         row.Unidades,
                         row.Cliente,
@@ -4469,6 +3441,7 @@ if ($resultadoPlanes) {
                     '',
                     '',
                     '',
+                    '',
                     'TOTALES',
                     formatMoney(totals.gross),
                     formatMoney(totals.returns),
@@ -4478,18 +3451,21 @@ if ($resultadoPlanes) {
 
                 columnStyles = {
                     2: {
-                        cellWidth: 53
+                        cellWidth: 27
                     },
-                    4: {
-                        cellWidth: 29
+                    3: {
+                        cellWidth: 45
                     },
-                    6: {
-                        halign: 'right'
+                    5: {
+                        cellWidth: 27
                     },
                     7: {
                         halign: 'right'
                     },
                     8: {
+                        halign: 'right'
+                    },
+                    9: {
                         halign: 'right'
                     }
                 };
@@ -4511,8 +3487,8 @@ if ($resultadoPlanes) {
                     font: 'helvetica',
                     fontSize:
                         reportType === 'ventas'
-                            ? 6.15
-                            : 6.65,
+                            ? 5.75
+                            : 6.15,
                     cellPadding: 2.25,
                     lineColor: line,
                     lineWidth: 0.1,
@@ -4563,7 +3539,9 @@ if ($resultadoPlanes) {
                     doc.setFont('helvetica', 'normal');
 
                     doc.text(
-                        empresa.nombre || 'Gimnasio',
+                        (empresa.nombre || 'Gimnasio')
+                        + ' · '
+                        + contexto.nombre,
                         12,
                         pageHeight - 5.3
                     );

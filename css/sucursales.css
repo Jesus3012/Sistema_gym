@@ -1,0 +1,1763 @@
+body.sucursales-page {
+    --br-azul: #1e3a8a;
+    --br-azul-hover: #152c6b;
+    --br-azul-suave: #eef4ff;
+    --br-fondo: #f4f6f9;
+    --br-blanco: #ffffff;
+    --br-texto: #1f2937;
+    --br-suave: #64748b;
+    --br-borde: #e1e7ef;
+    --br-borde-suave: #edf1f6;
+    --br-verde: #059669;
+    --br-verde-suave: #ecfdf5;
+    --br-rojo: #b91c1c;
+    --br-rojo-suave: #fef2f2;
+    --br-amarillo: #b45309;
+    --br-amarillo-suave: #fffbeb;
+    --br-sombra: 0 8px 24px rgba(15, 23, 42, .055);
+
+    width: 100%;
+    min-height: 100%;
+    margin: 0;
+    overflow-x: hidden;
+    background: var(--br-fondo);
+}
+
+/*
+ * El diseño de este módulo queda aislado del sidebar.
+ * navbar.css conserva el control total de su tipografía y espaciado.
+ */
+.sucursales-page .br-main,
+.sucursales-page .br-modal {
+    color: var(--br-texto);
+    font-family: "Segoe UI", Roboto, Arial, sans-serif;
+}
+
+.sucursales-page .br-main *,
+.sucursales-page .br-modal * {
+    box-sizing: border-box;
+}
+
+.sucursales-page .br-main button,
+.sucursales-page .br-main input,
+.sucursales-page .br-main select,
+.sucursales-page .br-main textarea,
+.sucursales-page .br-main a,
+.sucursales-page .br-modal button,
+.sucursales-page .br-modal input,
+.sucursales-page .br-modal select,
+.sucursales-page .br-modal textarea,
+.sucursales-page .br-modal a {
+    font: inherit;
+}
+
+.sucursales-page .br-main button:disabled,
+.sucursales-page .br-modal button:disabled {
+    cursor: not-allowed !important;
+    opacity: .55;
+}
+
+.sucursales-page .main-content {
+    width: auto;
+    min-width: 0;
+    margin-left: var(--sidebar-width, 280px);
+    transition: margin-left .28s ease;
+}
+
+body.sidebar-collapsed.sucursales-page .main-content {
+    margin-left: var(--sidebar-collapsed-width, 78px);
+}
+
+.sucursales-page .br-main {
+    min-height: 100vh;
+    padding: 22px 24px 30px;
+}
+
+.sucursales-page .br-container {
+    width: min(1380px, 100%);
+    margin: 0 auto;
+}
+
+/* Encabezado */
+
+.sucursales-page .br-page-header {
+    min-height: 104px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 22px;
+    margin-bottom: 14px;
+    padding: 18px 20px;
+    border: 1px solid var(--br-borde);
+    border-radius: 15px;
+    background:
+        linear-gradient(
+            135deg,
+            rgba(238, 244, 255, .92),
+            rgba(255, 255, 255, .98)
+        );
+    box-shadow: var(--br-sombra);
+}
+
+.sucursales-page .br-page-heading {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+}
+
+.sucursales-page .br-page-icon {
+    width: 48px;
+    height: 48px;
+    display: grid;
+    place-items: center;
+    flex: 0 0 48px;
+    border: 1px solid #dbeafe;
+    border-radius: 13px;
+    color: var(--br-azul);
+    background: #ffffff;
+    box-shadow: 0 5px 14px rgba(30, 58, 138, .08);
+    font-size: 1rem;
+}
+
+.sucursales-page .br-page-copy {
+    min-width: 0;
+}
+
+.sucursales-page .br-page-kicker {
+    display: block;
+    margin-bottom: 3px;
+    color: #5b72a3;
+    font-size: .58rem;
+    font-weight: 850;
+    letter-spacing: .065em;
+    text-transform: uppercase;
+}
+
+.sucursales-page .br-page-header h1 {
+    margin: 0;
+    color: var(--br-azul-hover);
+    font-size: clamp(1.42rem, 2.2vw, 1.82rem);
+    line-height: 1.12;
+    letter-spacing: -.03em;
+}
+
+.sucursales-page .br-page-header p {
+    max-width: 690px;
+    margin: 5px 0 0;
+    color: var(--br-suave);
+    font-size: .72rem;
+    line-height: 1.45;
+}
+
+.sucursales-page .br-new-branch {
+    flex: 0 0 auto;
+}
+
+/* Botones */
+
+.sucursales-page .br-primary,
+.sucursales-page .br-secondary,
+.sucursales-page .br-danger,
+.sucursales-page .br-soft-button,
+.sucursales-page .br-icon-button {
+    min-height: 40px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    padding: 0 14px;
+    border-radius: 9px;
+    cursor: pointer;
+    font-size: .69rem;
+    font-weight: 800;
+    text-decoration: none;
+    transition:
+        border-color .18s ease,
+        background .18s ease,
+        color .18s ease,
+        transform .18s ease;
+}
+
+.sucursales-page .br-primary {
+    border: 0;
+    color: #fff;
+    background: var(--br-azul);
+    box-shadow: 0 7px 16px rgba(30, 58, 138, .12);
+}
+
+.sucursales-page .br-primary:hover:not(:disabled) {
+    color: #fff;
+    background: var(--br-azul-hover);
+    transform: translateY(-1px);
+}
+
+.sucursales-page .br-secondary {
+    border: 1px solid #cbd5e1;
+    color: #334155;
+    background: #fff;
+}
+
+.sucursales-page .br-secondary:hover:not(:disabled) {
+    border-color: #9fb3d0;
+    color: var(--br-azul);
+    background: #f8fafc;
+}
+
+.sucursales-page .br-danger {
+    border: 1px solid #fecaca;
+    color: var(--br-rojo);
+    background: #fff7f7;
+}
+
+.sucursales-page .br-danger:hover:not(:disabled) {
+    border-color: #fca5a5;
+    background: var(--br-rojo-suave);
+}
+
+.sucursales-page .br-soft-button {
+    border: 1px solid #bfdbfe;
+    color: var(--br-azul);
+    background: var(--br-azul-suave);
+}
+
+.sucursales-page .br-soft-button:hover {
+    border-color: #93b4e5;
+    color: var(--br-azul);
+    background: #e2edff;
+}
+
+.sucursales-page .br-icon-button {
+    width: 38px;
+    min-height: 38px;
+    padding: 0;
+    border: 1px solid var(--br-borde);
+    color: #475569;
+    background: #fff;
+}
+
+.sucursales-page .br-icon-button:hover {
+    border-color: #9fb3d0;
+    color: var(--br-azul);
+    background: #f8fafc;
+}
+
+.sucursales-page .br-technical-button {
+    border-style: dashed;
+    color: #64748b;
+    background: #f8fafc;
+}
+
+/* Alertas y resumen */
+
+.sucursales-page .br-message {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin-bottom: 18px;
+    padding: 13px 15px;
+    border: 1px solid #fecaca;
+    border-radius: 11px;
+    color: #991b1b;
+    background: var(--br-rojo-suave);
+    font-size: .74rem;
+    line-height: 1.5;
+}
+
+.sucursales-page .br-overview {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+    margin-bottom: 14px;
+}
+
+.sucursales-page .br-overview-card {
+    min-width: 0;
+    min-height: 70px;
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    padding: 12px 14px;
+    border: 1px solid var(--br-borde);
+    border-radius: 12px;
+    background: #fff;
+    box-shadow: 0 4px 14px rgba(15, 23, 42, .04);
+}
+
+.sucursales-page .br-overview-icon {
+    width: 38px;
+    height: 38px;
+    display: grid;
+    place-items: center;
+    flex: 0 0 38px;
+    border-radius: 10px;
+    font-size: .78rem;
+}
+
+.sucursales-page .br-overview-icon.blue {
+    color: #1d4ed8;
+    background: #dbeafe;
+}
+
+.sucursales-page .br-overview-icon.green {
+    color: #047857;
+    background: #d1fae5;
+}
+
+.sucursales-page .br-overview-icon.purple {
+    color: #6d28d9;
+    background: #ede9fe;
+}
+
+.sucursales-page .br-overview-icon.orange {
+    color: #b45309;
+    background: #fef3c7;
+}
+
+.sucursales-page .br-overview-card > div {
+    min-width: 0;
+}
+
+.sucursales-page .br-overview-card span,
+.sucursales-page .br-overview-card strong {
+    display: block;
+}
+
+.sucursales-page .br-overview-card span {
+    overflow: hidden;
+    color: var(--br-suave);
+    font-size: .57rem;
+    font-weight: 750;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.sucursales-page .br-overview-card strong {
+    margin-top: 3px;
+    color: var(--br-azul-hover);
+    font-size: .95rem;
+    line-height: 1;
+}
+
+.sucursales-page .br-overview-card strong {
+    color: var(--br-azul-hover);
+    font-size: 1.08rem;
+}
+
+.sucursales-page .br-overview-card span {
+    margin-top: 3px;
+    color: var(--br-suave);
+    font-size: .64rem;
+}
+
+/* Tarjetas y lista de sucursales */
+
+.sucursales-page .br-card {
+    min-width: 0;
+    overflow: hidden;
+    border: 1px solid var(--br-borde);
+    border-radius: 14px;
+    background: #fff;
+    box-shadow: var(--br-sombra);
+}
+
+.sucursales-page .br-card + .br-card {
+    margin-top: 16px;
+}
+
+.sucursales-page .br-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 15px;
+    padding: 16px 18px;
+    border-bottom: 1px solid var(--br-borde-suave);
+}
+
+.sucursales-page .br-card-header h2,
+.sucursales-page .br-card-header h3 {
+    margin: 0;
+    color: var(--br-azul-hover);
+    font-size: .94rem;
+}
+
+.sucursales-page .br-card-header p {
+    margin: 4px 0 0;
+    color: var(--br-suave);
+    font-size: .64rem;
+    line-height: 1.4;
+}
+
+.sucursales-page .br-card-tools {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+}
+
+.sucursales-page .br-search {
+    position: relative;
+    width: min(330px, 40vw);
+}
+
+.sucursales-page .br-search i {
+    position: absolute;
+    top: 50%;
+    left: 12px;
+    color: #94a3b8;
+    transform: translateY(-50%);
+    pointer-events: none;
+}
+
+.sucursales-page .br-search input {
+    width: 100%;
+    min-height: 40px;
+    padding: 0 12px 0 36px;
+    border: 1px solid var(--br-borde);
+    border-radius: 9px;
+    outline: none;
+    color: var(--br-texto);
+    background: #f8fafc;
+    font-size: .69rem;
+}
+
+.sucursales-page .br-search input:focus {
+    border-color: #8facd9;
+    background: #fff;
+    box-shadow: 0 0 0 3px rgba(30, 58, 138, .07);
+}
+
+.sucursales-page .br-table-head,
+.sucursales-page .br-branch-item {
+    display: grid;
+    grid-template-columns:
+        minmax(260px, 1.55fr)
+        120px
+        120px
+        140px
+        120px;
+    align-items: center;
+    gap: 14px;
+}
+
+.sucursales-page .br-table-head {
+    padding: 10px 18px;
+    border-bottom: 1px solid var(--br-borde-suave);
+    color: #64748b;
+    background: #f8fafc;
+    font-size: .58rem;
+    font-weight: 850;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+}
+
+.sucursales-page .br-branch-list {
+    display: grid;
+}
+
+.sucursales-page .br-branch-item {
+    min-width: 0;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--br-borde-suave);
+    color: inherit;
+    background: #fff;
+    transition:
+        background .16s ease,
+        box-shadow .16s ease;
+}
+
+.sucursales-page .br-branch-item:last-child {
+    border-bottom: 0;
+}
+
+.sucursales-page .br-branch-item:hover {
+    background: #fbfdff;
+}
+
+.sucursales-page .br-branch-item.active {
+    background: #f4f8ff;
+    box-shadow: inset 3px 0 0 var(--br-azul);
+}
+
+.sucursales-page .br-branch-item.inactive {
+    opacity: .68;
+}
+
+.sucursales-page .br-branch-main {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 11px;
+}
+
+.sucursales-page .br-branch-icon {
+    width: 40px;
+    height: 40px;
+    display: grid;
+    place-items: center;
+    flex: 0 0 40px;
+    border-radius: 10px;
+    color: var(--br-azul);
+    background: var(--br-azul-suave);
+}
+
+.sucursales-page .br-branch-copy {
+    min-width: 0;
+}
+
+.sucursales-page .br-branch-copy strong,
+.sucursales-page .br-branch-copy span {
+    display: block;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.sucursales-page .br-branch-copy strong {
+    color: var(--br-texto);
+    font-size: .75rem;
+}
+
+.sucursales-page .br-branch-copy span {
+    margin-top: 3px;
+    color: var(--br-suave);
+    font-size: .59rem;
+}
+
+.sucursales-page .br-mobile-label {
+    display: none;
+    margin-bottom: 4px;
+    color: #64748b;
+    font-size: .56rem;
+    font-weight: 850;
+    text-transform: uppercase;
+}
+
+.sucursales-page .br-cell-value {
+    color: #334155;
+    font-size: .69rem;
+    font-weight: 700;
+}
+
+.sucursales-page .br-badge,
+.sucursales-page .br-tag {
+    min-height: 25px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    padding: 0 8px;
+    border-radius: 999px;
+    color: #475569;
+    background: #f1f5f9;
+    font-size: .56rem;
+    font-weight: 850;
+    white-space: nowrap;
+}
+
+.sucursales-page .br-badge.active,
+.sucursales-page .br-tag.session {
+    color: #065f46;
+    background: var(--br-verde-suave);
+}
+
+.sucursales-page .br-badge.inactive {
+    color: #991b1b;
+    background: var(--br-rojo-suave);
+}
+
+.sucursales-page .br-badge.default,
+.sucursales-page .br-tag.matrix {
+    color: #1e40af;
+    background: #dbeafe;
+}
+
+.sucursales-page .br-row-action {
+    display: flex;
+    justify-content: flex-end;
+}
+
+.sucursales-page .br-empty {
+    padding: 34px 18px;
+    color: var(--br-suave);
+    text-align: center;
+    font-size: .72rem;
+}
+
+.sucursales-page .br-empty i {
+    display: block;
+    margin-bottom: 9px;
+    color: #94a3b8;
+    font-size: 1.35rem;
+}
+
+.sucursales-page .br-empty-compact {
+    padding: 24px 15px;
+}
+
+/* Administración de sede */
+
+.sucursales-page .br-management {
+    scroll-margin-top: 20px;
+}
+
+.sucursales-page .br-management-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    padding: 17px 18px;
+    border-bottom: 1px solid var(--br-borde-suave);
+    background: linear-gradient(
+        135deg,
+        rgba(238, 244, 255, .92),
+        #fff
+    );
+}
+
+.sucursales-page .br-management-title {
+    min-width: 0;
+}
+
+.sucursales-page .br-management-kicker {
+    display: block;
+    margin-bottom: 4px;
+    color: var(--br-azul);
+    font-size: .59rem;
+    font-weight: 850;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+}
+
+.sucursales-page .br-management-title h2 {
+    margin: 0;
+    color: var(--br-azul-hover);
+    font-size: 1.13rem;
+}
+
+.sucursales-page .br-management-title p {
+    margin: 5px 0 0;
+    color: var(--br-suave);
+    font-size: .64rem;
+}
+
+.sucursales-page .br-management-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 7px;
+    flex-wrap: wrap;
+}
+
+.sucursales-page .br-tabs {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 9px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--br-borde-suave);
+    background: #fbfcfe;
+}
+
+.sucursales-page .br-tab {
+    min-width: 0;
+    min-height: 58px;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 9px 11px;
+    border: 1px solid var(--br-borde);
+    border-radius: 10px;
+    color: #475569;
+    background: #fff;
+    cursor: pointer;
+    text-align: left;
+    transition:
+        border-color .18s ease,
+        color .18s ease,
+        background .18s ease;
+}
+
+.sucursales-page .br-tab:hover {
+    border-color: #a9bddd;
+    color: var(--br-azul);
+}
+
+.sucursales-page .br-tab.active {
+    border-color: #8facd9;
+    color: var(--br-azul);
+    background: var(--br-azul-suave);
+    box-shadow: 0 0 0 3px rgba(30, 58, 138, .05);
+}
+
+.sucursales-page .br-tab-icon {
+    width: 32px;
+    height: 32px;
+    display: grid;
+    place-items: center;
+    flex: 0 0 32px;
+    border-radius: 8px;
+    color: inherit;
+    background: rgba(148, 163, 184, .12);
+}
+
+.sucursales-page .br-tab-copy {
+    min-width: 0;
+}
+
+.sucursales-page .br-tab-copy strong,
+.sucursales-page .br-tab-copy span {
+    display: block;
+}
+
+.sucursales-page .br-tab-copy strong {
+    font-size: .67rem;
+}
+
+.sucursales-page .br-tab-copy span {
+    margin-top: 2px;
+    color: var(--br-suave);
+    font-size: .54rem;
+    line-height: 1.3;
+}
+
+.sucursales-page .br-tab-panel {
+    display: none;
+    padding: 16px;
+}
+
+.sucursales-page .br-tab-panel.active {
+    display: block;
+}
+
+.sucursales-page .br-panel-intro {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 13px;
+    margin-bottom: 13px;
+}
+
+.sucursales-page .br-panel-intro h3 {
+    margin: 0;
+    color: var(--br-azul-hover);
+    font-size: .84rem;
+}
+
+.sucursales-page .br-panel-intro p {
+    margin: 4px 0 0;
+    color: var(--br-suave);
+    font-size: .61rem;
+}
+
+/* Métricas y secciones */
+
+.sucursales-page .br-metrics {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 9px;
+    margin-bottom: 13px;
+}
+
+.sucursales-page .br-metric {
+    min-width: 0;
+    padding: 12px;
+    border: 1px solid var(--br-borde);
+    border-radius: 10px;
+    background: #fff;
+}
+
+.sucursales-page .br-metric span,
+.sucursales-page .br-metric strong {
+    display: block;
+}
+
+.sucursales-page .br-metric span {
+    color: var(--br-suave);
+    font-size: .53rem;
+    font-weight: 850;
+    letter-spacing: .035em;
+    text-transform: uppercase;
+}
+
+.sucursales-page .br-metric strong {
+    margin-top: 5px;
+    color: var(--br-azul-hover);
+    font-size: .8rem;
+}
+
+.sucursales-page .br-section {
+    overflow: hidden;
+    border: 1px solid var(--br-borde);
+    border-radius: 12px;
+    background: #fff;
+}
+
+.sucursales-page .br-section + .br-section {
+    margin-top: 13px;
+}
+
+.sucursales-page .br-section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 13px;
+    padding: 13px 15px;
+    border-bottom: 1px solid var(--br-borde-suave);
+    background: #f8fafc;
+}
+
+.sucursales-page .br-section-header h3 {
+    margin: 0;
+    color: var(--br-azul-hover);
+    font-size: .74rem;
+}
+
+.sucursales-page .br-section-header p {
+    margin: 3px 0 0;
+    color: var(--br-suave);
+    font-size: .56rem;
+}
+
+.sucursales-page .br-info-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1px;
+    background: var(--br-borde-suave);
+}
+
+.sucursales-page .br-info-box {
+    min-width: 0;
+    padding: 13px 15px;
+    background: #fff;
+}
+
+.sucursales-page .br-info-box.full {
+    grid-column: 1 / -1;
+}
+
+.sucursales-page .br-info-box span,
+.sucursales-page .br-info-box strong {
+    display: block;
+}
+
+.sucursales-page .br-info-box span {
+    color: var(--br-suave);
+    font-size: .55rem;
+    font-weight: 850;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+}
+
+.sucursales-page .br-info-box strong {
+    margin-top: 5px;
+    overflow-wrap: anywhere;
+    color: var(--br-texto);
+    font-size: .69rem;
+    line-height: 1.42;
+}
+
+/* Personal, planes y filas */
+
+.sucursales-page .br-list {
+    display: grid;
+}
+
+.sucursales-page .br-person-row,
+.sucursales-page .br-terminal-row {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 13px;
+    padding: 13px 15px;
+    border-bottom: 1px solid var(--br-borde-suave);
+}
+
+.sucursales-page .br-plan-row {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: minmax(200px, 1fr) 165px 135px 110px;
+    align-items: end;
+    gap: 11px;
+    padding: 13px 15px;
+    border-bottom: 1px solid var(--br-borde-suave);
+}
+
+.sucursales-page .br-person-row:last-child,
+.sucursales-page .br-terminal-row:last-child,
+.sucursales-page .br-plan-row:last-child {
+    border-bottom: 0;
+}
+
+.sucursales-page .br-person-main,
+.sucursales-page .br-terminal-main,
+.sucursales-page .br-plan-main {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.sucursales-page .br-avatar,
+.sucursales-page .br-row-icon {
+    width: 38px;
+    height: 38px;
+    display: grid;
+    place-items: center;
+    flex: 0 0 38px;
+    overflow: hidden;
+    border-radius: 9px;
+    color: var(--br-azul);
+    background: var(--br-azul-suave);
+}
+
+.sucursales-page .br-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.sucursales-page .br-row-copy {
+    min-width: 0;
+}
+
+.sucursales-page .br-row-copy strong,
+.sucursales-page .br-row-copy span {
+    display: block;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.sucursales-page .br-row-copy strong {
+    color: var(--br-texto);
+    font-size: .7rem;
+}
+
+.sucursales-page .br-row-copy span {
+    margin-top: 3px;
+    color: var(--br-suave);
+    font-size: .57rem;
+}
+
+.sucursales-page .br-row-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.sucursales-page .br-action-text {
+    min-height: 34px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 0 9px;
+    border: 1px solid var(--br-borde);
+    border-radius: 8px;
+    color: #475569;
+    background: #fff;
+    cursor: pointer;
+    font-size: .59rem;
+    font-weight: 800;
+}
+
+.sucursales-page .br-action-text:hover {
+    border-color: #9fb3d0;
+    color: var(--br-azul);
+    background: #f8fafc;
+}
+
+.sucursales-page .br-action-text.danger {
+    border-color: #fecaca;
+    color: var(--br-rojo);
+    background: #fffafa;
+}
+
+.sucursales-page .br-plan-field {
+    min-width: 0;
+}
+
+.sucursales-page .br-plan-field label {
+    display: block;
+    margin-bottom: 6px;
+    color: #64748b;
+    font-size: .54rem;
+    font-weight: 850;
+    text-transform: uppercase;
+}
+
+.sucursales-page .br-plan-price,
+.sucursales-page .br-plan-state {
+    width: 100%;
+    min-height: 38px;
+    border: 1px solid var(--br-borde);
+    border-radius: 8px;
+    outline: none;
+    color: var(--br-texto);
+    background: #fff;
+    font-size: .66rem;
+}
+
+.sucursales-page .br-plan-price {
+    padding: 0 9px;
+}
+
+.sucursales-page .br-plan-state {
+    padding: 0 8px;
+}
+
+.sucursales-page .br-plan-price:focus,
+.sucursales-page .br-plan-state:focus {
+    border-color: #8facd9;
+    box-shadow: 0 0 0 3px rgba(30, 58, 138, .06);
+}
+
+/* Modales */
+
+.sucursales-page .br-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 50000;
+    display: grid;
+    place-items: center;
+    padding: 14px;
+    visibility: hidden;
+    opacity: 0;
+    pointer-events: none;
+    background: rgba(15, 23, 42, .58);
+    backdrop-filter: blur(5px);
+    transition:
+        opacity .16s ease,
+        visibility .16s ease;
+}
+
+.sucursales-page .br-modal.open {
+    visibility: visible;
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.sucursales-page .br-modal-card {
+    width: min(650px, 100%);
+    max-height: calc(100dvh - 28px);
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, .75);
+    border-radius: 15px;
+    background: #fff;
+    box-shadow: 0 30px 80px rgba(2, 6, 23, .3);
+    transform: translateY(10px) scale(.985);
+    transition: transform .18s ease;
+}
+
+.sucursales-page .br-modal.open .br-modal-card {
+    transform: translateY(0) scale(1);
+}
+
+.sucursales-page .br-modal-card.small {
+    width: min(520px, 100%);
+}
+
+.sucursales-page .br-modal-header,
+.sucursales-page .br-modal-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 17px;
+}
+
+.sucursales-page .br-modal-header {
+    border-bottom: 1px solid var(--br-borde-suave);
+    background: #fbfcfe;
+}
+
+.sucursales-page .br-modal-footer {
+    justify-content: flex-end;
+    border-top: 1px solid var(--br-borde-suave);
+    background: #fbfcfe;
+}
+
+.sucursales-page .br-modal-header h2 {
+    margin: 0;
+    color: var(--br-azul-hover);
+    font-size: .96rem;
+}
+
+.sucursales-page .br-modal-header p {
+    margin: 4px 0 0;
+    color: var(--br-suave);
+    font-size: .59rem;
+}
+
+.sucursales-page .br-modal-kicker {
+    display: block;
+    margin-bottom: 4px;
+    color: #b45309;
+    font-size: .54rem;
+    font-weight: 850;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+}
+
+.sucursales-page .br-modal-close {
+    width: 38px;
+    height: 38px;
+    display: grid;
+    place-items: center;
+    flex: 0 0 38px;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    outline: none;
+    color: #64748b;
+    background: #f1f5f9;
+    cursor: pointer;
+    box-shadow: none;
+    transition:
+        color .16s ease,
+        background .16s ease,
+        border-color .16s ease,
+        transform .16s ease;
+}
+
+.sucursales-page .br-modal-close:hover {
+    border-color: #dbe3ed;
+    color: var(--br-azul);
+    background: #e8eef7;
+    transform: translateY(-1px);
+}
+
+.sucursales-page .br-modal-close:focus,
+.sucursales-page .br-modal-close:focus-visible {
+    border-color: #93b4e5;
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(30, 58, 138, .1);
+}
+
+.sucursales-page .br-modal-close i {
+    line-height: 1;
+    pointer-events: none;
+}
+
+.sucursales-page .br-modal-body {
+    max-height: calc(100dvh - 185px);
+    padding: 17px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+
+.sucursales-page .br-form-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.sucursales-page .br-field {
+    min-width: 0;
+}
+
+.sucursales-page .br-field.full {
+    grid-column: 1 / -1;
+}
+
+.sucursales-page .br-field label {
+    display: block;
+    margin-bottom: 6px;
+    color: #334155;
+    font-size: .62rem;
+    font-weight: 800;
+}
+
+.sucursales-page .br-control {
+    width: 100%;
+    min-height: 42px;
+    padding: 8px 10px;
+    border: 1px solid var(--br-borde);
+    border-radius: 9px;
+    outline: none;
+    color: var(--br-texto);
+    background: #f8fafc;
+    font-size: .7rem;
+}
+
+.sucursales-page textarea.br-control {
+    min-height: 82px;
+    resize: vertical;
+}
+
+.sucursales-page .br-control:focus {
+    border-color: #8facd9;
+    background: #fff;
+    box-shadow: 0 0 0 3px rgba(30, 58, 138, .06);
+}
+
+.sucursales-page .br-checks {
+    display: grid;
+    gap: 8px;
+}
+
+.sucursales-page .br-check {
+    display: flex;
+    align-items: flex-start;
+    gap: 9px;
+    padding: 10px;
+    border: 1px solid var(--br-borde);
+    border-radius: 9px;
+    background: #fbfcfe;
+    cursor: pointer;
+}
+
+.sucursales-page .br-check input {
+    width: 17px;
+    height: 17px;
+    margin: 1px 0 0;
+    accent-color: var(--br-azul);
+}
+
+.sucursales-page .br-check strong {
+    display: block;
+    color: var(--br-texto);
+    font-size: .63rem;
+}
+
+.sucursales-page .br-check span span {
+    display: block;
+    margin-top: 2px;
+    color: var(--br-suave);
+    font-size: .55rem;
+    line-height: 1.35;
+}
+
+/* Configuración técnica */
+
+.sucursales-page .br-technical-modal {
+    width: min(820px, 100%);
+}
+
+.sucursales-page .br-technical-warning {
+    display: flex;
+    align-items: flex-start;
+    gap: 11px;
+    margin-bottom: 14px;
+    padding: 12px 13px;
+    border: 1px solid #fde68a;
+    border-radius: 10px;
+    color: #78350f;
+    background: #fffbeb;
+}
+
+.sucursales-page .br-technical-warning > i {
+    margin-top: 2px;
+    color: #b45309;
+}
+
+.sucursales-page .br-technical-warning strong,
+.sucursales-page .br-technical-warning span {
+    display: block;
+}
+
+.sucursales-page .br-technical-warning strong {
+    font-size: .69rem;
+}
+
+.sucursales-page .br-technical-warning span {
+    margin-top: 3px;
+    font-size: .61rem;
+    line-height: 1.45;
+}
+
+.sucursales-page .br-technical-section {
+    overflow: hidden;
+    border: 1px solid var(--br-borde);
+    border-radius: 11px;
+    background: #fff;
+}
+
+.sucursales-page .br-technical-section + .br-technical-section {
+    margin-top: 12px;
+}
+
+.sucursales-page .br-technical-section-header,
+.sucursales-page .br-technical-sync {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 13px;
+    padding: 13px 14px;
+}
+
+.sucursales-page .br-technical-section-header {
+    border-bottom: 1px solid var(--br-borde-suave);
+    background: #f8fafc;
+}
+
+.sucursales-page .br-technical-icon {
+    width: 38px;
+    height: 38px;
+    display: grid;
+    place-items: center;
+    flex: 0 0 38px;
+    border-radius: 10px;
+    color: var(--br-azul);
+    background: var(--br-azul-suave);
+    font-size: .82rem;
+}
+
+.sucursales-page .br-technical-icon.sync {
+    color: #047857;
+    background: #ecfdf5;
+}
+
+.sucursales-page .br-technical-section h3 {
+    margin: 0;
+    color: var(--br-azul-hover);
+    font-size: .71rem;
+}
+
+.sucursales-page .br-technical-section p {
+    margin: 3px 0 0;
+    color: var(--br-suave);
+    font-size: .56rem;
+    line-height: 1.35;
+}
+
+.sucursales-page .br-technical-terminal-list {
+    display: grid;
+}
+
+.sucursales-page .br-terminal-id {
+    max-width: 430px;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: .53rem !important;
+}
+
+body.br-modal-open {
+    overflow: hidden !important;
+}
+
+.swal2-container {
+    z-index: 70000 !important;
+}
+
+/* Responsive */
+
+@media (max-width: 1080px) {
+    .sucursales-page .br-table-head,
+    .sucursales-page .br-branch-item {
+        grid-template-columns:
+            minmax(220px, 1.35fr)
+            105px
+            105px
+            120px
+            105px;
+        gap: 10px;
+    }
+
+    .sucursales-page .br-metrics {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .sucursales-page .br-plan-row {
+        grid-template-columns: minmax(180px, 1fr) 145px 125px 105px;
+    }
+}
+
+@media (max-width: 860px) {
+    .sucursales-page .main-content {
+        margin-left: 0 !important;
+    }
+
+    .sucursales-page .br-main {
+        padding: 20px 16px 30px;
+    }
+
+    .sucursales-page .br-page-header {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .sucursales-page .br-new-branch {
+        align-self: flex-start;
+    }
+
+    .sucursales-page .br-overview {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .sucursales-page .br-card-header {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .sucursales-page .br-card-tools,
+    .sucursales-page .br-search {
+        width: 100%;
+    }
+
+    .sucursales-page .br-table-head {
+        display: none;
+    }
+
+    .sucursales-page .br-branch-list {
+        gap: 9px;
+        padding: 11px;
+    }
+
+    .sucursales-page .br-branch-item {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 11px;
+        padding: 13px;
+        border: 1px solid var(--br-borde);
+        border-radius: 11px;
+    }
+
+    .sucursales-page .br-branch-main,
+    .sucursales-page .br-row-action {
+        grid-column: 1 / -1;
+    }
+
+    .sucursales-page .br-row-action {
+        justify-content: stretch;
+    }
+
+    .sucursales-page .br-row-action .br-soft-button {
+        width: 100%;
+    }
+
+    .sucursales-page .br-mobile-label {
+        display: block;
+    }
+
+    .sucursales-page .br-tabs {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .sucursales-page .br-management-header {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .sucursales-page .br-management-actions {
+        justify-content: flex-start;
+    }
+
+    .sucursales-page .br-person-row,
+    .sucursales-page .br-terminal-row {
+        grid-template-columns: 1fr;
+    }
+
+    .sucursales-page .br-row-actions {
+        justify-content: flex-start;
+    }
+
+    .sucursales-page .br-plan-row {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .sucursales-page .br-plan-main {
+        grid-column: 1 / -1;
+    }
+}
+
+@media (max-width: 620px) {
+    .sucursales-page .br-main {
+        padding: 74px 10px 25px;
+    }
+
+    .sucursales-page .br-overview {
+        grid-template-columns: 1fr;
+    }
+
+    .sucursales-page .br-overview-card {
+        min-height: 72px;
+    }
+
+    .sucursales-page .br-branch-item {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .sucursales-page .br-tabs {
+        grid-template-columns: 1fr;
+    }
+
+    .sucursales-page .br-panel-intro,
+    .sucursales-page .br-section-header,
+    .sucursales-page .br-technical-section-header,
+    .sucursales-page .br-technical-sync {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .sucursales-page .br-panel-intro .br-primary,
+    .sucursales-page .br-panel-intro .br-secondary,
+    .sucursales-page .br-section-header .br-primary,
+    .sucursales-page .br-section-header .br-secondary,
+    .sucursales-page .br-technical-section-header .br-primary,
+    .sucursales-page .br-technical-sync .br-secondary {
+        width: 100%;
+    }
+
+    .sucursales-page .br-metrics {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .sucursales-page .br-info-grid,
+    .sucursales-page .br-form-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .sucursales-page .br-info-box.full,
+    .sucursales-page .br-field.full {
+        grid-column: auto;
+    }
+
+    .sucursales-page .br-plan-row {
+        grid-template-columns: 1fr;
+    }
+
+    .sucursales-page .br-plan-main {
+        grid-column: auto;
+    }
+
+    .sucursales-page .br-management-actions {
+        display: grid;
+        grid-template-columns: 38px 1fr 1fr;
+    }
+
+    .sucursales-page .br-management-actions > * {
+        min-width: 0;
+    }
+
+    .sucursales-page .br-modal {
+        padding: 7px;
+    }
+
+    .sucursales-page .br-modal-card {
+        max-height: calc(100dvh - 14px);
+        border-radius: 13px;
+    }
+
+    .sucursales-page .br-modal-body {
+        max-height: calc(100dvh - 165px);
+    }
+
+    .sucursales-page .br-modal-footer > * {
+        flex: 1;
+    }
+}
+
+@media (max-width: 390px) {
+    .sucursales-page .br-branch-item,
+    .sucursales-page .br-metrics {
+        grid-template-columns: 1fr;
+    }
+
+    .sucursales-page .br-management-actions {
+        grid-template-columns: 1fr;
+    }
+
+    .sucursales-page .br-management-actions
+    .br-technical-button {
+        width: 100%;
+    }
+
+    .sucursales-page .br-modal-footer {
+        flex-direction: column-reverse;
+    }
+
+    .sucursales-page .br-modal-footer > * {
+        width: 100%;
+    }
+}
+
+
+/* =========================================================
+   CAMPOS EXPLICATIVOS
+   ========================================================= */
+
+.sucursales-page .br-field-help {
+    display: block;
+    margin-top: 6px;
+    color: var(--br-suave);
+    font-size: .57rem;
+    line-height: 1.45;
+}
+
+.sucursales-page .br-field-help strong {
+    color: #334155;
+}
+
+.sucursales-page .br-code-control {
+    letter-spacing: .055em;
+    text-transform: uppercase;
+}
+
+.sucursales-page .br-modal-kicker-blue {
+    color: var(--br-azul);
+}
+
+.sucursales-page .br-assignment-modal {
+    width: min(650px, 100%);
+}
+
+.sucursales-page .br-assignment-context {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 14px;
+    padding: 10px 12px;
+    border: 1px solid #bfdbfe;
+    border-radius: 10px;
+    color: #1e40af;
+    background: #eff6ff;
+}
+
+.sucursales-page .br-assignment-context-icon {
+    width: 34px;
+    height: 34px;
+    display: grid;
+    place-items: center;
+    flex: 0 0 34px;
+    border-radius: 9px;
+    background: #dbeafe;
+}
+
+.sucursales-page .br-assignment-context small,
+.sucursales-page .br-assignment-context strong {
+    display: block;
+}
+
+.sucursales-page .br-assignment-context small {
+    color: #64748b;
+    font-size: .54rem;
+    font-weight: 750;
+}
+
+.sucursales-page .br-assignment-context strong {
+    margin-top: 2px;
+    font-size: .68rem;
+}
+
+.sucursales-page .br-permissions-title {
+    margin: 3px 0 8px;
+    color: #334155;
+    font-size: .62rem;
+    font-weight: 800;
+}
+
+.sucursales-page .br-check.disabled {
+    cursor: not-allowed;
+    opacity: .5;
+    background: #f1f5f9;
+}
+
+/* Encabezado técnico de terminales */
+.sucursales-page .br-technical-section-header {
+    min-height: 68px;
+    padding: 12px 14px;
+    background: #f8fafc;
+}
+
+.sucursales-page .br-technical-heading {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    flex: 1 1 auto;
+}
+
+.sucursales-page .br-technical-copy {
+    min-width: 0;
+    flex: 1 1 auto;
+}
+
+.sucursales-page .br-technical-copy h3 {
+    margin: 0;
+    color: var(--br-azul-hover);
+    font-size: .72rem;
+    line-height: 1.25;
+    white-space: normal;
+}
+
+.sucursales-page .br-technical-copy p {
+    margin: 4px 0 0;
+    color: var(--br-suave);
+    font-size: .57rem;
+    line-height: 1.35;
+    white-space: normal;
+}
+
+.sucursales-page .br-terminal-add {
+    min-width: 145px;
+    min-height: 38px;
+    flex: 0 0 auto;
+    padding: 0 13px;
+    box-shadow: 0 5px 13px rgba(30, 58, 138, .12);
+}
+
+/* Estado vacío de terminales */
+.sucursales-page .br-empty-terminal {
+    min-height: 145px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    padding: 24px 18px;
+    color: var(--br-suave);
+    text-align: center;
+}
+
+.sucursales-page .br-empty-terminal-icon {
+    width: 42px;
+    height: 42px;
+    display: grid;
+    place-items: center;
+    margin-bottom: 9px;
+    border-radius: 11px;
+    color: #64748b;
+    background: #f1f5f9;
+}
+
+.sucursales-page .br-empty-terminal-icon i {
+    display: inline;
+    margin: 0;
+    color: inherit;
+    font-size: 1rem;
+}
+
+.sucursales-page .br-empty-terminal strong {
+    color: #334155;
+    font-size: .68rem;
+}
+
+.sucursales-page .br-empty-terminal > span:last-child {
+    max-width: 380px;
+    margin-top: 5px;
+    color: var(--br-suave);
+    font-size: .58rem;
+    line-height: 1.45;
+}
+
+@media (max-width: 620px) {
+    .sucursales-page .br-assignment-modal {
+        width: 100%;
+    }
+}
+
+@media (max-width: 620px) {
+    .sucursales-page .br-technical-section-header {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .sucursales-page .br-terminal-add {
+        width: 100%;
+        min-width: 0;
+    }
+
+    .sucursales-page .br-empty-terminal {
+        min-height: 130px;
+    }
+}

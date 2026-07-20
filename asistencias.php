@@ -282,9 +282,8 @@ $registro_asistencia_habilitado =
                     <i class="fas fa-circle-info"></i>
                     <div>
                         <strong>Vista consolidada.</strong>
-                        Aquí puedes consultar las asistencias de todas las sedes.
                         Para escanear un QR o registrar una entrada/salida manual,
-                        selecciona una sucursal concreta en el sidebar.
+                        selecciona una sucursal específica desde el menú lateral.
                     </div>
                 </div>
             <?php endif; ?>
@@ -552,6 +551,61 @@ $registro_asistencia_habilitado =
                 if (m === '"') return '&quot;';
                 return m;
             });
+        }
+
+        /*
+         * Los endpoints usan códigos HTTP 4xx para reglas de negocio,
+         * por ejemplo una membresía vencida. jQuery envía esas respuestas
+         * a error/fail aunque el servidor sí haya devuelto JSON válido.
+         */
+        function obtenerDetalleErrorAjax(xhr, mensajeAlternativo) {
+            let respuesta = xhr && xhr.responseJSON
+                ? xhr.responseJSON
+                : null;
+
+            if (
+                !respuesta &&
+                xhr &&
+                typeof xhr.responseText === 'string' &&
+                xhr.responseText.trim() !== ''
+            ) {
+                try {
+                    respuesta = JSON.parse(xhr.responseText);
+                } catch (error) {
+                    respuesta = null;
+                }
+            }
+
+            const status = Number(
+                xhr && xhr.status
+                    ? xhr.status
+                    : 0
+            );
+
+            return {
+                status: status,
+                code: respuesta && respuesta.code
+                    ? String(respuesta.code)
+                    : '',
+                message:
+                    respuesta &&
+                    (
+                        respuesta.message ||
+                        respuesta.mensaje ||
+                        respuesta.error
+                    )
+                        ? String(
+                            respuesta.message ||
+                            respuesta.mensaje ||
+                            respuesta.error
+                        )
+                        : mensajeAlternativo,
+                esReglaNegocio:
+                    status === 400 ||
+                    status === 404 ||
+                    status === 409 ||
+                    status === 422
+            };
         }
 
         function mostrarNotificacion(titulo, mensaje, tipo = 'success') {
@@ -842,23 +896,68 @@ $registro_asistencia_habilitado =
                     }, 2200);
                 },
                 error: function(xhr) {
-                    console.error("Error AJAX:", xhr.responseText);
-
-                    mostrarNotificacion(
-                        'Error',
-                        'El servidor no respondió correctamente. Revisa procesar_qr_asistencia.php',
-                        'danger'
+                    console.error(
+                        'Respuesta del endpoint QR:',
+                        xhr.responseJSON || xhr.responseText
                     );
 
-                    setEstadoLector('error', '<i class="fas fa-exclamation-triangle"></i> Error del servidor');
+                    const detalle = obtenerDetalleErrorAjax(
+                        xhr,
+                        'No se pudo procesar el código QR.'
+                    );
+
+                    if (detalle.status === 401) {
+                        mostrarNotificacion(
+                            'SESIÓN FINALIZADA',
+                            detalle.message,
+                            'danger'
+                        );
+
+                        setEstadoLector(
+                            'error',
+                            '<i class="fas fa-user-lock"></i> Sesión finalizada'
+                        );
+                    } else if (detalle.esReglaNegocio) {
+                        mostrarNotificacion(
+                            'ACCESO DENEGADO',
+                            detalle.message,
+                            'danger'
+                        );
+
+                        setEstadoLector(
+                            'error',
+                            '<i class="fas fa-times-circle"></i> ' +
+                            escapeHtml(detalle.message)
+                        );
+
+                        /*
+                         * El intento denegado puede haberse registrado,
+                         * por eso se actualiza la tarjeta correspondiente.
+                         */
+                        actualizarEstadisticas();
+                    } else {
+                        mostrarNotificacion(
+                            'ERROR DEL SERVIDOR',
+                            detalle.message,
+                            'danger'
+                        );
+
+                        setEstadoLector(
+                            'error',
+                            '<i class="fas fa-exclamation-triangle"></i> Error del servidor'
+                        );
+                    }
 
                     setTimeout(() => {
                         escaneoBloqueado = false;
 
                         if (isScanning) {
-                            setEstadoLector('active', '<i class="fas fa-camera"></i> Cámara activa - Escaneando...');
+                            setEstadoLector(
+                                'active',
+                                '<i class="fas fa-camera"></i> Cámara activa - Escaneando...'
+                            );
                         }
-                    }, 2200);
+                    }, 2600);
                 }
             });
         }
@@ -1034,9 +1133,28 @@ $registro_asistencia_habilitado =
                 }
 
                 btn.prop('disabled', false).html('Registrar');
-            }, 'json').fail(function() {
+            }, 'json').fail(function(xhr) {
                 btn.prop('disabled', false).html('Registrar');
-                Swal.fire('Error', 'Error al registrar asistencia', 'error');
+
+                const detalle = obtenerDetalleErrorAjax(
+                    xhr,
+                    'No se pudo registrar la asistencia.'
+                );
+
+                Swal.fire({
+                    icon: detalle.esReglaNegocio
+                        ? 'warning'
+                        : 'error',
+                    title: detalle.esReglaNegocio
+                        ? 'Registro no permitido'
+                        : 'Error del servidor',
+                    text: detalle.message,
+                    confirmButtonColor: '#1e3a8a'
+                });
+
+                if (detalle.esReglaNegocio) {
+                    actualizarEstadisticas();
+                }
             });
         });
 

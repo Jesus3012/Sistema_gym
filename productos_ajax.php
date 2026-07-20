@@ -1,332 +1,176 @@
 <?php
 session_start();
+header('Content-Type: application/json; charset=utf-8');
 
-if (!isset($_SESSION['user_id'])) {
-    header("Location: login.php");
+if (empty($_SESSION['user_id'])) {
+    echo json_encode(array('success' => false, 'error' => 'No autorizado'));
     exit();
 }
 
-require_once 'config/database.php';
-require_once 'includes/stock_functions.php';
+require_once __DIR__ . '/config/database.php';
+require_once __DIR__ . '/includes/sucursal_context.php';
+require_once __DIR__ . '/includes/stock_functions.php';
 
 $database = new Database();
 $conn = $database->getConnection();
-
-if (!$conn) {
-    die(json_encode(['success' => false, 'error' => 'Error de conexión a la base de datos']));
-}
-
-$action = isset($_GET['action']) ? $_GET['action'] : (isset($_POST['action']) ? $_POST['action'] : '');
-
-if ($action == 'list') {
-    // Configuración de paginación con límite personalizable
-    $registros_por_pagina = isset($_GET['limite']) ? (int)$_GET['limite'] : 10;
-    $pagina = isset($_GET['pagina']) ? (int)$_GET['pagina'] : 1;
-    $offset = ($pagina - 1) * $registros_por_pagina;
-    $busqueda = isset($_GET['busqueda']) ? $_GET['busqueda'] : '';
-    $categoria = isset($_GET['categoria']) ? (int)$_GET['categoria'] : 0;
-    $estado = isset($_GET['estado']) ? $_GET['estado'] : 'todos';
-    
-    // Construir consulta
-    $where = [];
-    $params = [];
-    $types = "";
-    
-    if (!empty($busqueda)) {
-        $where[] = "(p.nombre LIKE ? OR p.descripcion LIKE ?)";
-        $params[] = "%$busqueda%";
-        $params[] = "%$busqueda%";
-        $types .= "ss";
-    }
-    
-    if ($categoria > 0) {
-        $where[] = "p.categoria_id = ?";
-        $params[] = $categoria;
-        $types .= "i";
-    }
-    
-    if ($estado != 'todos') {
-        $where[] = "p.estado = ?";
-        $params[] = $estado;
-        $types .= "s";
-    }
-    
-    $where_sql = !empty($where) ? "WHERE " . implode(" AND ", $where) : "";
-    
-    // Contar total
-    $count_sql = "SELECT COUNT(*) as total FROM productos p $where_sql";
-    $count_stmt = $conn->prepare($count_sql);
-    if (!empty($params)) {
-        $count_stmt->bind_param($types, ...$params);
-    }
-    $count_stmt->execute();
-    $count_result = $count_stmt->get_result();
-    $total_registros = $count_result->fetch_assoc()['total'];
-    $total_paginas = ceil($total_registros / $registros_por_pagina);
-    $count_stmt->close();
-    
-    // Obtener productos
-    $sql = "SELECT p.*, c.nombre as categoria_nombre, prov.nombre as proveedor_nombre 
-            FROM productos p 
-            LEFT JOIN categorias_productos c ON p.categoria_id = c.id 
-            LEFT JOIN proveedores prov ON p.proveedor_id = prov.id 
-            $where_sql 
-            ORDER BY p.fecha_registro DESC 
-            LIMIT ? OFFSET ?";
-    
-    $params[] = $registros_por_pagina;
-    $params[] = $offset;
-    $types .= "ii";
-    
-    $stmt = $conn->prepare($sql);
-    $stmt->bind_param($types, ...$params);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    $productos = [];
-    while ($row = $result->fetch_assoc()) {
-        $productos[] = $row;
-    }
-    $stmt->close();
-    
-    // Pasar variables para el template
-    $pagina_actual = $pagina;
-    $busqueda = $busqueda;
-    $categoria_filtro = $categoria;
-    $estado_filtro = $estado;
-    $total_registros = $total_registros;
-    $total_paginas = $total_paginas;
-    
-    // Incluir el template de tabla
-    include 'productos_table.php';
-}
-elseif ($action == 'get') {
-    $id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
-    
-    if ($id > 0) {
-        // Solo devolver campos editables, NO stock ni stock_minimo
-        $stmt = $conn->prepare("SELECT id, nombre, descripcion, categoria_id, proveedor_id, precio_compra, precio_venta, foto FROM productos WHERE id = ?");
-        $stmt->bind_param("i", $id);
-        $stmt->execute();
-        $result = $stmt->get_result();
-        $producto = $result->fetch_assoc();
-        
-        if ($producto) {
-            echo json_encode([
-                'success' => true, 
-                'producto' => [
-                    'id' => $producto['id'],
-                    'nombre' => $producto['nombre'],
-                    'descripcion' => $producto['descripcion'],
-                    'categoria_id' => $producto['categoria_id'],
-                    'proveedor_id' => $producto['proveedor_id'],
-                    'precio_compra' => $producto['precio_compra'],
-                    'precio_venta' => $producto['precio_venta'],
-                    'foto' => $producto['foto']
-                ]
-            ]);
-        } else {
-            echo json_encode(['success' => false, 'error' => 'Producto no encontrado']);
-        }
-        $stmt->close();
-    } else {
-        echo json_encode(['success' => false, 'error' => 'ID inválido']);
-    }
-}
-elseif ($action == 'update') {
-    // Procesar actualización de producto - SIN modificar stock
-    $id = isset($_POST['producto_id']) ? (int)$_POST['producto_id'] : 0;
-    $nombre = trim($_POST['nombre']);
-    $categoria_id = $_POST['categoria_id'];
-    $proveedor_id = $_POST['proveedor_id'] ?: null;
-    $precio_compra = floatval($_POST['precio_compra']);
-    $precio_venta = floatval($_POST['precio_venta']);
-    $descripcion = isset($_POST['descripcion']) ? trim($_POST['descripcion']) : '';
-    
-    if (empty($nombre)) {
-        echo json_encode(['success' => false, 'error' => 'El nombre del producto es obligatorio']);
-        exit();
-    }
-    
-    if ($categoria_id == 0 || empty($categoria_id)) {
-        echo json_encode(['success' => false, 'error' => 'Debe seleccionar una categoría']);
-        exit();
-    }
-    
-    // Procesar imagen
-    $foto_ruta = null;
-    if (isset($_FILES['foto']) && $_FILES['foto']['error'] == 0) {
-        $allowed_types = ['image/jpeg', 'image/png', 'image/jpg', 'image/webp'];
-        $max_size = 2 * 1024 * 1024;
-        
-        if (in_array($_FILES['foto']['type'], $allowed_types) && $_FILES['foto']['size'] <= $max_size) {
-            $upload_dir = 'uploads/productos/';
-            if (!file_exists($upload_dir)) {
-                mkdir($upload_dir, 0777, true);
-            }
-            
-            $extension = pathinfo($_FILES['foto']['name'], PATHINFO_EXTENSION);
-            $nombre_archivo = time() . '_' . uniqid() . '.' . $extension;
-            $foto_ruta = $upload_dir . $nombre_archivo;
-            move_uploaded_file($_FILES['foto']['tmp_name'], $foto_ruta);
-        }
-    }
-    
-    // Actualizar SOLO los campos editables (NO stock ni stock_minimo)
-    if ($foto_ruta) {
-        $sql = "UPDATE productos SET nombre=?, categoria_id=?, proveedor_id=?, precio_compra=?, precio_venta=?, descripcion=?, foto=? WHERE id=?";
-        $stmt = $conn->prepare($sql);
-        $stmt->bind_param("siiddssi", $nombre, $categoria_id, $proveedor_id, $precio_compra, $precio_venta, $descripcion, $foto_ruta, $id);
-    } else {
-        $sql = "UPDATE productos SET nombre=?, categoria_id=?, proveedor_id=?, precio_compra=?, precio_venta=?, descripcion=? WHERE id=?";
-        $stmt = $conn->prepare($sql);
-        $stmt->bind_param("siiddsi", $nombre, $categoria_id, $proveedor_id, $precio_compra, $precio_venta, $descripcion, $id);
-    }
-    
-    if ($stmt->execute()) {
-        echo json_encode(['success' => true, 'message' => 'Producto actualizado exitosamente']);
-    } else {
-        echo json_encode(['success' => false, 'error' => 'Error al actualizar producto: ' . $conn->error]);
-    }
-    $stmt->close();
-}
-elseif ($action == 'add_stock') {
-    $id = intval($_POST['producto_id']);
-    $cantidad = intval($_POST['cantidad']);
-    $observaciones = isset($_POST['observaciones']) ? trim($_POST['observaciones']) : 'Agregado manualmente';
-    
-    if ($cantidad > 0) {
-        // Obtener stock actual
-        $stmt = $conn->prepare("SELECT stock FROM productos WHERE id = ?");
-        $stmt->bind_param("i", $id);
-        $stmt->execute();
-        $result = $stmt->get_result();
-        $producto = $result->fetch_assoc();
-        $stock_anterior = $producto['stock'];
-        $stock_nuevo = $stock_anterior + $cantidad;
-        $stmt->close();
-        
-        // Actualizar stock
-        $sql = "UPDATE productos SET stock = stock + ? WHERE id = ?";
-        $stmt = $conn->prepare($sql);
-        $stmt->bind_param("ii", $cantidad, $id);
-        
-        if ($stmt->execute()) {
-            // Registrar movimiento
-            $resultado_mov = registrarMovimientoStock(
-                $conn,
-                $id,
-                'entrada',
-                $cantidad,
-                'Entrada de stock',
-                $_SESSION['user_id'],
-                null,
-                null,
-                $observaciones . ' | Stock anterior: ' . $stock_anterior . ', nuevo: ' . $stock_nuevo
-            );
-            
-            if ($resultado_mov['success']) {
-                echo json_encode(['success' => true, 'message' => "Stock agregado exitosamente. Se añadieron $cantidad unidades."]);
-            } else {
-                echo json_encode(['success' => false, 'error' => 'Stock actualizado pero error al registrar movimiento: ' . $resultado_mov['error']]);
-            }
-        } else {
-            echo json_encode(['success' => false, 'error' => 'Error al agregar stock: ' . $conn->error]);
-        }
-        $stmt->close();
-    } else {
-        echo json_encode(['success' => false, 'error' => 'La cantidad debe ser mayor a 0']);
-    }
+if (!$conn instanceof mysqli) {
+    echo json_encode(array('success' => false, 'error' => 'Error de conexión a la base de datos'));
     exit();
 }
-elseif ($action == 'ajuste_stock') {
-    $id = intval($_POST['producto_id']);
-    $tipo_ajuste = $_POST['tipo_ajuste'];
-    $motivo = $_POST['motivo_ajuste'] ?? 'Ajuste manual';
-    $observaciones = isset($_POST['observaciones']) ? trim($_POST['observaciones']) : '';
-    
-    if ($tipo_ajuste == 'stock_correccion') {
-        $stock_fisico = intval($_POST['stock_fisico']);
-        
-        // Obtener stock actual
-        $stmt = $conn->prepare("SELECT stock FROM productos WHERE id = ?");
-        $stmt->bind_param("i", $id);
-        $stmt->execute();
-        $result = $stmt->get_result();
-        $producto = $result->fetch_assoc();
-        $stock_anterior = $producto['stock'];
-        $diferencia = $stock_fisico - $stock_anterior;
-        $stmt->close();
-        
-        // Actualizar stock
-        $sql = "UPDATE productos SET stock = ? WHERE id = ?";
-        $stmt = $conn->prepare($sql);
-        $stmt->bind_param("ii", $stock_fisico, $id);
-        
-        if ($stmt->execute()) {
-            // Registrar movimiento de corrección
-            $resultado_mov = registrarMovimientoStock(
-                $conn,
-                $id,
-                'correccion',
-                $diferencia,
-                $motivo,
-                $_SESSION['user_id'],
-                null,
-                null,
-                $observaciones . ' | Corrección de inventario: Stock anterior ' . $stock_anterior . ', nuevo ' . $stock_fisico
-            );
-            
-            if ($resultado_mov['success']) {
-                echo json_encode(['success' => true, 'message' => "Stock corregido a $stock_fisico unidades"]);
-            } else {
-                echo json_encode(['success' => false, 'error' => 'Error al registrar movimiento: ' . $resultado_mov['error']]);
-            }
-        } else {
-            echo json_encode(['success' => false, 'error' => 'Error al corregir stock: ' . $conn->error]);
-        }
-        $stmt->close();
-    } 
-    elseif ($tipo_ajuste == 'stock_minimo') {
-        $nuevo_stock_minimo = intval($_POST['nuevo_stock_minimo']);
-        
-        // Obtener stock mínimo actual
-        $stmt = $conn->prepare("SELECT stock_minimo FROM productos WHERE id = ?");
-        $stmt->bind_param("i", $id);
-        $stmt->execute();
-        $result = $stmt->get_result();
-        $producto = $result->fetch_assoc();
-        $stock_minimo_anterior = $producto['stock_minimo'];
-        $stmt->close();
-        
-        // Actualizar stock mínimo
-        $sql = "UPDATE productos SET stock_minimo = ? WHERE id = ?";
-        $stmt = $conn->prepare($sql);
-        $stmt->bind_param("ii", $nuevo_stock_minimo, $id);
-        
-        if ($stmt->execute()) {
-            // Registrar movimiento de ajuste de mínimo
-            $resultado_mov = registrarMovimientoStock(
-                $conn,
-                $id,
-                'ajuste_minimo',
-                $nuevo_stock_minimo - $stock_minimo_anterior,
-                $motivo,
-                $_SESSION['user_id'],
-                null,
-                null,
-                $observaciones . ' | Cambio de stock mínimo: de ' . $stock_minimo_anterior . ' a ' . $nuevo_stock_minimo
-            );
-            
-            if ($resultado_mov['success']) {
-                echo json_encode(['success' => true, 'message' => "Stock mínimo actualizado a $nuevo_stock_minimo unidades"]);
-            } else {
-                echo json_encode(['success' => false, 'error' => 'Error al registrar movimiento: ' . $resultado_mov['error']]);
-            }
-        } else {
-            echo json_encode(['success' => false, 'error' => 'Error al actualizar stock mínimo: ' . $conn->error]);
-        }
-        $stmt->close();
-    }
+$conn->set_charset('utf8mb4');
+
+function ajaxRespuesta($success, $message, $extra = array(), $http = 200)
+{
+    http_response_code((int) $http);
+    echo json_encode(
+        array_merge(array('success' => (bool) $success, $success ? 'message' : 'error' => $message), $extra),
+        JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+    );
     exit();
 }
+
+function ajaxBind($stmt, $types, $params)
+{
+    if ($types === '') return true;
+    $refs = array($types);
+    foreach ($params as $k => $v) {
+        $params[$k] = $v;
+        $refs[] = &$params[$k];
+    }
+    return call_user_func_array(array($stmt, 'bind_param'), $refs);
+}
+
+$user_id = (int) $_SESSION['user_id'];
+$rol = strtolower(trim((string) ($_SESSION['user_rol'] ?? 'recepcionista')));
+$es_admin = in_array($rol, array('admin', 'administrador'), true);
+$vista = strtolower(trim((string) ($_GET['vista'] ?? $_POST['vista'] ?? '')));
+if ($vista === 'global' && $es_admin) {
+    sucursal_activar_vista_global($conn, $user_id);
+} elseif ($vista === 'sucursal') {
+    sucursal_desactivar_vista_global();
+}
+$vista_global = $es_admin && sucursal_dashboard_vista_global();
+$sucursal_id = (int) ($_SESSION['sucursal_id'] ?? 0);
+$sucursal_nombre = trim((string) ($_SESSION['sucursal_nombre'] ?? 'Sucursal'));
+$action = (string) ($_GET['action'] ?? $_POST['action'] ?? '');
+
+if ($action === 'list') {
+    $limite = max(1, min(100, (int) ($_GET['limite'] ?? 10)));
+    $pagina = max(1, (int) ($_GET['pagina'] ?? 1));
+    $offset = ($pagina - 1) * $limite;
+    $busqueda = trim((string) ($_GET['busqueda'] ?? ''));
+    $categoria = max(0, (int) ($_GET['categoria'] ?? 0));
+    $estado = (string) ($_GET['estado'] ?? 'todos');
+    $where = array(); $params = array(); $types = '';
+
+    if (!$vista_global) { $where[] = 'inv.sucursal_id = ?'; $params[] = $sucursal_id; $types .= 'i'; }
+    if ($busqueda !== '') { $where[] = '(p.nombre LIKE ? OR p.descripcion LIKE ?)'; $params[] = '%' . $busqueda . '%'; $params[] = '%' . $busqueda . '%'; $types .= 'ss'; }
+    if ($categoria > 0) { $where[] = 'p.categoria_id = ?'; $params[] = $categoria; $types .= 'i'; }
+    if ($estado !== 'todos') {
+        if ($vista_global) { $where[] = 'p.estado = ?'; $params[] = $estado; $types .= 's'; }
+        elseif ($estado === 'activo') $where[] = "p.estado = 'activo' AND inv.estado = 'activo'";
+        else $where[] = "(p.estado <> 'activo' OR inv.estado <> 'activo')";
+    }
+    $where_sql = empty($where) ? '' : 'WHERE ' . implode(' AND ', $where);
+
+    if ($vista_global) {
+        $sql = "SELECT p.id, p.nombre, p.descripcion, p.foto, p.estado,
+                       c.nombre AS categoria_nombre, prov.nombre AS proveedor_nombre,
+                       COUNT(inv.id) AS sucursales_count, COALESCE(SUM(inv.stock),0) AS stock,
+                       MIN(inv.precio_compra) AS precio_compra, MAX(inv.precio_venta) AS precio_venta
+                FROM productos p
+                LEFT JOIN inventario_sucursales inv ON inv.producto_id = p.id
+                LEFT JOIN categorias_productos c ON c.id = p.categoria_id
+                LEFT JOIN proveedores prov ON prov.id = p.proveedor_id
+                {$where_sql}
+                GROUP BY p.id, p.nombre, p.descripcion, p.foto, p.estado, c.nombre, prov.nombre
+                ORDER BY p.fecha_registro DESC LIMIT ? OFFSET ?";
+        $count = "SELECT COUNT(*) AS total FROM productos p {$where_sql}";
+    } else {
+        $sql = "SELECT p.id, p.nombre, p.descripcion, p.foto, p.categoria_id, p.proveedor_id,
+                       c.nombre AS categoria_nombre, prov.nombre AS proveedor_nombre,
+                       inv.precio_compra, inv.precio_venta, inv.stock, inv.stock_minimo,
+                       CASE WHEN p.estado='activo' AND inv.estado='activo' THEN 'activo' ELSE 'inactivo' END AS estado
+                FROM inventario_sucursales inv
+                INNER JOIN productos p ON p.id = inv.producto_id
+                LEFT JOIN categorias_productos c ON c.id = p.categoria_id
+                LEFT JOIN proveedores prov ON prov.id = p.proveedor_id
+                {$where_sql}
+                ORDER BY p.fecha_registro DESC LIMIT ? OFFSET ?";
+        $count = "SELECT COUNT(*) AS total FROM inventario_sucursales inv INNER JOIN productos p ON p.id=inv.producto_id {$where_sql}";
+    }
+
+    $stmt = $conn->prepare($count); ajaxBind($stmt, $types, $params); $stmt->execute();
+    $total = (int) ($stmt->get_result()->fetch_assoc()['total'] ?? 0); $stmt->close();
+    $query_params = $params; $query_params[] = $limite; $query_params[] = $offset;
+    $stmt = $conn->prepare($sql); ajaxBind($stmt, $types . 'ii', $query_params); $stmt->execute();
+    $productos = $stmt->get_result()->fetch_all(MYSQLI_ASSOC); $stmt->close();
+    ajaxRespuesta(true, 'Productos consultados.', array('productos' => $productos, 'total' => $total, 'total_paginas' => max(1, (int) ceil($total / $limite)), 'pagina_actual' => $pagina, 'vista_global' => $vista_global));
+}
+
+if ($vista_global) {
+    ajaxRespuesta(false, 'Selecciona una sucursal concreta antes de modificar productos.', array(), 409);
+}
+if ($sucursal_id <= 0) {
+    ajaxRespuesta(false, 'No hay una sucursal operativa seleccionada.', array(), 409);
+}
+
+if ($action === 'get') {
+    $id = (int) ($_GET['id'] ?? 0);
+    $stmt = $conn->prepare("SELECT p.id, p.nombre, p.descripcion, p.categoria_id, p.proveedor_id, p.foto,
+                                  inv.precio_compra, inv.precio_venta, inv.stock, inv.stock_minimo, inv.estado
+                           FROM productos p
+                           INNER JOIN inventario_sucursales inv ON inv.producto_id = p.id AND inv.sucursal_id = ?
+                           WHERE p.id = ? LIMIT 1");
+    $stmt->bind_param('ii', $sucursal_id, $id); $stmt->execute();
+    $producto = $stmt->get_result()->fetch_assoc(); $stmt->close();
+    if (!$producto) ajaxRespuesta(false, 'Producto no encontrado en esta sucursal.', array(), 404);
+    ajaxRespuesta(true, 'Producto encontrado.', array('producto' => $producto, 'sucursal_id' => $sucursal_id, 'sucursal_nombre' => $sucursal_nombre));
+}
+
+if (in_array($action, array('add_stock', 'ajuste_stock'), true)) {
+    $id = (int) ($_POST['producto_id'] ?? 0);
+    $conn->begin_transaction();
+    try {
+        $stmt = $conn->prepare('SELECT stock, stock_minimo FROM inventario_sucursales WHERE sucursal_id = ? AND producto_id = ? LIMIT 1 FOR UPDATE');
+        $stmt->bind_param('ii', $sucursal_id, $id); $stmt->execute();
+        $inventario = $stmt->get_result()->fetch_assoc(); $stmt->close();
+        if (!$inventario) throw new RuntimeException('Producto no encontrado en esta sucursal.');
+
+        if ($action === 'add_stock') {
+            $cantidad = (int) ($_POST['cantidad'] ?? 0);
+            if ($cantidad <= 0) throw new InvalidArgumentException('La cantidad debe ser mayor a cero.');
+            $mov = registrarMovimientoStock($conn, $id, 'entrada', $cantidad, 'Entrada de stock', $user_id, null, 'entrada_manual', trim((string) ($_POST['observaciones'] ?? '')), $sucursal_id);
+            if (empty($mov['success'])) throw new RuntimeException((string) $mov['error']);
+            $stmt = $conn->prepare('UPDATE inventario_sucursales SET stock = stock + ? WHERE sucursal_id = ? AND producto_id = ?');
+            $stmt->bind_param('iii', $cantidad, $sucursal_id, $id); $stmt->execute(); $stmt->close();
+            $mensaje = 'Stock agregado correctamente. Nuevo stock: ' . (int) $mov['stock_nuevo'] . '.';
+        } else {
+            $tipo = (string) ($_POST['tipo_ajuste'] ?? '');
+            $motivo = trim((string) ($_POST['motivo_ajuste'] ?? 'Ajuste manual'));
+            $obs = trim((string) ($_POST['observaciones'] ?? ''));
+            if ($tipo === 'stock_correccion') {
+                $nuevo = max(0, (int) ($_POST['stock_fisico'] ?? 0));
+                $mov = registrarMovimientoStock($conn, $id, 'correccion', $nuevo, $motivo, $user_id, null, 'correccion_inventario', $obs, $sucursal_id);
+                if (empty($mov['success'])) throw new RuntimeException((string) $mov['error']);
+                $stmt = $conn->prepare('UPDATE inventario_sucursales SET stock = ? WHERE sucursal_id = ? AND producto_id = ?');
+                $stmt->bind_param('iii', $nuevo, $sucursal_id, $id); $stmt->execute(); $stmt->close();
+                $mensaje = 'Stock corregido a ' . $nuevo . ' unidades.';
+            } elseif ($tipo === 'stock_minimo') {
+                $nuevo = max(0, (int) ($_POST['nuevo_stock_minimo'] ?? 0));
+                $dif = $nuevo - (int) $inventario['stock_minimo'];
+                $mov = registrarMovimientoStock($conn, $id, 'ajuste_minimo', $dif, $motivo, $user_id, null, 'ajuste_stock_minimo', $obs, $sucursal_id);
+                if (empty($mov['success'])) throw new RuntimeException((string) $mov['error']);
+                $stmt = $conn->prepare('UPDATE inventario_sucursales SET stock_minimo = ? WHERE sucursal_id = ? AND producto_id = ?');
+                $stmt->bind_param('iii', $nuevo, $sucursal_id, $id); $stmt->execute(); $stmt->close();
+                $mensaje = 'Stock mínimo actualizado a ' . $nuevo . ' unidades.';
+            } else throw new InvalidArgumentException('Tipo de ajuste inválido.');
+        }
+        $conn->commit(); ajaxRespuesta(true, $mensaje, array('sucursal_id' => $sucursal_id));
+    } catch (Throwable $e) {
+        $conn->rollback(); ajaxRespuesta(false, $e->getMessage(), array(), 409);
+    }
+}
+
+ajaxRespuesta(false, 'Acción no reconocida.', array(), 400);
 ?>

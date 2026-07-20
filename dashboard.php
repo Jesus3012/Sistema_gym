@@ -340,6 +340,8 @@ try {
              LEFT JOIN sucursales suc
                 ON suc.id = i.sucursal_id
              WHERE i.estado = 'activa'
+               AND CURDATE() BETWEEN i.fecha_inicio
+                   AND i.fecha_fin
              ORDER BY i.fecha_fin ASC"
         );
 
@@ -453,7 +455,13 @@ try {
             $ingresosFilas = [];
         }
     } else {
-        /* Socios registrados o habilitados para la sucursal activa. */
+        /*
+         * SOCIOS REGISTRADOS EN LA SEDE.
+         *
+         * El acceso de una membresía continúa siendo multisucursal, pero
+         * esta métrica representa únicamente dónde fue dado de alta el socio.
+         * Por eso NO se utiliza inscripciones_sucursales en este conteo.
+         */
         $todos_clientes = dashboardConsultarFilas(
             $db,
             "SELECT
@@ -465,31 +473,21 @@ try {
                 c.fecha_registro
              FROM clientes c
              WHERE c.estado = 'activo'
-               AND (
-                    c.sucursal_registro_id = ?
-                    OR EXISTS (
-                        SELECT 1
-                        FROM inscripciones i_cliente
-                        LEFT JOIN inscripciones_sucursales is_cliente
-                            ON is_cliente.inscripcion_id = i_cliente.id
-                        WHERE i_cliente.cliente_id = c.id
-                          AND i_cliente.estado = 'activa'
-                          AND CURDATE() BETWEEN i_cliente.fecha_inicio
-                              AND i_cliente.fecha_fin
-                          AND (
-                               i_cliente.sucursal_id = ?
-                               OR is_cliente.sucursal_id = ?
-                          )
-                    )
-               )
+               AND c.sucursal_registro_id = ?
              ORDER BY c.fecha_registro DESC",
-            'iii',
-            [$sucursal_id, $sucursal_id, $sucursal_id]
+            'i',
+            [$sucursal_id]
         );
 
+        /*
+         * INSCRIPCIONES ORIGINADAS EN LA SEDE.
+         *
+         * inscripciones_sucursales controla dónde puede ingresar el socio;
+         * no debe utilizarse para atribuir una venta o inscripción a otra sede.
+         */
         $todas_inscripciones = dashboardConsultarFilas(
             $db,
-            "SELECT DISTINCT
+            "SELECT
                 i.id,
                 c.nombre AS cliente_nombre,
                 c.apellido AS cliente_apellido,
@@ -503,36 +501,26 @@ try {
                 ON c.id = i.cliente_id
              INNER JOIN planes p
                 ON p.id = i.plan_id
-             LEFT JOIN inscripciones_sucursales isuc
-                ON isuc.inscripcion_id = i.id
-               AND isuc.sucursal_id = ?
-             WHERE i.estado = 'activa'
-               AND (
-                    i.sucursal_id = ?
-                    OR isuc.sucursal_id = ?
-               )
+             WHERE i.sucursal_id = ?
+               AND i.estado = 'activa'
+               AND CURDATE() BETWEEN i.fecha_inicio
+                   AND i.fecha_fin
              ORDER BY i.fecha_fin ASC",
-            'iii',
-            [$sucursal_id, $sucursal_id, $sucursal_id]
+            'i',
+            [$sucursal_id]
         );
 
         $vencimientos_proximos = (int) dashboardConsultarValor(
             $db,
-            "SELECT COUNT(DISTINCT i.id) AS total
+            "SELECT COUNT(*) AS total
              FROM inscripciones i
-             LEFT JOIN inscripciones_sucursales isuc
-                ON isuc.inscripcion_id = i.id
-               AND isuc.sucursal_id = ?
-             WHERE i.estado = 'activa'
+             WHERE i.sucursal_id = ?
+               AND i.estado = 'activa'
                AND i.fecha_fin BETWEEN CURDATE()
-                   AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)
-               AND (
-                    i.sucursal_id = ?
-                    OR isuc.sucursal_id = ?
-               )",
+                   AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)",
             'total',
-            'iii',
-            [$sucursal_id, $sucursal_id, $sucursal_id]
+            'i',
+            [$sucursal_id]
         );
 
         $asistencias_hoy = (int) dashboardConsultarValor(
@@ -654,13 +642,22 @@ try {
     $total_inscripciones = count($todas_inscripciones);
     $proximas_clases = $todas_clases;
     $total_clases = count($todas_clases);
-    $total_productos = count($todos_productos);
+
+    /*
+     * La tarjeta "Productos con stock" no debe contar productos
+     * asignados a la sucursal cuando su existencia es cero.
+     */
+    $total_productos = 0;
 
     foreach ($todos_productos as $producto) {
-        if (
-            (int) ($producto['stock'] ?? 0)
-            <= (int) ($producto['stock_minimo'] ?? 0)
-        ) {
+        $stockActual = (int) ($producto['stock'] ?? 0);
+        $stockMinimo = (int) ($producto['stock_minimo'] ?? 0);
+
+        if ($stockActual > 0) {
+            $total_productos++;
+        }
+
+        if ($stockActual <= $stockMinimo) {
             $productos_bajo_stock[] = $producto;
         }
     }
@@ -723,6 +720,59 @@ try {
     <!-- AdminLTE / Bootstrap -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/admin-lte@3.2/dist/css/adminlte.min.css">
     <link rel="stylesheet" href="css/dashboard.css">
+
+    <style>
+        /*
+         * Los estados vacíos viven dentro de una cuadrícula. Sin ocupar
+         * todas las columnas quedan pegados al lado izquierdo.
+         */
+        .modal-grid > .empty-state {
+            grid-column: 1 / -1 !important;
+            width: 100%;
+            min-height: 280px;
+            margin: 0 !important;
+            padding: 40px 20px;
+            display: flex !important;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            color: #94a3b8;
+        }
+
+        .modal-grid > .empty-state i {
+            margin: 0 0 16px;
+            font-size: 4rem;
+            line-height: 1;
+            color: #aab3bd;
+        }
+
+        .modal-grid > .empty-state p {
+            margin: 0;
+            font-size: 1rem;
+            font-weight: 600;
+            color: #64748b;
+        }
+
+        /* Mensajes vacíos de las tablas principales. */
+        .dashboard-table td.text-center[colspan] {
+            height: 110px;
+            vertical-align: middle;
+            color: #64748b;
+            font-weight: 600;
+        }
+
+        @media (max-width: 767.98px) {
+            .modal-grid > .empty-state {
+                min-height: 210px;
+                padding: 30px 16px;
+            }
+
+            .modal-grid > .empty-state i {
+                font-size: 3rem;
+            }
+        }
+    </style>
 </head>
 <body>
     <?php include __DIR__ . '/includes/sidebar.php'; ?>
@@ -785,7 +835,7 @@ try {
                 <div class="small-box bg-info">
                     <div class="inner">
                         <h3><?php echo $total_clientes; ?></h3>
-                        <p>Clientes Registrados</p>
+                        <p>Socios Registrados</p>
                     </div>
                     <div class="icon">
                         <i class="fas fa-users"></i>
@@ -815,7 +865,7 @@ try {
                 <div class="small-box bg-warning">
                     <div class="inner">
                         <h3><?php echo $total_productos; ?></h3>
-                        <p>Productos en Stock</p>
+                        <p>Productos con Stock</p>
                     </div>
                     <div class="icon">
                         <i class="fas fa-boxes"></i>
@@ -850,7 +900,7 @@ try {
                 <div class="small-box bg-info">
                     <div class="inner">
                         <h3><?php echo $total_clientes; ?></h3>
-                        <p>Clientes Registrados</p>
+                        <p>Socios Registrados</p>
                     </div>
                     <div class="icon">
                         <i class="fas fa-users"></i>
@@ -880,7 +930,7 @@ try {
                 <div class="small-box bg-warning">
                     <div class="inner">
                         <h3><?php echo $total_productos; ?></h3>
-                        <p>Productos en Stock</p>
+                        <p>Productos con Stock</p>
                     </div>
                     <div class="icon">
                         <i class="fas fa-boxes"></i>
@@ -1000,7 +1050,7 @@ try {
                     <div class="card-header">
                         <h3 class="card-title">
                             <i class="fas fa-user-plus mr-2"></i>
-                            Últimos Clientes Registrados
+                            Últimos Socios Registrados
                         </h3>
                         <div class="card-tools">
                             <button type="button" class="btn btn-tool" data-card-widget="collapse">
@@ -1028,7 +1078,7 @@ try {
                                     <?php endforeach; ?>
                                     <?php if (empty($ultimos_clientes)): ?>
                                     <tr>
-                                        <td colspan="3" class="text-center">No hay clientes registrados</td>
+                                        <td colspan="3" class="text-center">No hay socios registrados</td>
                                     </tr>
                                     <?php endif; ?>
                                 </tbody>
@@ -1036,7 +1086,7 @@ try {
                         </div>
                     </div>
                     <div class="card-footer text-center">
-                        <a href="javascript:void(0)" onclick="verTodosClientes()" class="btn btn-sm btn-primary">Ver todos los clientes</a>
+                        <a href="javascript:void(0)" onclick="verTodosClientes()" class="btn btn-sm btn-primary">Ver todos los socios</a>
                     </div>
                 </div>
             </div>
@@ -1051,7 +1101,7 @@ try {
                     <div class="card-header">
                         <h3 class="card-title">
                             <i class="fas fa-user-plus mr-2"></i>
-                            Últimos Clientes Registrados
+                            Últimos Socios Registrados
                         </h3>
                         <div class="card-tools">
                             <button type="button" class="btn btn-tool" data-card-widget="collapse">
@@ -1079,7 +1129,7 @@ try {
                                     <?php endforeach; ?>
                                     <?php if (empty($ultimos_clientes)): ?>
                                     <tr>
-                                        <td colspan="3" class="text-center">No hay clientes registrados</td>
+                                        <td colspan="3" class="text-center">No hay socios registrados</td>
                                     </tr>
                                     <?php endif; ?>
                                 </tbody>
@@ -1087,7 +1137,7 @@ try {
                         </div>
                     </div>
                     <div class="card-footer text-center">
-                        <a href="javascript:void(0)" onclick="verTodosClientes()" class="btn btn-sm btn-primary">Ver todos los clientes</a>
+                        <a href="javascript:void(0)" onclick="verTodosClientes()" class="btn btn-sm btn-primary">Ver todos los socios</a>
                     </div>
                 </div>
             </div>
@@ -1458,7 +1508,7 @@ try {
                         <div class="row text-center">
                             <div class="col-md-2 col-6 mb-3">
                                 <a href="inscripciones.php?action=nuevo_cliente" class="btn-app">
-                                    <i class="fas fa-user-plus"></i> Nuevo Cliente
+                                    <i class="fas fa-user-plus"></i> Nuevo Socio
                                 </a>
                             </div>
                             <div class="col-md-2 col-6 mb-3">
@@ -1508,7 +1558,7 @@ try {
                         <div class="row text-center justify-content-center">
                             <div class="col-md-2 col-6 mb-3">
                                 <a href="inscripciones.php?action=nuevo_cliente" class="btn-app">
-                                    <i class="fas fa-user-plus"></i> Nuevo Cliente
+                                    <i class="fas fa-user-plus"></i> Nuevo Socio
                                 </a>
                             </div>
                             <div class="col-md-2 col-6 mb-3">
@@ -1579,14 +1629,14 @@ try {
         <?php endif; ?>
     </div>
 
-    <!-- MODALES (Clientes, Productos, Inscripciones, Clases) -->
-    <!-- Modal de Clientes -->
+    <!-- MODALES (Socios, Productos, Inscripciones, Clases) -->
+    <!-- Modal de Socios -->
     <div class="modal fade" id="modalClientes" tabindex="-1" role="dialog">
         <div class="modal-dialog modal-xl" role="document">
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title">
-                        <i class="fas fa-users"></i> Clientes Registrados
+                        <i class="fas fa-users"></i> Socios Registrados
                     </h5>
                     <button type="button" class="close" data-dismiss="modal">
                         <span>&times;</span>
@@ -1595,7 +1645,7 @@ try {
                 <div class="stats-bar">
                     <div class="stat-box">
                         <div class="stat-number"><?php echo count($todos_clientes); ?></div>
-                        <div class="stat-label">Total Clientes</div>
+                        <div class="stat-label">Total Socios</div>
                     </div>
                     <div class="stat-box">
                         <div class="stat-number">
@@ -1625,7 +1675,7 @@ try {
                             <i class="fas fa-search"></i>
                         </span>
                         </div>
-                        <input type="text" id="searchClientes" class="form-control" placeholder="Buscar cliente por nombre, teléfono o email...">
+                        <input type="text" id="searchClientes" class="form-control" placeholder="Buscar socio por nombre, teléfono o email...">
                     </div>
                 </div>
                 <div class="modal-body">
@@ -1656,7 +1706,7 @@ try {
                         <?php if (empty($todos_clientes)): ?>
                         <div class="empty-state">
                             <i class="fas fa-users"></i>
-                            <p>No hay clientes registrados</p>
+                            <p>No hay socios registrados</p>
                         </div>
                         <?php endif; ?>
                     </div>

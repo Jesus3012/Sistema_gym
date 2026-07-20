@@ -1804,3 +1804,565 @@ body {
         max-width: none;
     }
 }
+
+/* ==========================================================
+   VENTAS MULTISUCURSAL
+   Contexto de sede, inventario local y vista global bloqueada
+   ========================================================== */
+
+.ventas-header.ventas-header-minimal.ventas-header-contextual {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    gap: 18px !important;
+    margin: 0 0 18px !important;
+    padding: 0 2px !important;
+}
+
+.ventas-title-group {
+    min-width: 0;
+}
+
+.ventas-header-contextual .ventas-title-group h1 {
+    margin: 0 !important;
+}
+
+.ventas-header-subtitle {
+    margin: 5px 0 0;
+    color: var(--texto-suave);
+    font-size: .82rem;
+    line-height: 1.4;
+}
+
+.ventas-header-side {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.ventas-sucursal-context {
+    min-width: 0;
+    min-height: 43px;
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    padding: 6px 11px 6px 7px;
+    border: 1px solid #bfdbfe;
+    border-radius: 11px;
+    background: #eff6ff;
+    color: #1e3a8a;
+}
+
+.ventas-context-icon {
+    width: 31px;
+    height: 31px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 31px;
+    border-radius: 9px;
+    background: #dbeafe;
+    color: #2563eb;
+    font-size: .78rem;
+}
+
+.ventas-context-copy {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.ventas-context-copy strong {
+    max-width: 220px;
+    overflow: hidden;
+    color: inherit;
+    font-size: .76rem;
+    font-weight: 850;
+    line-height: 1.2;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ventas-context-copy small {
+    color: #64748b;
+    font-size: .66rem;
+    font-weight: 700;
+    line-height: 1.2;
+    white-space: nowrap;
+}
+
+.ventas-sucursal-context.is-global {
+    border-color: #a7f3d0;
+    background: #ecfdf5;
+    color: #047857;
+}
+
+.ventas-sucursal-context.is-global .ventas-context-icon {
+    background: #d1fae5;
+    color: #059669;
+}
+
+.ventas-sucursal-context.is-global small {
+    color: #047857;
+    opacity: .78;
+}
+
+.ventas-inventory-summary {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    flex-wrap: wrap;
+}
+
+.ventas-inventory-pill {
+    min-height: 34px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 9px;
+    border: 1px solid var(--borde);
+    border-radius: 9px;
+    background: #fff;
+    color: #475569;
+    font-size: .69rem;
+    font-weight: 750;
+    white-space: nowrap;
+}
+
+.ventas-inventory-pill i,
+.ventas-inventory-pill strong {
+    color: var(--azul-2);
+}
+
+.producto-card.is-out-of-stock {
+    cursor: not-allowed;
+    opacity: .62;
+}
+
+.producto-card.is-out-of-stock:hover,
+.producto-card.is-out-of-stock:focus-visible {
+    transform: none !important;
+    border-color: var(--borde) !important;
+    box-shadow: none !important;
+}
+
+.producto-stock-badge.agotado {
+    background: #fee2e2;
+    color: #b91c1c;
+}
+
+.producto-stock.agotado {
+    color: var(--rojo) !important;
+}
+
+.producto-card.is-out-of-stock .producto-add {
+    background: #e2e8f0;
+    color: #94a3b8;
+}
+
+.ventas-empty-branch {
+    grid-column: 1 / -1;
+    width: 100%;
+    min-height: 360px;
+    padding: 44px 22px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: var(--texto-suave);
+    text-align: center;
+}
+
+.ventas-empty-branch i {
+    margin-bottom: 14px;
+    color: #94a3b8;
+    font-size: 3.6rem;
+}
+
+.ventas-empty-branch strong {
+    margin-bottom: 6px;
+    color: var(--texto);
+    font-size: 1rem;
+}
+
+.ventas-empty-branch span {
+    max-width: 460px;
+    line-height: 1.5;
+}
+
+.payment-option.is-disabled {
+    cursor: not-allowed;
+    opacity: .5;
+    filter: grayscale(.25);
+}
+
+.payment-option.is-disabled:hover {
+    transform: none !important;
+    border-color: var(--borde);
+    box-shadow: none;
+}
+
+/* Vista "Todas las sucursales" */
+.ventas-grid.is-global-view {
+    align-items: stretch;
+}
+
+.ventas-grid.is-global-view .productos-section,
+.ventas-grid.is-global-view .carrito-section {
+    height: 680px;
+    min-height: 680px;
+}
+
+.global-sales-search {
+    cursor: not-allowed;
+    opacity: .58;
+}
+
+.global-sales-search input,
+.global-sales-search button {
+    pointer-events: none;
+}
+
+.productos-grid.global-empty-grid {
+    flex: 1;
+    min-height: 0;
+    max-height: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: clamp(24px, 4vw, 52px);
+    overflow: hidden;
+}
+
+.global-product-empty {
+    width: min(100%, 760px);
+    display: grid;
+    grid-template-columns: 66px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 18px;
+    padding: 20px;
+    border: 1px dashed #cbd5e1;
+    border-radius: 16px;
+    background:
+        linear-gradient(135deg, #f8fafc 0%, #ffffff 100%);
+    box-shadow: 0 8px 24px rgba(15, 23, 42, .045);
+}
+
+.global-product-empty-icon {
+    width: 66px;
+    height: 66px;
+    display: grid;
+    place-items: center;
+    border-radius: 16px;
+    background: var(--azul-suave);
+    color: var(--azul-2);
+    font-size: 1.65rem;
+}
+
+.global-product-empty-copy {
+    min-width: 0;
+}
+
+.global-product-empty-copy > span {
+    display: block;
+    margin-bottom: 3px;
+    color: var(--azul-2);
+    font-size: .67rem;
+    font-weight: 850;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+}
+
+.global-product-empty h3 {
+    margin: 0 0 5px;
+    color: var(--texto);
+    font-size: 1.05rem;
+    line-height: 1.25;
+}
+
+.global-product-empty p {
+    margin: 0;
+    color: var(--texto-suave);
+    font-size: .8rem;
+    line-height: 1.45;
+}
+
+.btn-elegir-sucursal-venta {
+    min-height: 40px;
+    padding: 0 15px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    border: 0;
+    border-radius: 10px;
+    background: linear-gradient(135deg, var(--azul), var(--azul-2));
+    color: #fff;
+    font: inherit;
+    font-size: .78rem;
+    font-weight: 850;
+    white-space: nowrap;
+    cursor: pointer;
+    box-shadow: 0 7px 16px rgba(37, 99, 235, .18);
+    transition:
+        transform .18s ease,
+        box-shadow .18s ease;
+}
+
+.btn-elegir-sucursal-venta:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 10px 20px rgba(37, 99, 235, .24);
+}
+
+.global-cart-disabled {
+    min-height: 100%;
+}
+
+.global-cart-disabled .empty-icon {
+    background: #f1f5f9;
+    color: #94a3b8;
+}
+
+.global-disabled-select {
+    cursor: not-allowed;
+    background: #f8fafc !important;
+    color: #94a3b8 !important;
+}
+
+.global-disabled-help {
+    display: block;
+    margin-top: 7px;
+    color: var(--texto-suave);
+    font-size: .7rem;
+    line-height: 1.35;
+}
+
+.global-disabled-button {
+    cursor: not-allowed !important;
+    opacity: .76;
+}
+
+@media (max-width: 1100px) {
+    .ventas-header.ventas-header-minimal.ventas-header-contextual {
+        align-items: flex-start !important;
+        flex-direction: column !important;
+    }
+
+    .ventas-header-side {
+        width: 100%;
+        justify-content: flex-start;
+    }
+}
+
+@media (max-width: 900px) {
+    .ventas-grid.is-global-view .productos-section,
+    .ventas-grid.is-global-view .carrito-section {
+        height: auto;
+        min-height: 0;
+    }
+
+    .productos-grid.global-empty-grid {
+        min-height: 330px;
+    }
+}
+
+@media (max-width: 700px) {
+    .ventas-header-side,
+    .ventas-sucursal-context {
+        width: 100%;
+    }
+
+    .ventas-sucursal-context {
+        justify-content: flex-start;
+    }
+
+    .ventas-context-copy strong {
+        max-width: none;
+    }
+
+    .ventas-inventory-summary {
+        width: 100%;
+    }
+
+    .ventas-inventory-pill {
+        flex: 1 1 130px;
+        justify-content: center;
+    }
+
+    .global-product-empty {
+        width: min(100%, 430px);
+        grid-template-columns: 54px minmax(0, 1fr);
+        gap: 14px;
+        padding: 17px;
+    }
+
+    .global-product-empty-icon {
+        width: 54px;
+        height: 54px;
+        border-radius: 14px;
+        font-size: 1.35rem;
+    }
+
+    .global-product-empty .btn-elegir-sucursal-venta {
+        grid-column: 1 / -1;
+        width: 100%;
+    }
+}
+
+@media (max-width: 420px) {
+    .global-product-empty {
+        display: flex;
+        flex-direction: column;
+        text-align: center;
+    }
+
+    .global-product-empty-copy > span,
+    .global-product-empty h3,
+    .global-product-empty p {
+        text-align: center;
+    }
+
+    .ventas-header-subtitle {
+        font-size: .76rem;
+    }
+}
+
+
+
+/* CABECERA GLOBAL DEL CATÁLOGO — CORRECCIÓN FINAL */
+
+.ventas-grid.is-global-view .global-catalog-header {
+    display: grid !important;
+    grid-template-columns: minmax(230px, .8fr) minmax(280px, 1.2fr) !important;
+    align-items: center !important;
+    gap: 22px !important;
+    min-height: 88px;
+    padding: 16px 18px !important;
+}
+
+.global-catalog-heading {
+    min-width: 0;
+}
+
+.global-catalog-title-row {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    flex-wrap: wrap;
+}
+
+.global-catalog-title-row h2 {
+    min-width: 0;
+    margin: 0 !important;
+    color: var(--texto) !important;
+    font-size: 1.04rem !important;
+    font-weight: 780 !important;
+    line-height: 1.25 !important;
+    white-space: nowrap !important;
+}
+
+.global-catalog-status {
+    min-height: 25px;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 8px;
+    border: 1px solid #dbeafe;
+    border-radius: 999px;
+    background: #eff6ff;
+    color: #1e3a8a;
+    font-size: .66rem;
+    font-weight: 800;
+    line-height: 1;
+    white-space: nowrap;
+}
+
+.global-catalog-status i {
+    color: #2563eb;
+    font-size: .62rem;
+}
+
+.global-catalog-heading > p {
+    margin: 5px 0 0;
+    color: var(--texto-suave);
+    font-size: .75rem;
+    line-height: 1.35;
+}
+
+.ventas-grid.is-global-view .global-sales-search {
+    width: 100% !important;
+    max-width: none !important;
+    min-width: 0 !important;
+    justify-self: stretch !important;
+    opacity: 1;
+}
+
+.ventas-grid.is-global-view .global-sales-search input {
+    width: 100%;
+    min-width: 0;
+    height: 42px !important;
+    padding-right: 14px !important;
+    border-color: #e2e8f0 !important;
+    background: #f8fafc !important;
+    color: #94a3b8 !important;
+    text-overflow: ellipsis;
+}
+
+.ventas-grid.is-global-view .global-sales-search > i {
+    color: #94a3b8;
+}
+
+.ventas-grid.is-global-view .global-sales-search input::placeholder {
+    color: #a0aabc;
+    opacity: 1;
+}
+
+@media (max-width: 1050px) {
+    .ventas-grid.is-global-view .global-catalog-header {
+        grid-template-columns: minmax(210px, .75fr) minmax(240px, 1fr) !important;
+        gap: 15px !important;
+    }
+}
+
+@media (max-width: 760px) {
+    .ventas-grid.is-global-view .global-catalog-header {
+        grid-template-columns: minmax(0, 1fr) !important;
+        align-items: stretch !important;
+        gap: 12px !important;
+        min-height: 0;
+        padding: 14px !important;
+    }
+
+    .global-catalog-title-row {
+        justify-content: space-between;
+    }
+
+    .global-catalog-heading > p {
+        margin-top: 4px;
+    }
+}
+
+@media (max-width: 420px) {
+    .global-catalog-title-row {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .global-catalog-title-row h2 {
+        white-space: normal !important;
+    }
+
+    .global-catalog-status {
+        align-self: flex-start;
+    }
+
+    .ventas-grid.is-global-view .global-sales-search input {
+        font-size: .82rem !important;
+    }
+}
