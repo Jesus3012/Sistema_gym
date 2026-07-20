@@ -119,6 +119,31 @@ if (
     }
 }
 
+
+/*
+ * Compatibilidad con enlaces anteriores como:
+ * legal.php?obligatorio=1&return=...
+ *
+ * El modo obligatorio ya no se muestra como página normal. En peticiones
+ * GET se envía al dashboard, donde el sidebar presenta el modal bloqueante.
+ * El POST del propio modal se procesa arriba y no entra en este bloque.
+ */
+if (
+    $_SERVER['REQUEST_METHOD'] === 'GET'
+    && $mandatoryLegal
+) {
+    if ($isCurrentLegal) {
+        legal_redirect($returnUrl);
+    }
+
+    $_SESSION['legal_return_after_accept'] = $returnUrl;
+
+    legal_redirect(
+        legal_base_url()
+        . '/dashboard.php?legal_pendiente=1'
+    );
+}
+
 if (
     legal_user_is_admin()
     && $dbLegal

@@ -1,6 +1,7 @@
 <?php
 // Archivo: includes/permisos_helper.php
-// Catálogo y funciones compartidas para auth_guard.php, sidebar.php y permisos_roles.php.
+// Permisos globales y por sucursal para auth_guard.php, sidebar.php
+// y permisos_roles.php.
 
 declare(strict_types=1);
 
@@ -46,7 +47,7 @@ if (!function_exists('permisos_catalogo_base')) {
             ],
             'historial_ventas' => [
                 'nombre' => 'Historial de ventas',
-                'descripcion' => 'Consulta de ventas y operaciones realizadas.',
+                'descripcion' => 'Consulta de ventas, cancelaciones y devoluciones.',
                 'ruta' => 'historial_ventas.php',
                 'grupo' => 'Ventas y caja',
                 'icono' => 'fa-receipt',
@@ -64,7 +65,7 @@ if (!function_exists('permisos_catalogo_base')) {
             ],
             'productos' => [
                 'nombre' => 'Productos',
-                'descripcion' => 'Catálogo, existencias, precios y movimientos.',
+                'descripcion' => 'Catálogo, precios y administración de productos.',
                 'ruta' => 'productos.php',
                 'grupo' => 'Inventario',
                 'icono' => 'fa-box',
@@ -90,7 +91,7 @@ if (!function_exists('permisos_catalogo_base')) {
                 'orden' => 90,
             ],
             'inscripciones_clases' => [
-                'nombre' => 'Inscripciones a clases',
+                'nombre' => 'Socios por clase',
                 'descripcion' => 'Asignación y consulta de socios inscritos en clases.',
                 'ruta' => 'inscripciones_clases.php',
                 'grupo' => 'Clases',
@@ -118,16 +119,25 @@ if (!function_exists('permisos_catalogo_base')) {
             ],
             'solicitudes_usuarios' => [
                 'nombre' => 'Solicitudes de usuarios',
-                'descripcion' => 'Aprobación y rechazo de cuentas del personal.',
+                'descripcion' => 'Aprobación y asignación de cuentas del personal.',
                 'ruta' => 'solicitudes_usuarios.php',
                 'grupo' => 'Administración',
                 'icono' => 'fa-user-clock',
                 'tipo_acceso' => 'solo_admin',
                 'orden' => 130,
             ],
+            'sucursales' => [
+                'nombre' => 'Sucursales',
+                'descripcion' => 'Administración de sedes, personal y configuración técnica.',
+                'ruta' => 'sucursales.php',
+                'grupo' => 'Administración',
+                'icono' => 'fa-building',
+                'tipo_acceso' => 'solo_admin',
+                'orden' => 135,
+            ],
             'configuracion' => [
                 'nombre' => 'Configuración',
-                'descripcion' => 'Configuraciones generales y credenciales del sistema.',
+                'descripcion' => 'Catálogos y ajustes corporativos del sistema.',
                 'ruta' => 'configuracion.php',
                 'grupo' => 'Administración',
                 'icono' => 'fa-gear',
@@ -135,11 +145,11 @@ if (!function_exists('permisos_catalogo_base')) {
                 'orden' => 140,
             ],
             'permisos_roles' => [
-                'nombre' => 'Permisos por rol',
-                'descripcion' => 'Administración de módulos disponibles para cada rol.',
+                'nombre' => 'Control de acceso',
+                'descripcion' => 'Módulos disponibles para cada rol y sucursal.',
                 'ruta' => 'permisos_roles.php',
                 'grupo' => 'Administración',
-                'icono' => 'fa-user-shield',
+                'icono' => 'fa-key',
                 'tipo_acceso' => 'solo_admin',
                 'orden' => 150,
             ],
@@ -200,12 +210,14 @@ if (!function_exists('permisos_modulo_por_pagina')) {
             'corte_caja.php' => 'corte_caja',
             'corte_caja_detalle.php' => 'corte_caja',
             'productos.php' => 'productos',
+            'inventario.php' => 'dashboard',
             'historial_stock.php' => 'historial_stock',
             'clases.php' => 'clases',
             'inscripciones_clases.php' => 'inscripciones_clases',
             'reportes.php' => 'reportes',
             'notificaciones.php' => 'notificaciones',
             'solicitudes_usuarios.php' => 'solicitudes_usuarios',
+            'sucursales.php' => 'sucursales',
             'configuracion.php' => 'configuracion',
             'permisos_roles.php' => 'permisos_roles',
             'legal.php' => 'legal',
@@ -228,24 +240,47 @@ if (!function_exists('permisos_nombre_modulo')) {
     }
 }
 
-if (!function_exists('permisos_tablas_disponibles')) {
-    function permisos_tablas_disponibles(?mysqli $db): bool
-    {
-        if (!$db) {
+if (!function_exists('permisos_tabla_existe')) {
+    function permisos_tabla_existe(
+        ?mysqli $db,
+        string $tabla
+    ): bool {
+        if (!$db || !preg_match('/^[a-zA-Z0-9_]+$/', $tabla)) {
             return false;
         }
 
-        $modulos = $db->query(
-            "SHOW TABLES LIKE 'modulos_sistema'"
-        );
-        $roles = $db->query(
-            "SHOW TABLES LIKE 'roles_modulos'"
+        $tablaEscapada = $db->real_escape_string($tabla);
+        $resultado = $db->query(
+            "SHOW TABLES LIKE '{$tablaEscapada}'"
         );
 
-        return $modulos
-            && $roles
-            && $modulos->num_rows > 0
-            && $roles->num_rows > 0;
+        return $resultado && $resultado->num_rows > 0;
+    }
+}
+
+if (!function_exists('permisos_tablas_disponibles')) {
+    function permisos_tablas_disponibles(
+        ?mysqli $db,
+        bool $incluirSucursal = false
+    ): bool {
+        if (
+            !permisos_tabla_existe($db, 'modulos_sistema')
+            || !permisos_tabla_existe($db, 'roles_modulos')
+        ) {
+            return false;
+        }
+
+        if (
+            $incluirSucursal
+            && !permisos_tabla_existe(
+                $db,
+                'roles_modulos_sucursales'
+            )
+        ) {
+            return false;
+        }
+
+        return true;
     }
 }
 
@@ -275,9 +310,9 @@ if (!function_exists('permisos_mapa_predeterminado')) {
                 'reportes',
             ],
             'entrenador' => [
+                'asistencias',
                 'clases',
                 'inscripciones_clases',
-                'asistencias',
             ],
         ];
 
@@ -291,10 +326,201 @@ if (!function_exists('permisos_mapa_predeterminado')) {
     }
 }
 
+if (!function_exists('permisos_sucursal_sesion')) {
+    function permisos_sucursal_sesion(?int $sucursalId = null): int
+    {
+        if ($sucursalId !== null && $sucursalId > 0) {
+            return $sucursalId;
+        }
+
+        return (int) ($_SESSION['sucursal_id'] ?? 0);
+    }
+}
+
+if (!function_exists('permisos_modulos_asignables')) {
+    function permisos_modulos_asignables(?mysqli $db): array
+    {
+        $catalogo = permisos_catalogo_base();
+
+        if (!permisos_tablas_disponibles($db)) {
+            return array_filter(
+                $catalogo,
+                static function (array $modulo): bool {
+                    return $modulo['tipo_acceso'] === 'asignable';
+                }
+            );
+        }
+
+        $resultado = $db->query(
+            "SELECT clave, nombre, descripcion, ruta, grupo, icono,
+                    tipo_acceso, orden
+             FROM modulos_sistema
+             WHERE activo = 1
+               AND tipo_acceso = 'asignable'
+             ORDER BY orden ASC, nombre ASC"
+        );
+
+        if (!$resultado) {
+            return array_filter(
+                $catalogo,
+                static function (array $modulo): bool {
+                    return $modulo['tipo_acceso'] === 'asignable';
+                }
+            );
+        }
+
+        $modulos = [];
+
+        while ($fila = $resultado->fetch_assoc()) {
+            $clave = trim((string) ($fila['clave'] ?? ''));
+
+            if ($clave === '') {
+                continue;
+            }
+
+            $base = $catalogo[$clave] ?? [];
+            $modulos[$clave] = [
+                'nombre' => (string) (
+                    $fila['nombre']
+                    ?? $base['nombre']
+                    ?? $clave
+                ),
+                'descripcion' => (string) (
+                    $fila['descripcion']
+                    ?? $base['descripcion']
+                    ?? ''
+                ),
+                'ruta' => (string) (
+                    $fila['ruta']
+                    ?? $base['ruta']
+                    ?? ''
+                ),
+                'grupo' => (string) (
+                    $fila['grupo']
+                    ?? $base['grupo']
+                    ?? 'Otros'
+                ),
+                'icono' => (string) (
+                    $fila['icono']
+                    ?? $base['icono']
+                    ?? 'fa-circle'
+                ),
+                'tipo_acceso' => 'asignable',
+                'orden' => (int) (
+                    $fila['orden']
+                    ?? $base['orden']
+                    ?? 0
+                ),
+            ];
+        }
+
+        return $modulos;
+    }
+}
+
+if (!function_exists('permisos_sincronizar_sucursal')) {
+    function permisos_sincronizar_sucursal(
+        mysqli $db,
+        int $sucursalId
+    ): void {
+        if (
+            $sucursalId <= 0
+            || !permisos_tablas_disponibles($db, true)
+        ) {
+            return;
+        }
+
+        $roles = permisos_roles_configurables();
+        $asignables = permisos_modulos_asignables($db);
+
+        $stmtModulo = $db->prepare(
+            "SELECT id
+             FROM modulos_sistema
+             WHERE clave = ?
+               AND tipo_acceso = 'asignable'
+               AND activo = 1
+             LIMIT 1"
+        );
+
+        $stmtGlobal = $db->prepare(
+            "SELECT permitido
+             FROM roles_modulos
+             WHERE rol = ?
+               AND modulo_id = ?
+             LIMIT 1"
+        );
+
+        $stmtInsertar = $db->prepare(
+            "INSERT IGNORE INTO roles_modulos_sucursales
+                (sucursal_id, rol, modulo_id, permitido,
+                 actualizado_por, actualizado_en)
+             VALUES (?, ?, ?, ?, NULL, NOW())"
+        );
+
+        if (!$stmtModulo || !$stmtGlobal || !$stmtInsertar) {
+            throw new RuntimeException(
+                'No fue posible preparar los permisos de la sucursal.'
+            );
+        }
+
+        foreach ($roles as $rol => $_nombreRol) {
+            $predeterminados = permisos_mapa_predeterminado($rol);
+
+            foreach ($asignables as $clave => $_modulo) {
+                $stmtModulo->bind_param('s', $clave);
+                $stmtModulo->execute();
+                $filaModulo = $stmtModulo
+                    ->get_result()
+                    ->fetch_assoc();
+
+                if (!$filaModulo) {
+                    continue;
+                }
+
+                $moduloId = (int) $filaModulo['id'];
+                $permitido = !empty($predeterminados[$clave])
+                    ? 1
+                    : 0;
+
+                $stmtGlobal->bind_param(
+                    'si',
+                    $rol,
+                    $moduloId
+                );
+                $stmtGlobal->execute();
+                $filaGlobal = $stmtGlobal
+                    ->get_result()
+                    ->fetch_assoc();
+
+                if ($filaGlobal) {
+                    $permitido = (int) (
+                        $filaGlobal['permitido'] ?? 0
+                    );
+                }
+
+                $stmtInsertar->bind_param(
+                    'isii',
+                    $sucursalId,
+                    $rol,
+                    $moduloId,
+                    $permitido
+                );
+                $stmtInsertar->execute();
+            }
+        }
+
+        $stmtModulo->close();
+        $stmtGlobal->close();
+        $stmtInsertar->close();
+    }
+}
+
 if (!function_exists('permisos_obtener_mapa_rol')) {
     function permisos_obtener_mapa_rol(
         ?mysqli $db,
-        string $rol
+        string $rol,
+        ?int $sucursalId = null,
+        bool $forzarGlobal = false
     ): array {
         $rol = strtolower(trim($rol));
         $catalogo = permisos_catalogo_base();
@@ -307,36 +533,81 @@ if (!function_exists('permisos_obtener_mapa_rol')) {
             return array_fill_keys(array_keys($catalogo), false);
         }
 
+        $mapa = permisos_mapa_predeterminado($rol);
+
         if (!permisos_tablas_disponibles($db)) {
-            return permisos_mapa_predeterminado($rol);
+            return $mapa;
         }
 
-        $mapa = array_fill_keys(array_keys($catalogo), false);
+        $sucursalId = permisos_sucursal_sesion($sucursalId);
+        $usarSucursal = !$forzarGlobal
+            && $sucursalId > 0
+            && permisos_tablas_disponibles($db, true);
 
-        foreach ($catalogo as $clave => $modulo) {
-            if ($modulo['tipo_acceso'] === 'esencial') {
-                $mapa[$clave] = true;
+        if ($usarSucursal) {
+            try {
+                permisos_sincronizar_sucursal(
+                    $db,
+                    $sucursalId
+                );
+            } catch (Throwable $error) {
+                error_log(
+                    '[Permisos sucursal] '
+                    . $error->getMessage()
+                );
             }
+
+            $stmt = $db->prepare(
+                "SELECT
+                    m.clave,
+                    m.tipo_acceso,
+                    rms.permitido AS permitido_sucursal,
+                    rm.permitido AS permitido_global
+                 FROM modulos_sistema m
+                 LEFT JOIN roles_modulos rm
+                   ON rm.modulo_id = m.id
+                  AND rm.rol = ?
+                 LEFT JOIN roles_modulos_sucursales rms
+                   ON rms.modulo_id = m.id
+                  AND rms.rol = ?
+                  AND rms.sucursal_id = ?
+                 WHERE m.activo = 1"
+            );
+
+            if (!$stmt) {
+                return $mapa;
+            }
+
+            $stmt->bind_param(
+                'ssi',
+                $rol,
+                $rol,
+                $sucursalId
+            );
+        } else {
+            $stmt = $db->prepare(
+                "SELECT
+                    m.clave,
+                    m.tipo_acceso,
+                    rm.permitido AS permitido_global
+                 FROM modulos_sistema m
+                 LEFT JOIN roles_modulos rm
+                   ON rm.modulo_id = m.id
+                  AND rm.rol = ?
+                 WHERE m.activo = 1"
+            );
+
+            if (!$stmt) {
+                return $mapa;
+            }
+
+            $stmt->bind_param('s', $rol);
         }
 
-        $stmt = $db->prepare(
-            "SELECT m.clave, m.tipo_acceso, COALESCE(rm.permitido, 0) AS permitido
-             FROM modulos_sistema m
-             LEFT JOIN roles_modulos rm
-               ON rm.modulo_id = m.id
-              AND rm.rol = ?
-             WHERE m.activo = 1"
-        );
-
-        if (!$stmt) {
-            return permisos_mapa_predeterminado($rol);
-        }
-
-        $stmt->bind_param('s', $rol);
         $stmt->execute();
-        $result = $stmt->get_result();
+        $resultado = $stmt->get_result();
 
-        while ($result && $fila = $result->fetch_assoc()) {
+        while ($resultado && $fila = $resultado->fetch_assoc()) {
             $clave = (string) ($fila['clave'] ?? '');
             $tipo = (string) ($fila['tipo_acceso'] ?? '');
 
@@ -346,10 +617,30 @@ if (!function_exists('permisos_obtener_mapa_rol')) {
 
             if ($tipo === 'esencial') {
                 $mapa[$clave] = true;
-            } elseif ($tipo === 'asignable') {
-                $mapa[$clave] = (int) ($fila['permitido'] ?? 0) === 1;
-            } else {
+                continue;
+            }
+
+            if ($tipo !== 'asignable') {
                 $mapa[$clave] = false;
+                continue;
+            }
+
+            if (
+                $usarSucursal
+                && array_key_exists(
+                    'permitido_sucursal',
+                    $fila
+                )
+                && $fila['permitido_sucursal'] !== null
+            ) {
+                $mapa[$clave] =
+                    (int) $fila['permitido_sucursal'] === 1;
+            } elseif (
+                array_key_exists('permitido_global', $fila)
+                && $fila['permitido_global'] !== null
+            ) {
+                $mapa[$clave] =
+                    (int) $fila['permitido_global'] === 1;
             }
         }
 
@@ -363,75 +654,27 @@ if (!function_exists('permisos_rol_tiene_modulo')) {
     function permisos_rol_tiene_modulo(
         ?mysqli $db,
         string $rol,
-        string $clave
+        string $clave,
+        ?int $sucursalId = null,
+        bool $forzarGlobal = false
     ): bool {
-        $mapa = permisos_obtener_mapa_rol($db, $rol);
+        $mapa = permisos_obtener_mapa_rol(
+            $db,
+            $rol,
+            $sucursalId,
+            $forzarGlobal
+        );
 
         return !empty($mapa[$clave]);
     }
 }
 
-if (!function_exists('permisos_modulos_asignables')) {
-    function permisos_modulos_asignables(?mysqli $db): array
-    {
-        $catalogo = permisos_catalogo_base();
-        $modulos = [];
-
-        if (permisos_tablas_disponibles($db)) {
-            $result = $db->query(
-                "SELECT clave, nombre, descripcion, ruta, grupo, icono, orden
-                 FROM modulos_sistema
-                 WHERE activo = 1
-                   AND tipo_acceso = 'asignable'
-                 ORDER BY orden ASC, nombre ASC"
-            );
-
-            if ($result) {
-                while ($fila = $result->fetch_assoc()) {
-                    $clave = (string) ($fila['clave'] ?? '');
-
-                    if ($clave === '') {
-                        continue;
-                    }
-
-                    $modulos[$clave] = [
-                        'nombre' => (string) ($fila['nombre'] ?? $clave),
-                        'descripcion' => (string) ($fila['descripcion'] ?? ''),
-                        'ruta' => (string) ($fila['ruta'] ?? ''),
-                        'grupo' => (string) ($fila['grupo'] ?? 'Otros'),
-                        'icono' => (string) ($fila['icono'] ?? 'fa-circle'),
-                        'tipo_acceso' => 'asignable',
-                        'orden' => (int) ($fila['orden'] ?? 0),
-                    ];
-                }
-
-                return $modulos;
-            }
-        }
-
-        foreach ($catalogo as $clave => $modulo) {
-            if ($modulo['tipo_acceso'] === 'asignable') {
-                $modulos[$clave] = $modulo;
-            }
-        }
-
-        uasort(
-            $modulos,
-            static fn(array $a, array $b): int =>
-                ((int) $a['orden']) <=> ((int) $b['orden'])
-        );
-
-        return $modulos;
-    }
-}
-
-if (!function_exists('permisos_guardar_rol')) {
-    function permisos_guardar_rol(
-        mysqli $db,
+if (!function_exists('permisos_validar_guardado')) {
+    function permisos_validar_guardado(
+        ?mysqli $db,
         string $rol,
-        array $seleccionados,
-        int $administradorId
-    ): void {
+        array $seleccionados
+    ): array {
         $rol = strtolower(trim($rol));
         $rolesValidos = permisos_roles_configurables();
 
@@ -443,17 +686,35 @@ if (!function_exists('permisos_guardar_rol')) {
 
         if (!permisos_tablas_disponibles($db)) {
             throw new RuntimeException(
-                'Primero debes ejecutar la migración del módulo de permisos.'
+                'Primero debes instalar las tablas del módulo de permisos.'
             );
         }
 
         $asignables = permisos_modulos_asignables($db);
-        $seleccionados = array_values(
+
+        return array_values(
             array_intersect(
                 array_keys($asignables),
                 array_map('strval', $seleccionados)
             )
         );
+    }
+}
+
+if (!function_exists('permisos_guardar_rol')) {
+    function permisos_guardar_rol(
+        mysqli $db,
+        string $rol,
+        array $seleccionados,
+        int $administradorId
+    ): void {
+        $seleccionados = permisos_validar_guardado(
+            $db,
+            $rol,
+            $seleccionados
+        );
+        $rol = strtolower(trim($rol));
+        $asignables = permisos_modulos_asignables($db);
 
         $db->begin_transaction();
 
@@ -467,9 +728,10 @@ if (!function_exists('permisos_guardar_rol')) {
                  LIMIT 1"
             );
 
-            $stmtGuardar = $db->prepare(
+            $stmtGlobal = $db->prepare(
                 "INSERT INTO roles_modulos
-                    (rol, modulo_id, permitido, actualizado_por, actualizado_en)
+                    (rol, modulo_id, permitido,
+                     actualizado_por, actualizado_en)
                  VALUES (?, ?, ?, ?, NOW())
                  ON DUPLICATE KEY UPDATE
                     permitido = VALUES(permitido),
@@ -477,27 +739,194 @@ if (!function_exists('permisos_guardar_rol')) {
                     actualizado_en = NOW()"
             );
 
-            if (!$stmtModulo || !$stmtGuardar) {
+            $stmtSucursales = permisos_tablas_disponibles(
+                $db,
+                true
+            )
+                ? $db->prepare(
+                    "INSERT INTO roles_modulos_sucursales
+                        (sucursal_id, rol, modulo_id, permitido,
+                         actualizado_por, actualizado_en)
+                     SELECT
+                        s.id, ?, ?, ?, ?, NOW()
+                     FROM sucursales s
+                     WHERE s.estado = 'activa'
+                     ON DUPLICATE KEY UPDATE
+                        permitido = VALUES(permitido),
+                        actualizado_por = VALUES(actualizado_por),
+                        actualizado_en = NOW()"
+                )
+                : null;
+
+            if (!$stmtModulo || !$stmtGlobal) {
                 throw new RuntimeException(
-                    'No fue posible preparar la actualización de permisos.'
+                    'No fue posible preparar la actualización global.'
                 );
             }
 
             foreach ($asignables as $clave => $_modulo) {
                 $stmtModulo->bind_param('s', $clave);
                 $stmtModulo->execute();
-                $result = $stmtModulo->get_result();
-                $fila = $result ? $result->fetch_assoc() : null;
+                $fila = $stmtModulo
+                    ->get_result()
+                    ->fetch_assoc();
 
                 if (!$fila) {
                     continue;
                 }
 
                 $moduloId = (int) $fila['id'];
-                $permitido = in_array($clave, $seleccionados, true) ? 1 : 0;
+                $permitido = in_array(
+                    $clave,
+                    $seleccionados,
+                    true
+                ) ? 1 : 0;
+
+                $stmtGlobal->bind_param(
+                    'siii',
+                    $rol,
+                    $moduloId,
+                    $permitido,
+                    $administradorId
+                );
+
+                if (!$stmtGlobal->execute()) {
+                    throw new RuntimeException(
+                        'No fue posible guardar todos los permisos globales.'
+                    );
+                }
+
+                if ($stmtSucursales) {
+                    $stmtSucursales->bind_param(
+                        'siii',
+                        $rol,
+                        $moduloId,
+                        $permitido,
+                        $administradorId
+                    );
+
+                    if (!$stmtSucursales->execute()) {
+                        throw new RuntimeException(
+                            'No fue posible aplicar los permisos a todas las sucursales.'
+                        );
+                    }
+                }
+            }
+
+            $stmtModulo->close();
+            $stmtGlobal->close();
+
+            if ($stmtSucursales) {
+                $stmtSucursales->close();
+            }
+
+            $db->commit();
+        } catch (Throwable $error) {
+            $db->rollback();
+            throw $error;
+        }
+    }
+}
+
+if (!function_exists('permisos_guardar_rol_sucursal')) {
+    function permisos_guardar_rol_sucursal(
+        mysqli $db,
+        int $sucursalId,
+        string $rol,
+        array $seleccionados,
+        int $administradorId
+    ): void {
+        if ($sucursalId <= 0) {
+            throw new InvalidArgumentException(
+                'La sucursal seleccionada no es válida.'
+            );
+        }
+
+        if (!permisos_tablas_disponibles($db, true)) {
+            throw new RuntimeException(
+                'Ejecuta la migración de permisos multisucursal.'
+            );
+        }
+
+        $seleccionados = permisos_validar_guardado(
+            $db,
+            $rol,
+            $seleccionados
+        );
+        $rol = strtolower(trim($rol));
+        $asignables = permisos_modulos_asignables($db);
+
+        $db->begin_transaction();
+
+        try {
+            $stmtSucursal = $db->prepare(
+                "SELECT id
+                 FROM sucursales
+                 WHERE id = ?
+                   AND estado = 'activa'
+                 LIMIT 1"
+            );
+
+            $stmtModulo = $db->prepare(
+                "SELECT id
+                 FROM modulos_sistema
+                 WHERE clave = ?
+                   AND tipo_acceso = 'asignable'
+                   AND activo = 1
+                 LIMIT 1"
+            );
+
+            $stmtGuardar = $db->prepare(
+                "INSERT INTO roles_modulos_sucursales
+                    (sucursal_id, rol, modulo_id, permitido,
+                     actualizado_por, actualizado_en)
+                 VALUES (?, ?, ?, ?, ?, NOW())
+                 ON DUPLICATE KEY UPDATE
+                    permitido = VALUES(permitido),
+                    actualizado_por = VALUES(actualizado_por),
+                    actualizado_en = NOW()"
+            );
+
+            if (
+                !$stmtSucursal
+                || !$stmtModulo
+                || !$stmtGuardar
+            ) {
+                throw new RuntimeException(
+                    'No fue posible preparar los permisos de la sucursal.'
+                );
+            }
+
+            $stmtSucursal->bind_param('i', $sucursalId);
+            $stmtSucursal->execute();
+
+            if (!$stmtSucursal->get_result()->fetch_assoc()) {
+                throw new RuntimeException(
+                    'La sucursal ya no está activa.'
+                );
+            }
+
+            foreach ($asignables as $clave => $_modulo) {
+                $stmtModulo->bind_param('s', $clave);
+                $stmtModulo->execute();
+                $fila = $stmtModulo
+                    ->get_result()
+                    ->fetch_assoc();
+
+                if (!$fila) {
+                    continue;
+                }
+
+                $moduloId = (int) $fila['id'];
+                $permitido = in_array(
+                    $clave,
+                    $seleccionados,
+                    true
+                ) ? 1 : 0;
 
                 $stmtGuardar->bind_param(
-                    'siii',
+                    'isiii',
+                    $sucursalId,
                     $rol,
                     $moduloId,
                     $permitido,
@@ -506,11 +935,12 @@ if (!function_exists('permisos_guardar_rol')) {
 
                 if (!$stmtGuardar->execute()) {
                     throw new RuntimeException(
-                        'No fue posible guardar todos los permisos.'
+                        'No fue posible guardar todos los permisos de la sucursal.'
                     );
                 }
             }
 
+            $stmtSucursal->close();
             $stmtModulo->close();
             $stmtGuardar->close();
             $db->commit();
@@ -518,5 +948,37 @@ if (!function_exists('permisos_guardar_rol')) {
             $db->rollback();
             throw $error;
         }
+    }
+}
+
+if (!function_exists('permisos_restaurar_sucursal_desde_global')) {
+    function permisos_restaurar_sucursal_desde_global(
+        mysqli $db,
+        int $sucursalId,
+        string $rol,
+        int $administradorId
+    ): void {
+        $mapaGlobal = permisos_obtener_mapa_rol(
+            $db,
+            $rol,
+            null,
+            true
+        );
+
+        $seleccionados = [];
+
+        foreach ($mapaGlobal as $clave => $permitido) {
+            if ($permitido) {
+                $seleccionados[] = $clave;
+            }
+        }
+
+        permisos_guardar_rol_sucursal(
+            $db,
+            $sucursalId,
+            $rol,
+            $seleccionados,
+            $administradorId
+        );
     }
 }

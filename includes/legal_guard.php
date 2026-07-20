@@ -751,8 +751,9 @@ function legal_require_acceptance()
     );
 
     /*
-     * legal.php debe poder abrirse aunque el usuario no haya aceptado.
-     * También se evita aplicar el guard a endpoints públicos.
+     * legal.php procesa la aceptación y debe poder abrirse sin que el
+     * propio guard provoque un ciclo. Las demás rutas públicas tampoco
+     * requieren esta validación.
      */
     $exceptions = [
         'legal.php',
@@ -778,22 +779,78 @@ function legal_require_acceptance()
             (int) $_SESSION['user_id']
         );
 
-        if (
-            legal_acceptance_is_current(
-                $acceptance,
-                $documents
-            )
-        ) {
+        $isCurrent = legal_acceptance_is_current(
+            $acceptance,
+            $documents
+        );
+
+        /*
+         * Se exponen para componentes que ya estén cargados y quieran
+         * reutilizar el resultado sin volver a consultar la base de datos.
+         */
+        $GLOBALS['legal_acceptance_current'] = $isCurrent;
+        $GLOBALS['legal_documents_current'] = $documents;
+        $GLOBALS['legal_config_current'] = $config;
+
+        if ($isCurrent) {
+            unset($_SESSION['legal_return_after_accept']);
             return;
         }
 
-        $returnUrl = legal_current_local_url();
-        $legalUrl = legal_base_url()
-            . '/legal.php?obligatorio=1&return='
-            . rawurlencode($returnUrl);
+        $returnUrl = legal_safe_return_url(
+            legal_current_local_url()
+        );
+
+        /*
+         * El dashboard sí se deja cargar. El sidebar detecta que la
+         * aceptación está pendiente y dibuja el modal obligatorio por
+         * encima de todo el contenido, sin permitir usar el sistema.
+         */
+        if ($currentPage === 'dashboard.php') {
+            $GLOBALS['legal_acceptance_required'] = true;
+
+            $storedReturn = legal_safe_return_url(
+                (string) (
+                    $_SESSION['legal_return_after_accept']
+                    ?? ''
+                )
+            );
+
+            $storedPage = basename(
+                (string) parse_url(
+                    $storedReturn,
+                    PHP_URL_PATH
+                )
+            );
+
+            /*
+             * Si no hay un destino anterior, o el destino guardado ya era
+             * el propio dashboard, conserva la URL actual del dashboard.
+             * Si venía de otro módulo bloqueado, no se sobrescribe.
+             */
+            if (
+                empty($_SESSION['legal_return_after_accept'])
+                || $storedPage === 'dashboard.php'
+            ) {
+                $_SESSION['legal_return_after_accept'] =
+                    $returnUrl;
+            }
+
+            return;
+        }
+
+        /*
+         * Cualquier otro módulo queda bloqueado desde PHP. Se guarda la
+         * ruta solicitada y se vuelve al dashboard, donde aparece el modal.
+         */
+        $_SESSION['legal_return_after_accept'] = $returnUrl;
+
+        $dashboardUrl = legal_base_url()
+            . '/dashboard.php?legal_pendiente=1';
 
         if (legal_is_ajax()) {
             http_response_code(428);
+
             header(
                 'Content-Type: application/json; charset=UTF-8'
             );
@@ -804,7 +861,7 @@ function legal_require_acceptance()
                     'requires_legal_acceptance' => true,
                     'message' =>
                         'Debes aceptar el aviso de privacidad y los términos.',
-                    'redirect' => $legalUrl,
+                    'redirect' => $dashboardUrl,
                 ],
                 JSON_UNESCAPED_UNICODE
             );
@@ -812,11 +869,23 @@ function legal_require_acceptance()
             exit();
         }
 
-        legal_redirect($legalUrl);
+        legal_redirect($dashboardUrl);
     } catch (Throwable $error) {
         error_log(
             '[Legal guard] ' . $error->getMessage()
         );
+
+        /*
+         * En el dashboard se permite continuar hasta que el sidebar pinte
+         * el modal con el error. Así no queda una pantalla blanca.
+         */
+        if ($currentPage === 'dashboard.php') {
+            $GLOBALS['legal_acceptance_required'] = true;
+            $GLOBALS['legal_acceptance_error'] =
+                $error->getMessage();
+
+            return;
+        }
 
         http_response_code(500);
 

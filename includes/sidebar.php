@@ -165,6 +165,8 @@ $sidebar_paginas_globales = [
     'reportes.php',
     'notificaciones.php',
     'sucursales.php',
+    'configuracion.php',
+    'permisos_roles.php',
 ];
 
 $sidebar_vista_solicitada = strtolower(trim((string) (
@@ -181,6 +183,91 @@ $sidebar_vista_global =
             && sucursal_dashboard_vista_global()
         )
     );
+
+$sidebar_config_section = trim((string) (
+    $_GET['section'] ?? 'general'
+));
+
+$sidebar_config_sections_sucursal = [
+    'clientes',
+    'planes',
+    'productos',
+    'clases',
+    'usuarios',
+];
+
+$sidebar_config_section_sucursal = in_array(
+    $sidebar_config_section,
+    $sidebar_config_sections_sucursal,
+    true
+)
+    ? $sidebar_config_section
+    : 'clientes';
+
+$sidebar_permisos_rol = strtolower(trim((string) (
+    $_GET['rol'] ?? 'recepcionista'
+)));
+
+if (!in_array(
+    $sidebar_permisos_rol,
+    ['recepcionista', 'entrenador'],
+    true
+)) {
+    $sidebar_permisos_rol = 'recepcionista';
+}
+
+/*
+ * Aviso y términos no tiene información por sucursal.
+ * Sin embargo, cambiar la sucursal operativa debe conservar al usuario
+ * dentro de legal.php en lugar de enviarlo al dashboard.
+ */
+$sidebar_legal_params = [];
+
+foreach (
+    ['q', 'estado', 'por_pagina', 'pagina']
+    as $sidebarLegalParam
+) {
+    if (
+        isset($_GET[$sidebarLegalParam])
+        && is_scalar($_GET[$sidebarLegalParam])
+    ) {
+        $sidebarLegalValue = trim(
+            (string) $_GET[$sidebarLegalParam]
+        );
+
+        if ($sidebarLegalValue !== '') {
+            $sidebar_legal_params[$sidebarLegalParam] =
+                $sidebarLegalValue;
+        }
+    }
+}
+
+$sidebar_legal_url = 'legal.php';
+
+if ($sidebar_legal_params !== []) {
+    $sidebar_legal_url .= '?'
+        . http_build_query($sidebar_legal_params);
+}
+
+/*
+ * Mi perfil es una pantalla personal y no cambia su contenido por sede.
+ * El parámetro tab permite conservar Datos personales o Seguridad
+ * después de actualizar la sucursal operativa.
+ */
+$sidebar_perfil_tab = strtolower(trim((string) (
+    $_GET['tab'] ?? 'datos'
+)));
+
+if (!in_array(
+    $sidebar_perfil_tab,
+    ['datos', 'seguridad'],
+    true
+)) {
+    $sidebar_perfil_tab = 'datos';
+}
+
+$sidebar_perfil_url = 'mi_perfil.php?tab='
+    . rawurlencode($sidebar_perfil_tab);
 
 $sidebar_global_urls = [
     'dashboard.php' =>
@@ -215,6 +302,12 @@ $sidebar_global_urls = [
         'notificaciones.php?vista=global',
     'sucursales.php' =>
         'sucursales.php?vista=global',
+    'configuracion.php' =>
+        'configuracion.php?vista=global&section='
+        . rawurlencode($sidebar_config_section),
+    'permisos_roles.php' =>
+        'permisos_roles.php?vista=global&rol='
+        . rawurlencode($sidebar_permisos_rol),
 ];
 
 $sidebar_sucursal_urls = [
@@ -250,6 +343,16 @@ $sidebar_sucursal_urls = [
         'notificaciones.php?vista=sucursal',
     'sucursales.php' =>
         'sucursales.php?vista=sucursal',
+    'configuracion.php' =>
+        'configuracion.php?vista=sucursal&section='
+        . rawurlencode($sidebar_config_section_sucursal),
+    'permisos_roles.php' =>
+        'permisos_roles.php?vista=sucursal&rol='
+        . rawurlencode($sidebar_permisos_rol),
+    'legal.php' =>
+        $sidebar_legal_url,
+    'mi_perfil.php' =>
+        $sidebar_perfil_url,
 ];
 
 $sidebar_contexto_titulos = [
@@ -284,6 +387,14 @@ $sidebar_contexto_titulos = [
         'Vista de notificaciones',
     'sucursales.php' =>
         'Sucursal administrada',
+    'configuracion.php' =>
+        'Ámbito de configuración',
+    'permisos_roles.php' =>
+        'Alcance de accesos',
+    'legal.php' =>
+        'Sucursal de sesión',
+    'mi_perfil.php' =>
+        'Sucursal de sesión',
 ];
 
 $sidebar_global_url =
@@ -385,7 +496,15 @@ $sidebar_contexto_detalle = $sidebar_vista_global
                                                                                                             : (
                                                                                                                 $current_page === 'sucursales.php'
                                                                                                                     ? 'Administración de ' . $sidebar_total_sedes_texto
-                                                                                                                    : 'Estadísticas globales · ' . $sidebar_total_sedes_texto
+                                                                                                                    : (
+                                                                                                                        $current_page === 'configuracion.php'
+                                                                                                                            ? 'Configuración corporativa · ' . $sidebar_total_sedes_texto
+                                                                                                                            : (
+                                                                                                                                $current_page === 'permisos_roles.php'
+                                                                                                                                    ? 'Accesos de todas las sedes · ' . $sidebar_total_sedes_texto
+                                                                                                                                    : 'Estadísticas globales · ' . $sidebar_total_sedes_texto
+                                                                                                                            )
+                                                                                                                    )
                                                                                                             )
                                                                                                     )
                                                                                             )
@@ -759,7 +878,14 @@ $sidebar_navbar_version = is_file($sidebar_navbar_css)
                 role="menu"
                 aria-label="Seleccionar vista o sucursal"
             >
-                <?php if ($sidebar_puede_vista_global): ?>
+                <?php if (
+                    $sidebar_puede_vista_global
+                    && in_array(
+                        $current_page,
+                        $sidebar_paginas_globales,
+                        true
+                    )
+                ): ?>
                     <button
                         type="button"
                         class="sidebar-branch-option <?php echo $sidebar_vista_global ? 'active' : ''; ?>"
@@ -807,6 +933,10 @@ $sidebar_navbar_version = is_file($sidebar_navbar_css)
                                     echo 'Comunicados e historial de todas las sucursales';
                                 } elseif ($current_page === 'sucursales.php') {
                                     echo 'Listado y administración de todas las sedes';
+                                } elseif ($current_page === 'configuracion.php') {
+                                    echo 'Catálogos y ajustes corporativos compartidos';
+                                } elseif ($current_page === 'permisos_roles.php') {
+                                    echo 'Aplicar la misma configuración de accesos en todas las sedes';
                                 } else {
                                     echo 'Estadísticas globales del gimnasio';
                                 }
@@ -902,6 +1032,10 @@ $sidebar_navbar_version = is_file($sidebar_navbar_css)
                         echo 'Notificaciones consolidadas de';
                     } elseif ($current_page === 'sucursales.php') {
                         echo 'Administración disponible para';
+                    } elseif ($current_page === 'configuracion.php') {
+                        echo 'Configuración corporativa para';
+                    } elseif ($current_page === 'permisos_roles.php') {
+                        echo 'Accesos configurables para';
                     } else {
                         echo 'Estadísticas consolidadas de';
                     }
@@ -955,6 +1089,14 @@ $sidebar_navbar_version = is_file($sidebar_navbar_css)
                     echo 'Actualizando notificaciones...';
                 } elseif ($current_page === 'sucursales.php') {
                     echo 'Cambiando sucursal administrada...';
+                } elseif ($current_page === 'configuracion.php') {
+                    echo 'Actualizando ámbito de configuración...';
+                } elseif ($current_page === 'permisos_roles.php') {
+                    echo 'Actualizando control de acceso...';
+                } elseif ($current_page === 'legal.php') {
+                    echo 'Cambiando sucursal de sesión...';
+                } elseif ($current_page === 'mi_perfil.php') {
+                    echo 'Cambiando sucursal de sesión...';
                 } else {
                     echo 'Actualizando estadísticas...';
                 }

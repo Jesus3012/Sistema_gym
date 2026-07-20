@@ -3,9 +3,16 @@
 
 require_once __DIR__ . '/includes/auth_guard.php';
 require_once __DIR__ . '/includes/permisos_helper.php';
+require_once __DIR__ . '/includes/sucursal_context.php';
 require_once __DIR__ . '/config/database.php';
 
-if (!permisos_es_admin((string) ($_SESSION['user_rol'] ?? ''))) {
+$rolAdministrador = (string) (
+    $_SESSION['user_rol_base']
+    ?? $_SESSION['user_rol']
+    ?? ''
+);
+
+if (!permisos_es_admin($rolAdministrador)) {
     header('Location: dashboard.php?error=acceso_denegado');
     exit();
 }
@@ -13,9 +20,59 @@ if (!permisos_es_admin((string) ($_SESSION['user_rol'] ?? ''))) {
 $databasePermisos = new Database();
 $dbPermisos = $databasePermisos->getConnection();
 
-if ($dbPermisos) {
+if ($dbPermisos instanceof mysqli) {
     $dbPermisos->set_charset('utf8mb4');
 }
+
+$usuarioId = (int) ($_SESSION['user_id'] ?? 0);
+$sucursalId = (int) ($_SESSION['sucursal_id'] ?? 0);
+$sucursalNombre = trim((string) (
+    $_SESSION['sucursal_nombre'] ?? 'Sucursal'
+));
+$sucursalClave = trim((string) (
+    $_SESSION['sucursal_clave'] ?? ''
+));
+
+$vistaSolicitada = strtolower(trim((string) (
+    $_POST['vista']
+    ?? $_GET['vista']
+    ?? ''
+)));
+
+if ($dbPermisos instanceof mysqli) {
+    try {
+        if ($vistaSolicitada === 'global') {
+            if (function_exists('sucursal_activar_vista_global')) {
+                sucursal_activar_vista_global(
+                    $dbPermisos,
+                    $usuarioId
+                );
+            } else {
+                $_SESSION['dashboard_vista_global'] = 1;
+            }
+        } elseif ($vistaSolicitada === 'sucursal') {
+            if (function_exists('sucursal_desactivar_vista_global')) {
+                sucursal_desactivar_vista_global();
+            } else {
+                unset($_SESSION['dashboard_vista_global']);
+            }
+        }
+    } catch (Throwable $errorVista) {
+        error_log(
+            '[Control de acceso vista] '
+            . $errorVista->getMessage()
+        );
+    }
+}
+
+$vistaGlobal = function_exists(
+    'sucursal_dashboard_vista_global'
+)
+    ? sucursal_dashboard_vista_global()
+    : (
+        isset($_SESSION['dashboard_vista_global'])
+        && (int) $_SESSION['dashboard_vista_global'] === 1
+    );
 
 $rolesConfigurables = permisos_roles_configurables();
 $rolSeleccionado = strtolower(
@@ -36,22 +93,109 @@ if (empty($_SESSION['permisos_roles_csrf'])) {
     );
 }
 
+function permisosVistaH(string $valor): string
+{
+    return htmlspecialchars(
+        $valor,
+        ENT_QUOTES,
+        'UTF-8'
+    );
+}
+
+function permisosVistaUrl(
+    string $rol,
+    bool $vistaGlobal
+): string {
+    return 'permisos_roles.php?vista='
+        . ($vistaGlobal ? 'global' : 'sucursal')
+        . '&rol='
+        . rawurlencode($rol);
+}
+
+function permisosVistaContarPersonal(
+    ?mysqli $db,
+    string $rol,
+    bool $vistaGlobal,
+    int $sucursalId
+): int {
+    if (!$db) {
+        return 0;
+    }
+
+    if ($vistaGlobal) {
+        $stmt = $db->prepare(
+            "SELECT COUNT(DISTINCT us.usuario_id) AS total
+             FROM usuarios_sucursales us
+             INNER JOIN usuarios u
+               ON u.id = us.usuario_id
+             INNER JOIN sucursales s
+               ON s.id = us.sucursal_id
+             WHERE us.rol_sucursal = ?
+               AND us.estado = 'activo'
+               AND u.estado = 'activo'
+               AND s.estado = 'activa'"
+        );
+
+        if (!$stmt) {
+            return 0;
+        }
+
+        $stmt->bind_param('s', $rol);
+    } else {
+        $stmt = $db->prepare(
+            "SELECT COUNT(DISTINCT us.usuario_id) AS total
+             FROM usuarios_sucursales us
+             INNER JOIN usuarios u
+               ON u.id = us.usuario_id
+             WHERE us.sucursal_id = ?
+               AND us.rol_sucursal = ?
+               AND us.estado = 'activo'
+               AND u.estado = 'activo'"
+        );
+
+        if (!$stmt) {
+            return 0;
+        }
+
+        $stmt->bind_param(
+            'is',
+            $sucursalId,
+            $rol
+        );
+    }
+
+    $stmt->execute();
+    $fila = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    return (int) ($fila['total'] ?? 0);
+}
+
 $mensaje = '';
 $tipoMensaje = '';
 $errorInstalacion = '';
 
-if (!$dbPermisos) {
+if (!$dbPermisos instanceof mysqli) {
     $errorInstalacion =
         'No fue posible conectar con la base de datos.';
 } elseif (!permisos_tablas_disponibles($dbPermisos)) {
     $errorInstalacion =
-        'El módulo todavía no está instalado. Ejecuta sql/migracion_permisos_roles.sql.';
+        'El módulo base de permisos todavía no está instalado.';
+} elseif (!permisos_tablas_disponibles($dbPermisos, true)) {
+    $errorInstalacion =
+        'Falta instalar la tabla de permisos por sucursal. '
+        . 'Ejecuta sql/migracion_permisos_multisucursal.sql.';
 }
 
 if (
     $_SERVER['REQUEST_METHOD'] === 'POST'
-    && (string) ($_POST['accion'] ?? '') === 'guardar'
+    && in_array(
+        (string) ($_POST['accion'] ?? ''),
+        ['guardar', 'restaurar_global'],
+        true
+    )
 ) {
+    $accion = (string) ($_POST['accion'] ?? '');
     $csrf = (string) ($_POST['csrf'] ?? '');
 
     if (
@@ -69,24 +213,65 @@ if (
         $tipoMensaje = 'error';
     } else {
         try {
-            $seleccionados = isset($_POST['modulos'])
-                && is_array($_POST['modulos'])
-                    ? $_POST['modulos']
-                    : [];
+            if ($accion === 'restaurar_global') {
+                if ($vistaGlobal) {
+                    throw new RuntimeException(
+                        'Esta acción solo está disponible dentro de una sucursal.'
+                    );
+                }
 
-            permisos_guardar_rol(
-                $dbPermisos,
-                $rolSeleccionado,
-                $seleccionados,
-                (int) $_SESSION['user_id']
-            );
+                permisos_restaurar_sucursal_desde_global(
+                    $dbPermisos,
+                    $sucursalId,
+                    $rolSeleccionado,
+                    $usuarioId
+                );
+
+                $mensajeFlash =
+                    'La configuración general se copió a '
+                    . $sucursalNombre
+                    . ' para el rol '
+                    . $rolesConfigurables[$rolSeleccionado]
+                    . '.';
+            } else {
+                $seleccionados = isset($_POST['modulos'])
+                    && is_array($_POST['modulos'])
+                        ? $_POST['modulos']
+                        : [];
+
+                if ($vistaGlobal) {
+                    permisos_guardar_rol(
+                        $dbPermisos,
+                        $rolSeleccionado,
+                        $seleccionados,
+                        $usuarioId
+                    );
+
+                    $mensajeFlash =
+                        'Los accesos de '
+                        . $rolesConfigurables[$rolSeleccionado]
+                        . ' se aplicaron a todas las sucursales.';
+                } else {
+                    permisos_guardar_rol_sucursal(
+                        $dbPermisos,
+                        $sucursalId,
+                        $rolSeleccionado,
+                        $seleccionados,
+                        $usuarioId
+                    );
+
+                    $mensajeFlash =
+                        'Los accesos de '
+                        . $rolesConfigurables[$rolSeleccionado]
+                        . ' se actualizaron en '
+                        . $sucursalNombre
+                        . '.';
+                }
+            }
 
             $_SESSION['permisos_roles_flash'] = [
                 'tipo' => 'success',
-                'mensaje' =>
-                    'Los permisos de '
-                    . $rolesConfigurables[$rolSeleccionado]
-                    . ' se actualizaron correctamente.',
+                'mensaje' => $mensajeFlash,
             ];
 
             $_SESSION['permisos_roles_csrf'] = bin2hex(
@@ -94,17 +279,21 @@ if (
             );
 
             header(
-                'Location: permisos_roles.php?rol='
-                . rawurlencode($rolSeleccionado)
+                'Location: '
+                . permisosVistaUrl(
+                    $rolSeleccionado,
+                    $vistaGlobal
+                )
             );
             exit();
         } catch (Throwable $error) {
             error_log(
-                '[Permisos por rol] ' . $error->getMessage()
+                '[Control de acceso multisucursal] '
+                . $error->getMessage()
             );
 
             $mensaje =
-                'No fue posible guardar los permisos. '
+                'No fue posible guardar los accesos. '
                 . $error->getMessage();
             $tipoMensaje = 'error';
         }
@@ -121,12 +310,33 @@ if (isset($_SESSION['permisos_roles_flash'])) {
     }
 }
 
+if (
+    $dbPermisos instanceof mysqli
+    && !$vistaGlobal
+    && permisos_tablas_disponibles($dbPermisos, true)
+) {
+    try {
+        permisos_sincronizar_sucursal(
+            $dbPermisos,
+            $sucursalId
+        );
+    } catch (Throwable $errorSincronizacion) {
+        error_log(
+            '[Permisos sincronización] '
+            . $errorSincronizacion->getMessage()
+        );
+    }
+}
+
 $modulosAsignables = permisos_modulos_asignables(
     $dbPermisos
 );
+
 $mapaPermisos = permisos_obtener_mapa_rol(
     $dbPermisos,
-    $rolSeleccionado
+    $rolSeleccionado,
+    $vistaGlobal ? null : $sucursalId,
+    $vistaGlobal
 );
 
 $modulosAgrupados = [];
@@ -145,830 +355,190 @@ foreach ($modulosAsignables as $clave => $_modulo) {
     }
 }
 
-function permisosVistaH(string $valor): string
-{
-    return htmlspecialchars(
-        $valor,
-        ENT_QUOTES,
-        'UTF-8'
+$conteosRol = [];
+
+foreach ($rolesConfigurables as $claveRol => $_nombreRol) {
+    $conteosRol[$claveRol] = [
+        'modulos' => 0,
+        'personal' => permisosVistaContarPersonal(
+            $dbPermisos,
+            $claveRol,
+            $vistaGlobal,
+            $sucursalId
+        ),
+    ];
+
+    $mapaTarjeta = permisos_obtener_mapa_rol(
+        $dbPermisos,
+        $claveRol,
+        $vistaGlobal ? null : $sucursalId,
+        $vistaGlobal
     );
+
+    foreach ($modulosAsignables as $claveModulo => $_modulo) {
+        if (!empty($mapaTarjeta[$claveModulo])) {
+            $conteosRol[$claveRol]['modulos']++;
+        }
+    }
 }
+
+$totalSucursales = 0;
+
+if ($dbPermisos instanceof mysqli) {
+    $resultadoSucursales = $dbPermisos->query(
+        "SELECT COUNT(*) AS total
+         FROM sucursales
+         WHERE estado = 'activa'"
+    );
+
+    if (
+        $resultadoSucursales
+        && $filaSucursales =
+            $resultadoSucursales->fetch_assoc()
+    ) {
+        $totalSucursales = (int) (
+            $filaSucursales['total'] ?? 0
+        );
+    }
+}
+
+$contextoNombre = $vistaGlobal
+    ? 'Todas las sucursales'
+    : $sucursalNombre;
+
+$contextoDetalle = $vistaGlobal
+    ? (
+        $totalSucursales === 1
+            ? '1 sede activa'
+            : $totalSucursales . ' sedes activas'
+    )
+    : (
+        ($sucursalClave !== ''
+            ? 'Código ' . $sucursalClave
+            : 'Sucursal activa')
+        . ' · configuración local'
+    );
 ?>
 <!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="UTF-8">
+
     <meta
         name="viewport"
         content="width=device-width, initial-scale=1.0"
     >
+
     <meta name="theme-color" content="#1e3a8a">
 
-    <title>Permisos por rol</title>
+    <title>Control de acceso</title>
 
     <link
         rel="stylesheet"
         href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"
     >
 
-    <style>
-        :root {
-            --rp-blue: #1e3a8a;
-            --rp-blue-dark: #14275c;
-            --rp-blue-soft: #eef4ff;
-            --rp-bg: #f4f6f9;
-            --rp-card: #ffffff;
-            --rp-text: #1f2937;
-            --rp-muted: #64748b;
-            --rp-border: #dce4ef;
-            --rp-border-soft: #edf1f6;
-            --rp-green: #047857;
-            --rp-green-soft: #ecfdf5;
-            --rp-red: #b91c1c;
-            --rp-red-soft: #fef2f2;
-            --rp-yellow: #92400e;
-            --rp-yellow-soft: #fffbeb;
-        }
-
-        * {
-            box-sizing: border-box;
-        }
-
-        html,
-        body {
-            max-width: 100%;
-            min-height: 100%;
-            margin: 0;
-            overflow-x: hidden;
-        }
-
-        body {
-            color: var(--rp-text);
-            background: var(--rp-bg);
-            font-family:
-                "Segoe UI",
-                Roboto,
-                Arial,
-                sans-serif;
-        }
-
-        button,
-        input,
-        a {
-            font: inherit;
-        }
-
-        .rp-main {
-            min-height: 100vh;
-            padding: 27px;
-        }
-
-        .rp-container {
-            width: min(1180px, 100%);
-            margin: 0 auto;
-        }
-
-        .rp-page-header {
-            display: flex;
-            align-items: flex-start;
-            justify-content: space-between;
-            gap: 18px;
-            margin-bottom: 18px;
-        }
-
-        .rp-eyebrow {
-            display: inline-flex;
-            align-items: center;
-            gap: 7px;
-            margin-bottom: 6px;
-            color: var(--rp-blue);
-            font-size: .68rem;
-            font-weight: 850;
-            letter-spacing: .08em;
-            text-transform: uppercase;
-        }
-
-        .rp-page-header h1 {
-            margin: 0 0 6px;
-            color: var(--rp-blue-dark);
-            font-size: clamp(1.65rem, 4vw, 2.25rem);
-            line-height: 1.08;
-            letter-spacing: -.035em;
-        }
-
-        .rp-page-header p {
-            max-width: 700px;
-            margin: 0;
-            color: var(--rp-muted);
-            font-size: .8rem;
-            line-height: 1.55;
-        }
-
-        .rp-admin-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 7px;
-            flex: 0 0 auto;
-            min-height: 35px;
-            padding: 0 12px;
-            border: 1px solid #bfdbfe;
-            border-radius: 999px;
-            color: #1e40af;
-            background: #eff6ff;
-            font-size: .66rem;
-            font-weight: 850;
-        }
-
-        .rp-message {
-            display: flex;
-            align-items: flex-start;
-            gap: 9px;
-            margin-bottom: 14px;
-            padding: 12px 14px;
-            border-radius: 11px;
-            font-size: .72rem;
-            line-height: 1.5;
-        }
-
-        .rp-message.success {
-            border: 1px solid #a7f3d0;
-            color: #065f46;
-            background: var(--rp-green-soft);
-        }
-
-        .rp-message.error {
-            border: 1px solid #fecaca;
-            color: #991b1b;
-            background: var(--rp-red-soft);
-        }
-
-        .rp-card {
-            overflow: hidden;
-            border: 1px solid var(--rp-border);
-            border-radius: 18px;
-            background: var(--rp-card);
-            box-shadow: 0 12px 32px rgba(15, 23, 42, .065);
-        }
-
-        .rp-role-section {
-            padding: 17px;
-            border-bottom: 1px solid var(--rp-border-soft);
-        }
-
-        .rp-section-label {
-            display: block;
-            margin-bottom: 9px;
-            color: var(--rp-muted);
-            font-size: .64rem;
-            font-weight: 800;
-            letter-spacing: .04em;
-            text-transform: uppercase;
-        }
-
-        .rp-role-tabs {
-            display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 9px;
-        }
-
-        .rp-role-tab {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 12px;
-            min-width: 0;
-            padding: 12px 13px;
-            border: 1px solid var(--rp-border);
-            border-radius: 12px;
-            color: var(--rp-text);
-            background: #f8fafc;
-            text-decoration: none;
-            transition:
-                border-color .18s ease,
-                background .18s ease,
-                box-shadow .18s ease;
-        }
-
-        .rp-role-tab:hover {
-            border-color: #a9bddd;
-            background: #ffffff;
-        }
-
-        .rp-role-tab.active {
-            border-color: #90acd7;
-            color: var(--rp-blue);
-            background: var(--rp-blue-soft);
-            box-shadow: 0 0 0 3px rgba(30, 58, 138, .055);
-        }
-
-        .rp-role-tab-main {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            min-width: 0;
-        }
-
-        .rp-role-icon {
-            display: grid;
-            flex: 0 0 38px;
-            width: 38px;
-            height: 38px;
-            place-items: center;
-            border-radius: 10px;
-            color: var(--rp-blue);
-            background: #ffffff;
-            box-shadow: inset 0 0 0 1px #e3eaf4;
-        }
-
-        .rp-role-copy {
-            min-width: 0;
-        }
-
-        .rp-role-copy strong,
-        .rp-role-copy span {
-            display: block;
-            overflow: hidden;
-            white-space: nowrap;
-            text-overflow: ellipsis;
-        }
-
-        .rp-role-copy strong {
-            font-size: .76rem;
-        }
-
-        .rp-role-copy span {
-            margin-top: 3px;
-            color: var(--rp-muted);
-            font-size: .62rem;
-        }
-
-        .rp-role-count {
-            display: inline-flex;
-            align-items: center;
-            gap: 4px;
-            flex: 0 0 auto;
-            color: var(--rp-muted);
-            font-size: .61rem;
-            font-weight: 800;
-        }
-
-        .rp-info-bar {
-            display: flex;
-            align-items: flex-start;
-            gap: 9px;
-            margin: 14px 17px 0;
-            padding: 11px 12px;
-            border: 1px solid #dbeafe;
-            border-radius: 11px;
-            color: #1e40af;
-            background: #f8fbff;
-            font-size: .66rem;
-            line-height: 1.48;
-        }
-
-        .rp-workspace {
-            margin-top: 16px;
-        }
-
-        .rp-workspace-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 14px;
-            padding: 17px 18px;
-            border-bottom: 1px solid var(--rp-border-soft);
-        }
-
-        .rp-workspace-title {
-            min-width: 0;
-        }
-
-        .rp-workspace-title h2 {
-            margin: 0 0 4px;
-            color: var(--rp-blue-dark);
-            font-size: 1rem;
-        }
-
-        .rp-workspace-title p {
-            margin: 0;
-            color: var(--rp-muted);
-            font-size: .66rem;
-        }
-
-        .rp-live-summary {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            flex: 0 0 auto;
-        }
-
-        .rp-access-count,
-        .rp-dirty-status {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            min-height: 31px;
-            padding: 0 10px;
-            border-radius: 999px;
-            font-size: .62rem;
-            font-weight: 850;
-        }
-
-        .rp-access-count {
-            color: #065f46;
-            background: var(--rp-green-soft);
-        }
-
-        .rp-dirty-status {
-            display: none;
-            color: var(--rp-yellow);
-            background: var(--rp-yellow-soft);
-        }
-
-        .rp-dirty-status.show {
-            display: inline-flex;
-        }
-
-        .rp-tools {
-            display: grid;
-            grid-template-columns: minmax(220px, 1fr) auto;
-            gap: 10px;
-            padding: 13px 18px;
-            border-bottom: 1px solid var(--rp-border-soft);
-            background: #fbfcfe;
-        }
-
-        .rp-search {
-            position: relative;
-            min-width: 0;
-        }
-
-        .rp-search i {
-            position: absolute;
-            top: 50%;
-            left: 12px;
-            color: #94a3b8;
-            transform: translateY(-50%);
-            pointer-events: none;
-        }
-
-        .rp-search input {
-            width: 100%;
-            min-height: 39px;
-            padding: 0 12px 0 35px;
-            border: 1px solid var(--rp-border);
-            border-radius: 9px;
-            color: var(--rp-text);
-            background: #ffffff;
-            outline: none;
-            font-size: .7rem;
-        }
-
-        .rp-search input:focus {
-            border-color: #8facd9;
-            box-shadow: 0 0 0 3px rgba(30, 58, 138, .07);
-        }
-
-        .rp-quick-actions {
-            display: flex;
-            gap: 7px;
-        }
-
-        .rp-light-button {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            gap: 6px;
-            min-height: 39px;
-            padding: 0 11px;
-            border: 1px solid #cbd5e1;
-            border-radius: 9px;
-            color: #334155;
-            background: #ffffff;
-            cursor: pointer;
-            font-size: .64rem;
-            font-weight: 800;
-        }
-
-        .rp-light-button:hover {
-            border-color: #9fb3d0;
-            background: #f8fafc;
-        }
-
-        .rp-groups {
-            display: grid;
-            gap: 17px;
-            padding: 18px;
-        }
-
-        .rp-group {
-            min-width: 0;
-        }
-
-        .rp-group.hidden {
-            display: none;
-        }
-
-        .rp-group-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 12px;
-            margin-bottom: 8px;
-        }
-
-        .rp-group-title {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            margin: 0;
-            color: var(--rp-blue-dark);
-            font-size: .73rem;
-        }
-
-        .rp-group-count {
-            color: var(--rp-muted);
-            font-size: .59rem;
-        }
-
-        .rp-module-list {
-            overflow: hidden;
-            border: 1px solid var(--rp-border);
-            border-radius: 12px;
-            background: #ffffff;
-        }
-
-        .rp-module-row {
-            display: grid;
-            grid-template-columns: minmax(0, 1fr) 122px;
-            align-items: center;
-            gap: 14px;
-            min-width: 0;
-            padding: 12px 13px;
-            border-bottom: 1px solid var(--rp-border-soft);
-            cursor: pointer;
-            transition:
-                background .16s ease,
-                border-color .16s ease;
-        }
-
-        .rp-module-row:last-child {
-            border-bottom: 0;
-        }
-
-        .rp-module-row:hover {
-            background: #fbfdff;
-        }
-
-        .rp-module-row.enabled {
-            background: #f8fbff;
-        }
-
-        .rp-module-row.hidden {
-            display: none;
-        }
-
-        .rp-module-main {
-            display: flex;
-            align-items: flex-start;
-            gap: 10px;
-            min-width: 0;
-        }
-
-        .rp-module-icon {
-            display: grid;
-            flex: 0 0 37px;
-            width: 37px;
-            height: 37px;
-            place-items: center;
-            border-radius: 10px;
-            color: var(--rp-blue);
-            background: var(--rp-blue-soft);
-            font-size: .8rem;
-        }
-
-        .rp-module-copy {
-            min-width: 0;
-        }
-
-        .rp-module-copy strong {
-            display: block;
-            margin-bottom: 3px;
-            color: var(--rp-text);
-            font-size: .71rem;
-        }
-
-        .rp-module-copy p {
-            margin: 0;
-            color: var(--rp-muted);
-            font-size: .61rem;
-            line-height: 1.4;
-        }
-
-        .rp-module-control {
-            display: flex;
-            align-items: center;
-            justify-content: flex-end;
-            gap: 9px;
-        }
-
-        .rp-state-text {
-            min-width: 57px;
-            color: var(--rp-red);
-            font-size: .59rem;
-            font-weight: 850;
-            text-align: right;
-        }
-
-        .rp-module-row.enabled .rp-state-text {
-            color: var(--rp-green);
-        }
-
-        .rp-switch {
-            position: relative;
-            flex: 0 0 39px;
-            width: 39px;
-            height: 23px;
-        }
-
-        .rp-switch input {
-            position: absolute;
-            width: 1px;
-            height: 1px;
-            opacity: 0;
-            pointer-events: none;
-        }
-
-        .rp-switch-track {
-            position: absolute;
-            inset: 0;
-            border-radius: 999px;
-            background: #cbd5e1;
-            transition: background .18s ease;
-        }
-
-        .rp-switch-track::after {
-            content: "";
-            position: absolute;
-            top: 3px;
-            left: 3px;
-            width: 17px;
-            height: 17px;
-            border-radius: 50%;
-            background: #ffffff;
-            box-shadow: 0 1px 4px rgba(15, 23, 42, .24);
-            transition: transform .18s ease;
-        }
-
-        .rp-switch input:checked + .rp-switch-track {
-            background: var(--rp-blue);
-        }
-
-        .rp-switch input:checked + .rp-switch-track::after {
-            transform: translateX(16px);
-        }
-
-        .rp-no-results {
-            display: none;
-            margin: 0 18px 18px;
-            padding: 28px 15px;
-            border: 1px dashed #cbd5e1;
-            border-radius: 12px;
-            color: var(--rp-muted);
-            text-align: center;
-            font-size: .7rem;
-        }
-
-        .rp-no-results.show {
-            display: block;
-        }
-
-        .rp-always-on {
-            margin: 0 18px 18px;
-            padding: 13px;
-            border: 1px solid #a7f3d0;
-            border-radius: 12px;
-            background: var(--rp-green-soft);
-        }
-
-        .rp-always-on-title {
-            display: flex;
-            align-items: center;
-            gap: 7px;
-            margin: 0 0 9px;
-            color: #065f46;
-            font-size: .68rem;
-        }
-
-        .rp-essential-list {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 7px;
-        }
-
-        .rp-essential-item {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            min-height: 29px;
-            padding: 0 9px;
-            border-radius: 999px;
-            color: #065f46;
-            background: #ffffff;
-            font-size: .61rem;
-            font-weight: 800;
-        }
-
-        .rp-footer {
-            position: sticky;
-            bottom: 0;
-            z-index: 4;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 14px;
-            padding: 14px 18px 15px;
-            border-top: 1px solid var(--rp-border-soft);
-            background: rgba(255, 255, 255, .97);
-            box-shadow: 0 -9px 24px rgba(15, 23, 42, .045);
-            backdrop-filter: blur(8px);
-        }
-
-        .rp-footer-copy {
-            max-width: 590px;
-            color: var(--rp-muted);
-            font-size: .62rem;
-            line-height: 1.45;
-        }
-
-        .rp-footer-actions {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            flex: 0 0 auto;
-        }
-
-        .rp-reset-button,
-        .rp-save-button {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            gap: 7px;
-            min-height: 42px;
-            padding: 0 15px;
-            border-radius: 10px;
-            cursor: pointer;
-            font-size: .68rem;
-            font-weight: 850;
-        }
-
-        .rp-reset-button {
-            border: 1px solid #cbd5e1;
-            color: #475569;
-            background: #ffffff;
-        }
-
-        .rp-reset-button:disabled {
-            cursor: not-allowed;
-            opacity: .42;
-        }
-
-        .rp-save-button {
-            min-width: 185px;
-            border: 0;
-            color: #ffffff;
-            background: var(--rp-blue);
-        }
-
-        .rp-save-button:hover:not(:disabled) {
-            background: #254a9e;
-        }
-
-        .rp-save-button:disabled {
-            cursor: not-allowed;
-            opacity: .5;
-        }
-
-        @media (max-width: 820px) {
-            .rp-main {
-                padding: 20px;
-            }
-
-            .rp-tools {
-                grid-template-columns: 1fr;
-            }
-
-            .rp-quick-actions {
-                width: 100%;
-            }
-
-            .rp-light-button {
-                flex: 1;
-            }
-        }
-
-        @media (max-width: 620px) {
-            .rp-main {
-                padding: 74px 10px 24px;
-            }
-
-            .rp-page-header,
-            .rp-workspace-header,
-            .rp-footer {
-                align-items: stretch;
-                flex-direction: column;
-            }
-
-            .rp-admin-badge {
-                width: max-content;
-            }
-
-            .rp-role-tabs {
-                grid-template-columns: 1fr;
-            }
-
-            .rp-live-summary {
-                flex-wrap: wrap;
-            }
-
-            .rp-module-row {
-                grid-template-columns: 1fr;
-                gap: 10px;
-            }
-
-            .rp-module-control {
-                justify-content: space-between;
-                padding-left: 47px;
-            }
-
-            .rp-state-text {
-                text-align: left;
-            }
-
-            .rp-footer-actions {
-                width: 100%;
-            }
-
-            .rp-reset-button,
-            .rp-save-button {
-                flex: 1;
-                min-width: 0;
-            }
-        }
-
-        @media (max-width: 410px) {
-            .rp-quick-actions,
-            .rp-footer-actions {
-                flex-direction: column;
-            }
-
-            .rp-light-button,
-            .rp-reset-button,
-            .rp-save-button {
-                width: 100%;
-            }
-        }
-    </style>
+    <link
+        rel="stylesheet"
+        href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css"
+    >
+
+    <?php
+    $permisosCss = __DIR__
+        . '/css/permisos_roles.css';
+    ?>
+
+    <link
+        rel="stylesheet"
+        href="css/permisos_roles.css?v=<?php echo is_file($permisosCss)
+            ? (int) filemtime($permisosCss)
+            : time(); ?>"
+    >
 </head>
 
-<body>
+<body class="permisos-page">
 <?php require __DIR__ . '/includes/sidebar.php'; ?>
 
 <main class="main-content rp-main">
     <div class="rp-container">
         <header class="rp-page-header">
-            <div>
-                <h1>Control de acceso</h1>
+            <div class="rp-page-heading">
+                <span class="rp-page-icon">
+                    <i class="fas fa-key"></i>
+                </span>
 
-                <p>
-                    Selecciona un rol y decide qué módulos puede ver y
-                    utilizar.
-                </p>
+                <div>
+                    <span class="rp-eyebrow">
+                        Seguridad del equipo
+                    </span>
+
+                    <h1>Control de acceso</h1>
+
+                    <p>
+                        Define los módulos disponibles para cada función
+                        del personal sin mezclar las configuraciones de
+                        otras sucursales.
+                    </p>
+                </div>
             </div>
 
-            <span class="rp-admin-badge">
-                <i class="fas fa-shield-halved"></i>
-                Solo administradores
-            </span>
-        </header>
-
-        <?php if ($mensaje !== ''): ?>
-            <div
-                class="rp-message <?php echo permisosVistaH(
-                    $tipoMensaje
-                ); ?>"
-            >
-                <i class="fas <?php echo
-                    $tipoMensaje === 'success'
-                        ? 'fa-circle-check'
-                        : 'fa-circle-exclamation';
-                ?>"></i>
+            <div class="rp-context <?php echo $vistaGlobal
+                ? 'global'
+                : 'branch'; ?>">
+                <span class="rp-context-icon">
+                    <i class="fas <?php echo $vistaGlobal
+                        ? 'fa-layer-group'
+                        : 'fa-building'; ?>"></i>
+                </span>
 
                 <span>
-                    <?php echo permisosVistaH($mensaje); ?>
+                    <small>
+                        <?php echo $vistaGlobal
+                            ? 'Aplicación general'
+                            : 'Aplicación por sede'; ?>
+                    </small>
+
+                    <strong>
+                        <?php echo permisosVistaH(
+                            $contextoNombre
+                        ); ?>
+                    </strong>
+
+                    <span>
+                        <?php echo permisosVistaH(
+                            $contextoDetalle
+                        ); ?>
+                    </span>
                 </span>
             </div>
-        <?php endif; ?>
+        </header>
+
+        <div class="rp-scope-note <?php echo $vistaGlobal
+            ? 'global'
+            : 'branch'; ?>">
+            <i class="fas <?php echo $vistaGlobal
+                ? 'fa-triangle-exclamation'
+                : 'fa-circle-info'; ?>"></i>
+
+            <div>
+                <strong>
+                    <?php echo $vistaGlobal
+                        ? 'Cambios para todas las sucursales'
+                        : 'Cambios únicamente para esta sucursal'; ?>
+                </strong>
+
+                <span>
+                    <?php if ($vistaGlobal): ?>
+                        Al guardar, la selección reemplazará los accesos
+                        actuales del rol en todas las sedes activas.
+                    <?php else: ?>
+                        Los cambios solo afectarán al personal con este rol
+                        en <?php echo permisosVistaH($sucursalNombre); ?>.
+                        Las demás sedes conservarán su configuración.
+                    <?php endif; ?>
+                </span>
+            </div>
+        </div>
 
         <?php if ($errorInstalacion !== ''): ?>
             <div class="rp-message error">
@@ -984,47 +554,34 @@ function permisosVistaH(string $valor): string
 
         <section class="rp-card">
             <div class="rp-role-section">
-                <span class="rp-section-label">
-                    1. Selecciona el rol
-                </span>
+                <div class="rp-section-heading">
+                    <div>
+                        <span class="rp-section-label">
+                            Selecciona la función del personal
+                        </span>
+
+                        <p>
+                            Cada función puede tener accesos distintos en
+                            el alcance seleccionado.
+                        </p>
+                    </div>
+                </div>
 
                 <nav
                     class="rp-role-tabs"
-                    aria-label="Roles configurables"
+                    aria-label="Funciones configurables"
                 >
                     <?php foreach (
                         $rolesConfigurables
                         as $claveRol => $nombreRol
                     ): ?>
-                        <?php
-                        $mapaRolTarjeta =
-                            permisos_obtener_mapa_rol(
-                                $dbPermisos,
-                                $claveRol
-                            );
-
-                        $activosRolTarjeta = 0;
-
-                        foreach (
-                            $modulosAsignables
-                            as $claveModulo => $_modulo
-                        ) {
-                            if (
-                                !empty(
-                                    $mapaRolTarjeta[
-                                        $claveModulo
-                                    ]
-                                )
-                            ) {
-                                $activosRolTarjeta++;
-                            }
-                        }
-                        ?>
-
                         <a
-                            href="permisos_roles.php?rol=<?php echo
-                                rawurlencode($claveRol);
-                            ?>"
+                            href="<?php echo permisosVistaH(
+                                permisosVistaUrl(
+                                    $claveRol,
+                                    $vistaGlobal
+                                )
+                            ); ?>"
                             class="rp-role-tab <?php echo
                                 $rolSeleccionado === $claveRol
                                     ? 'active'
@@ -1053,28 +610,39 @@ function permisosVistaH(string $valor): string
                                     </strong>
 
                                     <span>
-                                        Configurar accesos
+                                        <?php echo (int) (
+                                            $conteosRol[$claveRol][
+                                                'personal'
+                                            ] ?? 0
+                                        ); ?>
+                                        persona<?php echo
+                                            (int) (
+                                                $conteosRol[$claveRol][
+                                                    'personal'
+                                                ] ?? 0
+                                            ) === 1
+                                                ? ''
+                                                : 's';
+                                        ?>
+                                        en este alcance
                                     </span>
                                 </span>
                             </span>
 
                             <span class="rp-role-count">
-                                <i class="fas fa-check"></i>
-                                <?php echo $activosRolTarjeta; ?>
+                                <strong>
+                                    <?php echo (int) (
+                                        $conteosRol[$claveRol][
+                                            'modulos'
+                                        ] ?? 0
+                                    ); ?>
+                                </strong>
+
+                                <small>módulos</small>
                             </span>
                         </a>
                     <?php endforeach; ?>
                 </nav>
-            </div>
-
-            <div class="rp-info-bar">
-                <i class="fas fa-circle-info"></i>
-
-                <span>
-                    El administrador conserva acceso completo.
-                    Panel principal, Mi perfil y Aviso y términos siempre
-                    estarán disponibles para todos los roles.
-                </span>
             </div>
 
             <form
@@ -1086,6 +654,7 @@ function permisosVistaH(string $valor): string
                     type="hidden"
                     name="accion"
                     value="guardar"
+                    id="permissionsAction"
                 >
 
                 <input
@@ -1094,6 +663,14 @@ function permisosVistaH(string $valor): string
                     value="<?php echo permisosVistaH(
                         $rolSeleccionado
                     ); ?>"
+                >
+
+                <input
+                    type="hidden"
+                    name="vista"
+                    value="<?php echo $vistaGlobal
+                        ? 'global'
+                        : 'sucursal'; ?>"
                 >
 
                 <input
@@ -1109,7 +686,7 @@ function permisosVistaH(string $valor): string
                 <div class="rp-workspace-header">
                     <div class="rp-workspace-title">
                         <h2>
-                            2. Accesos de
+                            Accesos de
                             <?php echo permisosVistaH(
                                 $rolesConfigurables[
                                     $rolSeleccionado
@@ -1118,23 +695,23 @@ function permisosVistaH(string $valor): string
                         </h2>
 
                         <p>
-                            Activa solamente los módulos que este rol
-                            necesita para trabajar.
+                            Activa solamente lo que esta función necesita
+                            para trabajar en
+                            <?php echo permisosVistaH(
+                                $contextoNombre
+                            ); ?>.
                         </p>
                     </div>
 
                     <div class="rp-live-summary">
-                        <span
-                            class="rp-access-count"
-                            id="accessCount"
-                        >
+                        <span class="rp-access-count">
                             <i class="fas fa-circle-check"></i>
 
                             <span id="activeCount">
                                 <?php echo $totalActivos; ?>
                             </span>
-                            de
-                            <?php echo $totalAsignables; ?>
+
+                            de <?php echo $totalAsignables; ?>
                             permitidos
                         </span>
 
@@ -1187,7 +764,7 @@ function permisosVistaH(string $valor): string
                         as $grupo => $modulos
                     ): ?>
                         <?php
-                        $iconosGruposPermisos = [
+                        $iconosGrupos = [
                             'Socios' => 'fa-users',
                             'Ventas y caja' =>
                                 'fa-cash-register',
@@ -1199,8 +776,8 @@ function permisosVistaH(string $valor): string
                                 'fa-sliders',
                         ];
 
-                        $iconoGrupoPermisos =
-                            $iconosGruposPermisos[$grupo]
+                        $iconoGrupo =
+                            $iconosGrupos[$grupo]
                             ?? 'fa-folder';
                         ?>
 
@@ -1212,7 +789,7 @@ function permisosVistaH(string $valor): string
                                 <h3 class="rp-group-title">
                                     <i class="fas <?php echo
                                         permisosVistaH(
-                                            $iconoGrupoPermisos
+                                            $iconoGrupo
                                         );
                                     ?>"></i>
 
@@ -1237,16 +814,13 @@ function permisosVistaH(string $valor): string
                                     as $clave => $modulo
                                 ): ?>
                                     <?php
-                                    $habilitado =
-                                        !empty(
-                                            $mapaPermisos[$clave]
-                                        );
+                                    $habilitado = !empty(
+                                        $mapaPermisos[$clave]
+                                    );
 
                                     $textoBusqueda = strtolower(
                                         trim(
-                                            (string) $modulo[
-                                                'nombre'
-                                            ]
+                                            (string) $modulo['nombre']
                                             . ' '
                                             . (string) $modulo[
                                                 'descripcion'
@@ -1312,11 +886,9 @@ function permisosVistaH(string $valor): string
                                                 class="rp-state-text"
                                                 data-state-text
                                             >
-                                                <?php echo
-                                                    $habilitado
-                                                        ? 'Permitido'
-                                                        : 'Bloqueado';
-                                                ?>
+                                                <?php echo $habilitado
+                                                    ? 'Permitido'
+                                                    : 'Bloqueado'; ?>
                                             </span>
 
                                             <span class="rp-switch">
@@ -1333,6 +905,11 @@ function permisosVistaH(string $valor): string
                                                             ? 'checked'
                                                             : '';
                                                     ?>
+                                                    <?php echo
+                                                        $errorInstalacion !== ''
+                                                            ? 'disabled'
+                                                            : '';
+                                                    ?>
                                                 >
 
                                                 <span
@@ -1347,20 +924,26 @@ function permisosVistaH(string $valor): string
                     <?php endforeach; ?>
                 </div>
 
-                <div
-                    class="rp-no-results"
-                    id="noResults"
-                >
+                <div class="rp-no-results" id="noResults">
                     <i class="fas fa-magnifying-glass"></i>
-                    <br>
-                    No se encontraron módulos con ese nombre.
+                    <strong>Sin resultados</strong>
+                    <span>
+                        No encontramos módulos con ese nombre.
+                    </span>
                 </div>
 
                 <section class="rp-always-on">
-                    <h3 class="rp-always-on-title">
-                        <i class="fas fa-lock"></i>
-                        Siempre disponibles
-                    </h3>
+                    <div>
+                        <h3 class="rp-always-on-title">
+                            <i class="fas fa-lock"></i>
+                            Siempre disponibles
+                        </h3>
+
+                        <p>
+                            Estos accesos protegen la entrada al sistema y
+                            no pueden desactivarse desde esta pantalla.
+                        </p>
+                    </div>
 
                     <div class="rp-essential-list">
                         <span class="rp-essential-item">
@@ -1382,11 +965,11 @@ function permisosVistaH(string $valor): string
 
                 <footer class="rp-footer">
                     <span class="rp-footer-copy">
-                        Al guardar, el sidebar y el acceso directo por URL
-                        se actualizarán para este rol.
+                        Los cambios se aplican únicamente al alcance seleccionado y no afectan a otras sucursales.
                     </span>
 
                     <div class="rp-footer-actions">
+
                         <button
                             type="button"
                             class="rp-reset-button"
@@ -1394,7 +977,7 @@ function permisosVistaH(string $valor): string
                             disabled
                         >
                             <i class="fas fa-rotate-left"></i>
-                            Restaurar
+                            Descartar cambios
                         </button>
 
                         <button
@@ -1408,7 +991,7 @@ function permisosVistaH(string $valor): string
                             ?>
                         >
                             <i class="fas fa-floppy-disk"></i>
-                            Guardar permisos
+                            Guardar accesos
                         </button>
                     </div>
                 </footer>
@@ -1417,6 +1000,8 @@ function permisosVistaH(string $valor): string
     </div>
 </main>
 
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+
 <script>
 (function () {
     const form = document.getElementById('permissionsForm');
@@ -1424,6 +1009,26 @@ function permisosVistaH(string $valor): string
     if (!form) {
         return;
     }
+
+    const isGlobal = <?php echo $vistaGlobal
+        ? 'true'
+        : 'false'; ?>;
+
+    const contextName = <?php echo json_encode(
+        $contextoNombre,
+        JSON_HEX_TAG
+        | JSON_HEX_APOS
+        | JSON_HEX_AMP
+        | JSON_HEX_QUOT
+    ); ?>;
+
+    const roleName = <?php echo json_encode(
+        $rolesConfigurables[$rolSeleccionado],
+        JSON_HEX_TAG
+        | JSON_HEX_APOS
+        | JSON_HEX_AMP
+        | JSON_HEX_QUOT
+    ); ?>;
 
     const checkboxes = Array.from(
         form.querySelectorAll(
@@ -1453,6 +1058,14 @@ function permisosVistaH(string $valor): string
 
     const saveButton = document.getElementById(
         'savePermissions'
+    );
+
+    const actionInput = document.getElementById(
+        'permissionsAction'
+    );
+
+    const copyGlobalButton = document.getElementById(
+        'copyGlobalButton'
     );
 
     const searchInput = document.getElementById(
@@ -1538,7 +1151,9 @@ function permisosVistaH(string $valor): string
 
     function setAll(value) {
         checkboxes.forEach(function (checkbox) {
-            checkbox.checked = value;
+            if (!checkbox.disabled) {
+                checkbox.checked = value;
+            }
         });
 
         refreshRows();
@@ -1571,7 +1186,7 @@ function permisosVistaH(string $valor): string
         });
 
         groups.forEach(function (group) {
-            const groupHasVisibleRows = Array.from(
+            const hasVisibleRows = Array.from(
                 group.querySelectorAll(
                     '[data-module-row]'
                 )
@@ -1583,7 +1198,7 @@ function permisosVistaH(string $valor): string
 
             group.classList.toggle(
                 'hidden',
-                !groupHasVisibleRows
+                !hasVisibleRows
             );
         });
 
@@ -1653,24 +1268,112 @@ function permisosVistaH(string $valor): string
         );
     }
 
+    if (copyGlobalButton) {
+        copyGlobalButton.addEventListener(
+            'click',
+            async function () {
+                const result = await Swal.fire({
+                    icon: 'question',
+                    title: 'Copiar configuración general',
+                    html:
+                        'Se reemplazarán los accesos de <strong>'
+                        + roleName
+                        + '</strong> únicamente en <strong>'
+                        + contextName
+                        + '</strong>.',
+                    showCancelButton: true,
+                    confirmButtonText: 'Sí, copiar',
+                    cancelButtonText: 'Cancelar',
+                    confirmButtonColor: '#1e3a8a'
+                });
+
+                if (!result.isConfirmed) {
+                    return;
+                }
+
+                actionInput.value = 'restaurar_global';
+                form.submit();
+            }
+        );
+    }
+
     form.addEventListener(
         'submit',
-        function () {
-            if (
-                saveButton
-                && !saveButton.disabled
-            ) {
-                saveButton.disabled = true;
+        async function (event) {
+            if (actionInput.value !== 'guardar') {
+                return;
+            }
 
+            event.preventDefault();
+
+            const result = await Swal.fire({
+                icon: isGlobal ? 'warning' : 'question',
+                title: isGlobal
+                    ? 'Aplicar a todas las sucursales'
+                    : 'Guardar accesos',
+                html: isGlobal
+                    ? (
+                        'La selección de <strong>'
+                        + roleName
+                        + '</strong> reemplazará los accesos '
+                        + 'en todas las sedes activas.'
+                    )
+                    : (
+                        'Se actualizarán los accesos de <strong>'
+                        + roleName
+                        + '</strong> en <strong>'
+                        + contextName
+                        + '</strong>.'
+                    ),
+                showCancelButton: true,
+                confirmButtonText: isGlobal
+                    ? 'Aplicar a todas'
+                    : 'Guardar',
+                cancelButtonText: 'Cancelar',
+                confirmButtonColor: '#1e3a8a'
+            });
+
+            if (!result.isConfirmed) {
+                return;
+            }
+
+            if (saveButton) {
+                saveButton.disabled = true;
                 saveButton.innerHTML =
                     '<i class="fas fa-spinner fa-spin"></i>'
                     + ' Guardando...';
             }
+
+            form.submit();
         }
     );
 
     refreshRows();
     filterModules();
+
+    <?php if ($mensaje !== ''): ?>
+    Swal.fire({
+        icon: <?php echo json_encode(
+            $tipoMensaje === 'success'
+                ? 'success'
+                : 'error'
+        ); ?>,
+        title: <?php echo json_encode(
+            $tipoMensaje === 'success'
+                ? 'Accesos actualizados'
+                : 'No se pudo completar'
+        ); ?>,
+        text: <?php echo json_encode(
+            $mensaje,
+            JSON_HEX_TAG
+            | JSON_HEX_APOS
+            | JSON_HEX_AMP
+            | JSON_HEX_QUOT
+        ); ?>,
+        confirmButtonText: 'Entendido',
+        confirmButtonColor: '#1e3a8a'
+    });
+    <?php endif; ?>
 })();
 </script>
 </body>

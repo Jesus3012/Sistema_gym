@@ -18,6 +18,18 @@ if (!$conn) {
 
 $userId = (int) $_SESSION['user_id'];
 
+$tabPerfil = strtolower(trim((string) (
+    $_GET['tab'] ?? 'datos'
+)));
+
+if (!in_array(
+    $tabPerfil,
+    ['datos', 'seguridad'],
+    true
+)) {
+    $tabPerfil = 'datos';
+}
+
 function responderJson(bool $success, string $message, array $extra = []): void
 {
     header('Content-Type: application/json; charset=UTF-8');
@@ -264,17 +276,57 @@ $avatarUrl = !empty($user['foto_perfil']) && is_file($user['foto_perfil'])
 
                 <section class="profile-settings-card">
                     <div class="settings-tabs" role="tablist" aria-label="Opciones del perfil">
-                        <button type="button" class="settings-tab active" data-tab="datos" role="tab" aria-selected="true">
+                        <button
+                            type="button"
+                            class="settings-tab <?php echo
+                                $tabPerfil === 'datos'
+                                    ? 'active'
+                                    : '';
+                            ?>"
+                            data-tab="datos"
+                            role="tab"
+                            aria-selected="<?php echo
+                                $tabPerfil === 'datos'
+                                    ? 'true'
+                                    : 'false';
+                            ?>"
+                        >
                             <i class="fas fa-user" aria-hidden="true"></i>
                             Datos personales
                         </button>
-                        <button type="button" class="settings-tab" data-tab="seguridad" role="tab" aria-selected="false">
+
+                        <button
+                            type="button"
+                            class="settings-tab <?php echo
+                                $tabPerfil === 'seguridad'
+                                    ? 'active'
+                                    : '';
+                            ?>"
+                            data-tab="seguridad"
+                            role="tab"
+                            aria-selected="<?php echo
+                                $tabPerfil === 'seguridad'
+                                    ? 'true'
+                                    : 'false';
+                            ?>"
+                        >
                             <i class="fas fa-lock" aria-hidden="true"></i>
                             Seguridad
                         </button>
                     </div>
 
-                    <div class="settings-panel active" data-panel="datos" role="tabpanel">
+                    <div
+                        class="settings-panel <?php echo
+                            $tabPerfil === 'datos'
+                                ? 'active'
+                                : '';
+                        ?>"
+                        data-panel="datos"
+                        role="tabpanel"
+                        <?php echo $tabPerfil !== 'datos'
+                            ? 'hidden'
+                            : ''; ?>
+                    >
                         <div class="panel-heading">
                             <h2>Información personal</h2>
                             <p>Estos datos identifican tu cuenta dentro del sistema.</p>
@@ -323,7 +375,18 @@ $avatarUrl = !empty($user['foto_perfil']) && is_file($user['foto_perfil'])
                         </form>
                     </div>
 
-                    <div class="settings-panel" data-panel="seguridad" role="tabpanel" hidden>
+                    <div
+                        class="settings-panel <?php echo
+                            $tabPerfil === 'seguridad'
+                                ? 'active'
+                                : '';
+                        ?>"
+                        data-panel="seguridad"
+                        role="tabpanel"
+                        <?php echo $tabPerfil !== 'seguridad'
+                            ? 'hidden'
+                            : ''; ?>
+                    >
                         <div class="panel-heading">
                             <h2>Cambiar contraseña</h2>
                             <p>Utiliza al menos 6 caracteres y evita contraseñas fáciles de adivinar.</p>
@@ -459,6 +522,15 @@ $avatarUrl = !empty($user['foto_perfil']) && is_file($user['foto_perfil'])
                 panel.classList.toggle('active', active);
                 panel.hidden = !active;
             });
+
+            const currentUrl = new URL(window.location.href);
+            currentUrl.searchParams.set('tab', target);
+
+            window.history.replaceState(
+                {},
+                '',
+                currentUrl.pathname + currentUrl.search
+            );
         });
     });
 

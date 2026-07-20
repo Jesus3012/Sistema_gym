@@ -1,6 +1,6 @@
 <?php
 // Archivo: sucursales.php
-// Administración de sedes, personal, planes e integración de terminales.
+// Administración de sedes y terminales Point.
 
 declare(strict_types=1);
 
@@ -19,10 +19,6 @@ function sucursalesH($valor): string
     return htmlspecialchars((string) $valor, ENT_QUOTES, 'UTF-8');
 }
 
-function sucursalesDinero(float $valor): string
-{
-    return '$' . number_format($valor, 2, '.', ',');
-}
 
 $databaseSucursales = new Database();
 $dbSucursales = $databaseSucursales->getConnection();
@@ -39,17 +35,7 @@ $csrfSucursales = (string) $_SESSION['sucursales_admin_csrf'];
 $errorInstalacion = '';
 $sucursales = [];
 $sucursalSeleccionada = null;
-$personal = [];
-$usuariosDisponibles = [];
-$planesSucursal = [];
 $terminalesSucursal = [];
-$resumenInventario = [
-    'productos' => 0,
-    'unidades' => 0,
-    'bajo_minimo' => 0,
-    'valor_compra' => 0.0,
-    'valor_venta' => 0.0,
-];
 
 if (!$dbSucursales instanceof mysqli) {
     $errorInstalacion = 'No fue posible conectar con la base de datos.';
@@ -99,40 +85,7 @@ if (!$dbSucursales instanceof mysqli) {
                 $sucursalSeleccionada['id']
             );
 
-            /*
-             * Garantiza silenciosamente que los catálogos globales tengan
-             * su registro local en la sede. La función solo crea faltantes,
-             * por lo que puede ejecutarse cada vez que se abre la sucursal.
-             */
-            try {
-                sucursales_sincronizar_catalogos(
-                    $dbSucursales,
-                    $sucursalIdSeleccionada
-                );
-            } catch (Throwable $errorSincronizacion) {
-                error_log(
-                    '[Sucursales sincronización automática] '
-                    . $errorSincronizacion->getMessage()
-                );
-            }
-
-            $personal = sucursales_personal(
-                $dbSucursales,
-                $sucursalIdSeleccionada
-            );
-            $usuariosDisponibles = sucursales_usuarios_disponibles(
-                $dbSucursales,
-                $sucursalIdSeleccionada
-            );
-            $planesSucursal = sucursales_planes(
-                $dbSucursales,
-                $sucursalIdSeleccionada
-            );
             $terminalesSucursal = sucursales_terminales(
-                $dbSucursales,
-                $sucursalIdSeleccionada
-            );
-            $resumenInventario = sucursales_resumen_inventario(
                 $dbSucursales,
                 $sucursalIdSeleccionada
             );
@@ -145,18 +98,13 @@ if (!$dbSucursales instanceof mysqli) {
 
 $totalSucursales = count($sucursales);
 $totalActivas = 0;
-$totalPersonal = 0;
-$totalUnidades = 0;
 
 foreach ($sucursales as $sucursalResumen) {
     if ((string) $sucursalResumen['estado'] === 'activa') {
         $totalActivas++;
     }
-    $totalPersonal += (int) $sucursalResumen['usuarios_activos'];
-    $totalUnidades += (int) $sucursalResumen['unidades_stock'];
 }
 
-$rolesSucursal = sucursales_roles();
 $zonasHorarias = sucursales_zonas_horarias();
 $sucursalActivaSesion = (int) ($_SESSION['sucursal_id'] ?? 0);
 ?>
@@ -205,8 +153,8 @@ $sucursalActivaSesion = (int) ($_SESSION['sucursal_id'] ?? 0);
                     <h1>Sucursales</h1>
 
                     <p>
-                        Organiza la información, el personal, los planes y el
-                        inventario disponible en cada ubicación.
+                        Crea nuevas sedes, actualiza sus datos generales y
+                        configura las terminales Point de cada ubicación.
                     </p>
                 </div>
             </div>
@@ -231,54 +179,42 @@ $sucursalActivaSesion = (int) ($_SESSION['sucursal_id'] ?? 0);
             </div>
         <?php else: ?>
             <section
-                class="br-overview"
+                class="br-summary-bar"
                 aria-label="Resumen de sucursales"
             >
-                <article class="br-overview-card">
-                    <span class="br-overview-icon blue">
+                <div class="br-summary-item">
+                    <span class="br-summary-icon blue">
                         <i class="fas fa-building"></i>
                     </span>
 
-                    <div>
+                    <div class="br-summary-copy">
                         <span>Sedes registradas</span>
                         <strong><?php echo $totalSucursales; ?></strong>
                     </div>
-                </article>
+                </div>
 
-                <article class="br-overview-card">
-                    <span class="br-overview-icon green">
+                <span class="br-summary-divider" aria-hidden="true"></span>
+
+                <div class="br-summary-item">
+                    <span class="br-summary-icon green">
                         <i class="fas fa-circle-check"></i>
                     </span>
 
-                    <div>
+                    <div class="br-summary-copy">
                         <span>Sedes activas</span>
                         <strong><?php echo $totalActivas; ?></strong>
                     </div>
-                </article>
+                </div>
 
-                <article class="br-overview-card">
-                    <span class="br-overview-icon purple">
-                        <i class="fas fa-users"></i>
+                <div class="br-summary-message">
+                    <i class="fas fa-circle-info"></i>
+
+                    <span>
+                        Las altas y ediciones se administran desde esta
+                        pantalla. Personal, planes e inventario permanecen
+                        en Configuración.
                     </span>
-
-                    <div>
-                        <span>Personal asignado</span>
-                        <strong><?php echo $totalPersonal; ?></strong>
-                    </div>
-                </article>
-
-                <article class="br-overview-card">
-                    <span class="br-overview-icon orange">
-                        <i class="fas fa-boxes-stacked"></i>
-                    </span>
-
-                    <div>
-                        <span>Unidades en inventario</span>
-                        <strong>
-                            <?php echo number_format($totalUnidades); ?>
-                        </strong>
-                    </div>
-                </article>
+                </div>
             </section>
 
             <section class="br-card">
@@ -286,7 +222,8 @@ $sucursalActivaSesion = (int) ($_SESSION['sucursal_id'] ?? 0);
                     <div>
                         <h2>Sucursales registradas</h2>
                         <p>
-                            Busca una sede y presiona Abrir sede para revisar su configuración.
+                            Selecciona una sede para editar sus datos o
+                            configurar sus terminales.
                         </p>
                     </div>
 
@@ -309,27 +246,37 @@ $sucursalActivaSesion = (int) ($_SESSION['sucursal_id'] ?? 0);
                         Todavía no hay sucursales registradas.
                     </div>
                 <?php else: ?>
-                    <div class="br-table-head" aria-hidden="true">
+                    <div
+                        class="br-table-head br-table-head-simple"
+                        aria-hidden="true"
+                    >
                         <span>Sucursal</span>
                         <span>Estado</span>
-                        <span>Personal</span>
-                        <span>Inventario</span>
                         <span></span>
                     </div>
 
                     <div class="br-branch-list" id="branchList">
                         <?php foreach ($sucursales as $sucursal): ?>
                             <?php
-                            $seleccionada = $sucursalSeleccionada !== null
-                                && (int) $sucursalSeleccionada['id'] === (int) $sucursal['id'];
+                            $seleccionada =
+                                $sucursalSeleccionada !== null
+                                && (int) $sucursalSeleccionada['id']
+                                    === (int) $sucursal['id'];
 
                             $esSesion =
-                                (int) $sucursal['id'] === $sucursalActivaSesion;
+                                (int) $sucursal['id']
+                                === $sucursalActivaSesion;
                             ?>
 
                             <article
-                                class="br-branch-item <?php echo $seleccionada ? 'active' : ''; ?> <?php echo $sucursal['estado'] === 'inactiva' ? 'inactive' : ''; ?>"
-                                data-branch-search="<?php echo sucursalesH(strtolower($sucursal['nombre'] . ' ' . $sucursal['clave'])); ?>"
+                                class="br-branch-item br-branch-item-simple <?php echo $seleccionada ? 'active' : ''; ?> <?php echo $sucursal['estado'] === 'inactiva' ? 'inactive' : ''; ?>"
+                                data-branch-search="<?php echo sucursalesH(
+                                    strtolower(
+                                        $sucursal['nombre']
+                                        . ' '
+                                        . $sucursal['clave']
+                                    )
+                                ); ?>"
                             >
                                 <div class="br-branch-main">
                                     <span class="br-branch-icon">
@@ -338,13 +285,21 @@ $sucursalActivaSesion = (int) ($_SESSION['sucursal_id'] ?? 0);
 
                                     <div class="br-branch-copy">
                                         <strong>
-                                            <?php echo sucursalesH($sucursal['nombre']); ?>
+                                            <?php echo sucursalesH(
+                                                $sucursal['nombre']
+                                            ); ?>
                                         </strong>
 
                                         <span>
-                                            Código: <?php echo sucursalesH($sucursal['clave']); ?>
+                                            Código:
+                                            <?php echo sucursalesH(
+                                                $sucursal['clave']
+                                            ); ?>
 
-                                            <?php if ((int) $sucursal['es_matriz'] === 1): ?>
+                                            <?php if (
+                                                (int) $sucursal['es_matriz']
+                                                === 1
+                                            ): ?>
                                                 · Matriz
                                             <?php endif; ?>
 
@@ -356,39 +311,38 @@ $sucursalActivaSesion = (int) ($_SESSION['sucursal_id'] ?? 0);
                                 </div>
 
                                 <div>
-                                    <span class="br-mobile-label">Estado</span>
-
-                                    <span class="br-badge <?php echo $sucursal['estado'] === 'activa' ? 'active' : 'inactive'; ?>">
-                                        <i class="fas <?php echo $sucursal['estado'] === 'activa' ? 'fa-circle-check' : 'fa-circle-pause'; ?>"></i>
-                                        <?php echo $sucursal['estado'] === 'activa' ? 'Activa' : 'Inactiva'; ?>
+                                    <span class="br-mobile-label">
+                                        Estado
                                     </span>
-                                </div>
 
-                                <div>
-                                    <span class="br-mobile-label">Personal</span>
+                                    <span class="br-badge <?php echo
+                                        $sucursal['estado'] === 'activa'
+                                            ? 'active'
+                                            : 'inactive';
+                                    ?>">
+                                        <i class="fas <?php echo
+                                            $sucursal['estado'] === 'activa'
+                                                ? 'fa-circle-check'
+                                                : 'fa-circle-pause';
+                                        ?>"></i>
 
-                                    <span class="br-cell-value">
-                                        <?php echo (int) $sucursal['usuarios_activos']; ?>
-                                        personas
-                                    </span>
-                                </div>
-
-                                <div>
-                                    <span class="br-mobile-label">Inventario</span>
-
-                                    <span class="br-cell-value">
-                                        <?php echo number_format((int) $sucursal['unidades_stock']); ?>
-                                        unidades
+                                        <?php echo
+                                            $sucursal['estado'] === 'activa'
+                                                ? 'Activa'
+                                                : 'Inactiva';
+                                        ?>
                                     </span>
                                 </div>
 
                                 <div class="br-row-action">
                                     <a
-                                        class="br-soft-button"
-                                        href="sucursales.php?sucursal=<?php echo (int) $sucursal['id']; ?>#branch-management"
+                                        class="br-soft-button br-manage-link"
+                                        href="sucursales.php?sucursal=<?php echo
+                                            (int) $sucursal['id'];
+                                        ?>#branch-management"
                                     >
                                         <i class="fas fa-arrow-right"></i>
-                                        Abrir sede
+                                        Administrar
                                     </a>
                                 </div>
                             </article>
@@ -398,7 +352,15 @@ $sucursalActivaSesion = (int) ($_SESSION['sucursal_id'] ?? 0);
             </section>
 
             <?php if ($sucursalSeleccionada !== null): ?>
-                <?php $sucursalId = (int) $sucursalSeleccionada['id']; ?>
+                <?php
+                $sucursalId = (int) $sucursalSeleccionada['id'];
+                $terminalesActivas = count(array_filter(
+                    $terminalesSucursal,
+                    static function (array $terminal): bool {
+                        return (int) ($terminal['activo'] ?? 0) === 1;
+                    }
+                ));
+                ?>
 
                 <section
                     class="br-card br-management"
@@ -411,18 +373,29 @@ $sucursalActivaSesion = (int) ($_SESSION['sucursal_id'] ?? 0);
                             </span>
 
                             <h2>
-                                <?php echo sucursalesH($sucursalSeleccionada['nombre']); ?>
+                                <?php echo sucursalesH(
+                                    $sucursalSeleccionada['nombre']
+                                ); ?>
                             </h2>
 
                             <p>
-                                Código interno: <?php echo sucursalesH($sucursalSeleccionada['clave']); ?>
+                                Código interno:
+                                <?php echo sucursalesH(
+                                    $sucursalSeleccionada['clave']
+                                ); ?>
 
-                                · <?php echo $sucursalSeleccionada['estado'] === 'activa'
-                                    ? 'Sucursal activa'
-                                    : 'Sucursal inactiva'; ?>
+                                ·
+                                <?php echo
+                                    $sucursalSeleccionada['estado']
+                                        === 'activa'
+                                            ? 'Sucursal activa'
+                                            : 'Sucursal inactiva';
+                                ?>
 
-                                <?php if ($sucursalId === $sucursalActivaSesion): ?>
-                                    · Es la sucursal actual de tu sesión
+                                <?php if (
+                                    $sucursalId === $sucursalActivaSesion
+                                ): ?>
+                                    · Sucursal actual de tu sesión
                                 <?php endif; ?>
                             </p>
                         </div>
@@ -430,153 +403,158 @@ $sucursalActivaSesion = (int) ($_SESSION['sucursal_id'] ?? 0);
                         <div class="br-management-actions">
                             <button
                                 type="button"
-                                class="br-icon-button br-technical-button"
+                                class="br-secondary br-terminal-settings"
                                 id="technicalSettingsButton"
-                                title="Configuración técnica"
-                                aria-label="Abrir configuración técnica"
                             >
-                                <i class="fas fa-gear"></i>
+                                <i class="fas fa-credit-card"></i>
+                                Terminales
+                                <span class="br-action-count">
+                                    <?php echo count(
+                                        $terminalesSucursal
+                                    ); ?>
+                                </span>
                             </button>
 
                             <button
                                 type="button"
-                                class="br-secondary"
-                                id="editBranchButton"
-                                data-branch='<?php echo sucursalesH(json_encode($sucursalSeleccionada, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)); ?>'
-                            >
-                                <i class="fas fa-pen"></i>
-                                Editar datos
-                            </button>
-
-                            <button
-                                type="button"
-                                class="<?php echo $sucursalSeleccionada['estado'] === 'activa'
-                                    ? 'br-danger'
-                                    : 'br-primary'; ?>"
+                                class="<?php echo
+                                    $sucursalSeleccionada['estado']
+                                        === 'activa'
+                                            ? 'br-danger'
+                                            : 'br-primary';
+                                ?>"
                                 id="toggleBranchButton"
                                 data-id="<?php echo $sucursalId; ?>"
-                                data-current-state="<?php echo sucursalesH($sucursalSeleccionada['estado']); ?>"
-                                <?php echo (int) $sucursalSeleccionada['es_matriz'] === 1
-                                    ? 'disabled title="La matriz no puede desactivarse"'
-                                    : ''; ?>
+                                data-current-state="<?php echo
+                                    sucursalesH(
+                                        $sucursalSeleccionada['estado']
+                                    );
+                                ?>"
+                                <?php echo
+                                    (int) $sucursalSeleccionada['es_matriz']
+                                        === 1
+                                            ? 'disabled title="La matriz no puede desactivarse"'
+                                            : '';
+                                ?>
                             >
-                                <i class="fas <?php echo $sucursalSeleccionada['estado'] === 'activa'
-                                    ? 'fa-circle-pause'
-                                    : 'fa-circle-play'; ?>"></i>
+                                <i class="fas <?php echo
+                                    $sucursalSeleccionada['estado']
+                                        === 'activa'
+                                            ? 'fa-circle-pause'
+                                            : 'fa-circle-play';
+                                ?>"></i>
 
-                                <?php echo $sucursalSeleccionada['estado'] === 'activa'
-                                    ? 'Desactivar'
-                                    : 'Activar'; ?>
+                                <?php echo
+                                    $sucursalSeleccionada['estado']
+                                        === 'activa'
+                                            ? 'Desactivar'
+                                            : 'Activar';
+                                ?>
                             </button>
                         </div>
                     </header>
 
-                    <nav
-                        class="br-tabs"
-                        aria-label="Configuración de la sucursal"
-                    >
-                        <button
-                            type="button"
-                            class="br-tab active"
-                            data-tab="general"
-                        >
-                            <span class="br-tab-icon">
-                                <i class="fas fa-building"></i>
-                            </span>
+                    <div class="br-management-body">
+                        <div class="br-branch-status-bar">
+                            <div class="br-branch-status-main">
+                                <span class="br-status-dot <?php echo
+                                    $sucursalSeleccionada['estado']
+                                        === 'activa'
+                                            ? 'active'
+                                            : 'inactive';
+                                ?>"></span>
 
-                            <span class="br-tab-copy">
-                                <strong>Datos generales</strong>
-                                <span>Dirección, contacto e inventario</span>
-                            </span>
-                        </button>
+                                <div>
+                                    <span>Estado de la sede</span>
 
-                        <button
-                            type="button"
-                            class="br-tab"
-                            data-tab="personal"
-                        >
-                            <span class="br-tab-icon">
-                                <i class="fas fa-users"></i>
-                            </span>
-
-                            <span class="br-tab-copy">
-                                <strong>Personal</strong>
-                                <span>Usuarios y permisos de la sede</span>
-                            </span>
-                        </button>
-
-                        <button
-                            type="button"
-                            class="br-tab"
-                            data-tab="planes"
-                        >
-                            <span class="br-tab-icon">
-                                <i class="fas fa-id-card"></i>
-                            </span>
-
-                            <span class="br-tab-copy">
-                                <strong>Planes</strong>
-                                <span>Precios y disponibilidad</span>
-                            </span>
-                        </button>
-
-                    </nav>
-
-                    <div
-                        class="br-tab-panel active"
-                        data-panel="general"
-                    >
-                        <div class="br-panel-intro">
-                            <div>
-                                <h3>Información general</h3>
-                                <p>
-                                    Consulta los datos principales y el resumen del inventario.
-                                </p>
+                                    <strong class="<?php echo
+                                        $sucursalSeleccionada['estado']
+                                            === 'activa'
+                                                ? 'is-active'
+                                                : 'is-inactive';
+                                    ?>">
+                                        <?php echo
+                                            $sucursalSeleccionada['estado']
+                                                === 'activa'
+                                                    ? 'Activa'
+                                                    : 'Inactiva';
+                                        ?>
+                                    </strong>
+                                </div>
                             </div>
-                        </div>
 
-                        <div class="br-metrics">
-                            <article class="br-metric">
-                                <span>Productos</span>
-                                <strong><?php echo $resumenInventario['productos']; ?></strong>
-                            </article>
+                            <span
+                                class="br-status-divider"
+                                aria-hidden="true"
+                            ></span>
 
-                            <article class="br-metric">
-                                <span>Unidades</span>
-                                <strong><?php echo number_format($resumenInventario['unidades']); ?></strong>
-                            </article>
+                            <div class="br-branch-status-metric">
+                                <span>Terminales</span>
 
-                            <article class="br-metric">
-                                <span>Bajo mínimo</span>
-                                <strong><?php echo $resumenInventario['bajo_minimo']; ?></strong>
-                            </article>
+                                <strong>
+                                    <?php echo count(
+                                        $terminalesSucursal
+                                    ); ?>
+                                </strong>
+                            </div>
 
-                            <article class="br-metric">
-                                <span>Valor de compra</span>
-                                <strong><?php echo sucursalesDinero((float) $resumenInventario['valor_compra']); ?></strong>
-                            </article>
+                            <span
+                                class="br-status-divider"
+                                aria-hidden="true"
+                            ></span>
 
-                            <article class="br-metric">
-                                <span>Valor de venta</span>
-                                <strong><?php echo sucursalesDinero((float) $resumenInventario['valor_venta']); ?></strong>
-                            </article>
+                            <div class="br-branch-status-metric">
+                                <span>Activas</span>
+
+                                <strong>
+                                    <?php echo $terminalesActivas; ?>
+                                </strong>
+                            </div>
+
+                            <button
+                                type="button"
+                                class="br-status-terminal-link"
+                                id="statusTerminalButton"
+                            >
+                                <i class="fas fa-credit-card"></i>
+                                Administrar terminales
+                            </button>
                         </div>
 
                         <section class="br-section">
                             <header class="br-section-header">
                                 <div>
-                                    <h3>Datos de la sucursal</h3>
+                                    <h3>Datos generales</h3>
                                     <p>
-                                        Esta información identifica la sede dentro del sistema.
+                                        Información de contacto y ubicación
+                                        de la sede.
                                     </p>
                                 </div>
+
+                                <button
+                                    type="button"
+                                    class="br-light-edit"
+                                    id="editBranchButton"
+                                    data-branch='<?php echo sucursalesH(
+                                        json_encode(
+                                            $sucursalSeleccionada,
+                                            JSON_UNESCAPED_UNICODE
+                                            | JSON_UNESCAPED_SLASHES
+                                        )
+                                    ); ?>'
+                                >
+                                    <i class="fas fa-pen"></i>
+                                    Editar información
+                                </button>
                             </header>
 
                             <div class="br-info-grid">
                                 <div class="br-info-box">
                                     <span>Código interno</span>
                                     <strong>
-                                        <?php echo sucursalesH($sucursalSeleccionada['clave']); ?>
+                                        <?php echo sucursalesH(
+                                            $sucursalSeleccionada['clave']
+                                        ); ?>
                                     </strong>
                                 </div>
 
@@ -584,8 +562,14 @@ $sucursalActivaSesion = (int) ($_SESSION['sucursal_id'] ?? 0);
                                     <span>Zona horaria</span>
                                     <strong>
                                         <?php echo sucursalesH(
-                                            $zonasHorarias[$sucursalSeleccionada['zona_horaria']]
-                                            ?? $sucursalSeleccionada['zona_horaria']
+                                            $zonasHorarias[
+                                                $sucursalSeleccionada[
+                                                    'zona_horaria'
+                                                ]
+                                            ]
+                                            ?? $sucursalSeleccionada[
+                                                'zona_horaria'
+                                            ]
                                         ); ?>
                                     </strong>
                                 </div>
@@ -613,10 +597,14 @@ $sucursalActivaSesion = (int) ($_SESSION['sucursal_id'] ?? 0);
                                 <div class="br-info-box full">
                                     <span>Dirección</span>
                                     <strong>
-                                        <?php echo nl2br(sucursalesH(
-                                            $sucursalSeleccionada['direccion']
-                                            ?: 'No registrada'
-                                        )); ?>
+                                        <?php echo nl2br(
+                                            sucursalesH(
+                                                $sucursalSeleccionada[
+                                                    'direccion'
+                                                ]
+                                                ?: 'No registrada'
+                                            )
+                                        ); ?>
                                     </strong>
                                 </div>
 
@@ -631,238 +619,6 @@ $sucursalActivaSesion = (int) ($_SESSION['sucursal_id'] ?? 0);
                                 </div>
                             </div>
                         </section>
-                    </div>
-
-                    <div
-                        class="br-tab-panel"
-                        data-panel="personal"
-                    >
-                        <div class="br-panel-intro">
-                            <div>
-                                <h3>Personal con acceso a esta sede</h3>
-                                <p>
-                                    Aquí decides quién puede trabajar en esta
-                                    sucursal y qué función tendrá.
-                                </p>
-                            </div>
-
-                            <button
-                                type="button"
-                                class="br-primary"
-                                id="newAssignmentButton"
-                            >
-                                <i class="fas fa-user-plus"></i>
-                                Agregar personal
-                            </button>
-                        </div>
-
-                        <section class="br-section">
-                            <div class="br-list">
-                                <?php if ($personal === []): ?>
-                                    <div class="br-empty">
-                                        <i class="fas fa-user-slash"></i>
-                                        Esta sucursal todavía no tiene personal asignado.
-                                    </div>
-                                <?php else: ?>
-                                    <?php foreach ($personal as $persona): ?>
-                                        <?php
-                                        $rolPersona = (string) $persona['rol_efectivo'];
-
-                                        $asignacionActiva =
-                                            (string) $persona['asignacion_estado']
-                                            === 'activo';
-                                        ?>
-
-                                        <article class="br-person-row">
-                                            <div class="br-person-main">
-                                                <span class="br-avatar">
-                                                    <?php if (
-                                                        !empty($persona['foto_perfil'])
-                                                        && is_file(
-                                                            __DIR__
-                                                            . '/'
-                                                            . $persona['foto_perfil']
-                                                        )
-                                                    ): ?>
-                                                        <img
-                                                            src="<?php echo sucursalesH($persona['foto_perfil']); ?>"
-                                                            alt=""
-                                                        >
-                                                    <?php else: ?>
-                                                        <i class="fas fa-user"></i>
-                                                    <?php endif; ?>
-                                                </span>
-
-                                                <div class="br-row-copy">
-                                                    <strong>
-                                                        <?php echo sucursalesH($persona['nombre']); ?>
-                                                    </strong>
-
-                                                    <span>
-                                                        <?php echo sucursalesH($persona['email']); ?>
-                                                        ·
-                                                        <?php echo sucursalesH(
-                                                            $rolesSucursal[$rolPersona]
-                                                            ?? ucfirst($rolPersona)
-                                                        ); ?>
-                                                    </span>
-                                                </div>
-                                            </div>
-
-                                            <div class="br-row-actions">
-                                                <?php if ((int) $persona['es_principal'] === 1): ?>
-                                                    <span class="br-badge default">
-                                                        <i class="fas fa-house"></i>
-                                                        Principal
-                                                    </span>
-                                                <?php endif; ?>
-
-                                                <?php if ((int) $persona['puede_operar_caja'] === 1): ?>
-                                                    <span class="br-badge">
-                                                        <i class="fas fa-cash-register"></i>
-                                                        Caja
-                                                    </span>
-                                                <?php endif; ?>
-
-                                                <span class="br-badge <?php echo $asignacionActiva ? 'active' : 'inactive'; ?>">
-                                                    <?php echo $asignacionActiva
-                                                        ? 'Activo'
-                                                        : 'Inactivo'; ?>
-                                                </span>
-
-                                                <button
-                                                    type="button"
-                                                    class="br-action-text edit-assignment-button"
-                                                    data-assignment='<?php echo sucursalesH(json_encode($persona, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)); ?>'
-                                                >
-                                                    <i class="fas fa-pen"></i>
-                                                    Editar
-                                                </button>
-
-                                                <?php if ($asignacionActiva): ?>
-                                                    <button
-                                                        type="button"
-                                                        class="br-action-text danger remove-assignment-button"
-                                                        data-user-id="<?php echo (int) $persona['usuario_id']; ?>"
-                                                        data-user-name="<?php echo sucursalesH($persona['nombre']); ?>"
-                                                    >
-                                                        <i class="fas fa-user-minus"></i>
-                                                        Retirar
-                                                    </button>
-                                                <?php endif; ?>
-                                            </div>
-                                        </article>
-                                    <?php endforeach; ?>
-                                <?php endif; ?>
-                            </div>
-                        </section>
-                    </div>
-
-                    <div
-                        class="br-tab-panel"
-                        data-panel="planes"
-                    >
-                        <div class="br-panel-intro">
-                            <div>
-                                <h3>Planes disponibles</h3>
-                                <p>
-                                    Define el precio y si cada plan se puede vender en esta sede.
-                                </p>
-                            </div>
-                        </div>
-
-                        <section class="br-section">
-                            <div class="br-list">
-                                <?php if ($planesSucursal === []): ?>
-                                    <div class="br-empty">
-                                        <i class="fas fa-id-card"></i>
-                                        No hay planes disponibles para esta sucursal.
-                                    </div>
-                                <?php else: ?>
-                                    <?php foreach ($planesSucursal as $plan): ?>
-                                        <form class="br-plan-row plan-form">
-                                            <input
-                                                type="hidden"
-                                                name="sucursal_id"
-                                                value="<?php echo $sucursalId; ?>"
-                                            >
-
-                                            <input
-                                                type="hidden"
-                                                name="plan_id"
-                                                value="<?php echo (int) $plan['plan_id']; ?>"
-                                            >
-
-                                            <div class="br-plan-main">
-                                                <span class="br-row-icon">
-                                                    <i class="fas fa-id-card"></i>
-                                                </span>
-
-                                                <div class="br-row-copy">
-                                                    <strong>
-                                                        <?php echo sucursalesH($plan['nombre']); ?>
-                                                    </strong>
-
-                                                    <span>
-                                                        <?php echo (int) $plan['duracion_dias']; ?>
-                                                        días · Precio general
-                                                        <?php echo sucursalesDinero((float) $plan['precio_catalogo']); ?>
-                                                    </span>
-                                                </div>
-                                            </div>
-
-                                            <div class="br-plan-field">
-                                                <label>
-                                                    Precio en esta sucursal
-                                                </label>
-
-                                                <input
-                                                    class="br-plan-price"
-                                                    type="number"
-                                                    name="precio"
-                                                    min="0"
-                                                    step="0.01"
-                                                    value="<?php echo sucursalesH(number_format((float) $plan['precio_sucursal'], 2, '.', '')); ?>"
-                                                >
-                                            </div>
-
-                                            <div class="br-plan-field">
-                                                <label>Disponibilidad</label>
-
-                                                <select
-                                                    class="br-plan-state"
-                                                    name="estado"
-                                                >
-                                                    <option
-                                                        value="activo"
-                                                        <?php echo $plan['estado_sucursal'] === 'activo' ? 'selected' : ''; ?>
-                                                    >
-                                                        Disponible
-                                                    </option>
-
-                                                    <option
-                                                        value="inactivo"
-                                                        <?php echo $plan['estado_sucursal'] === 'inactivo' ? 'selected' : ''; ?>
-                                                    >
-                                                        No disponible
-                                                    </option>
-                                                </select>
-                                            </div>
-
-                                            <button
-                                                type="submit"
-                                                class="br-primary"
-                                            >
-                                                <i class="fas fa-check"></i>
-                                                Guardar
-                                            </button>
-                                        </form>
-                                    <?php endforeach; ?>
-                                <?php endif; ?>
-                            </div>
-                        </section>
-                    </div>
-                </section>
                     </div>
                 </section>
             <?php endif; ?>
@@ -887,9 +643,8 @@ $sucursalActivaSesion = (int) ($_SESSION['sucursal_id'] ?? 0);
                     </h2>
 
                     <p>
-                        Escribe los datos básicos de la sede. El inventario
-                        comenzará en cero y tu cuenta quedará asignada
-                        automáticamente.
+                        Registra los datos básicos de la nueva sede.
+                        Después podrás configurar sus terminales Point.
                     </p>
                 </div>
 
@@ -999,225 +754,6 @@ $sucursalActivaSesion = (int) ($_SESSION['sucursal_id'] ?? 0);
 </div>
 
 <?php if ($sucursalSeleccionada !== null): ?>
-<div class="br-modal" id="assignmentModal" aria-hidden="true">
-    <div
-        class="br-modal-card br-assignment-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="assignmentModalTitle"
-    >
-        <form id="assignmentForm">
-            <input
-                type="hidden"
-                name="sucursal_id"
-                value="<?php echo (int) $sucursalSeleccionada['id']; ?>"
-            >
-
-            <header class="br-modal-header">
-                <div>
-                    <span class="br-modal-kicker br-modal-kicker-blue">
-                        Acceso del equipo
-                    </span>
-
-                    <h2 id="assignmentModalTitle">
-                        Agregar personal
-                    </h2>
-
-                    <p>
-                        Selecciona una cuenta existente y define lo que podrá
-                        hacer únicamente en esta sucursal.
-                    </p>
-                </div>
-
-                <button
-                    type="button"
-                    class="br-modal-close"
-                    data-close-modal="assignmentModal"
-                    aria-label="Cerrar"
-                >
-                    <i class="fas fa-xmark"></i>
-                </button>
-            </header>
-
-            <div class="br-modal-body">
-                <div class="br-assignment-context">
-                    <span class="br-assignment-context-icon">
-                        <i class="fas fa-building"></i>
-                    </span>
-
-                    <span>
-                        <small>Sucursal que recibirá el acceso</small>
-                        <strong>
-                            <?php echo sucursalesH(
-                                $sucursalSeleccionada['nombre']
-                            ); ?>
-                        </strong>
-                    </span>
-                </div>
-
-                <div class="br-form-grid">
-                    <div class="br-field full">
-                        <label for="assignmentUser">
-                            Usuario que tendrá acceso *
-                        </label>
-
-                        <select
-                            class="br-control"
-                            id="assignmentUser"
-                            name="usuario_id"
-                            required
-                        >
-                            <option value="">
-                                Selecciona una cuenta
-                            </option>
-
-                            <?php foreach ($usuariosDisponibles as $usuarioDisponible): ?>
-                                <option
-                                    value="<?php echo (int) $usuarioDisponible['id']; ?>"
-                                    data-global-role="<?php echo sucursalesH($usuarioDisponible['rol']); ?>"
-                                >
-                                    <?php echo sucursalesH(
-                                        $usuarioDisponible['nombre']
-                                        . ' · '
-                                        . $usuarioDisponible['email']
-                                    ); ?>
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
-
-                        <small class="br-field-help">
-                            Solo aparecen usuarios que ya tienen una cuenta
-                            registrada en el sistema.
-                        </small>
-                    </div>
-
-                    <div class="br-field">
-                        <label for="assignmentRole">
-                            Función dentro de esta sede *
-                        </label>
-
-                        <select
-                            class="br-control"
-                            id="assignmentRole"
-                            name="rol_sucursal"
-                            required
-                        >
-                            <?php foreach ($rolesSucursal as $rol => $nombreRol): ?>
-                                <option value="<?php echo sucursalesH($rol); ?>">
-                                    <?php echo sucursalesH($nombreRol); ?>
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
-
-                        <small
-                            class="br-field-help"
-                            id="assignmentRoleHelp"
-                        >
-                            La función determina los módulos que podrá usar.
-                        </small>
-                    </div>
-
-                    <div class="br-field">
-                        <label for="assignmentState">
-                            Acceso a esta sucursal
-                        </label>
-
-                        <select
-                            class="br-control"
-                            id="assignmentState"
-                            name="estado"
-                        >
-                            <option value="activo">
-                                Habilitado
-                            </option>
-
-                            <option value="inactivo">
-                                Suspendido
-                            </option>
-                        </select>
-
-                        <small class="br-field-help">
-                            Suspendido conserva el registro, pero impide
-                            seleccionar esta sede.
-                        </small>
-                    </div>
-
-                    <div class="br-field full">
-                        <div class="br-permissions-title">
-                            Opciones adicionales
-                        </div>
-
-                        <div class="br-checks">
-                            <label class="br-check">
-                                <input
-                                    type="checkbox"
-                                    id="assignmentMain"
-                                    name="es_principal"
-                                    value="1"
-                                >
-
-                                <span>
-                                    <strong>
-                                        Abrir esta sede al iniciar sesión
-                                    </strong>
-
-                                    <span>
-                                        Márcalo cuando esta sea la ubicación
-                                        donde trabaja habitualmente.
-                                    </span>
-                                </span>
-                            </label>
-
-                            <label
-                                class="br-check"
-                                id="assignmentCashCard"
-                            >
-                                <input
-                                    type="checkbox"
-                                    id="assignmentCash"
-                                    name="puede_operar_caja"
-                                    value="1"
-                                >
-
-                                <span>
-                                    <strong>
-                                        Permitir operaciones de caja
-                                    </strong>
-
-                                    <span id="assignmentCashHelp">
-                                        Autoriza aperturas, cobros y cierres
-                                        únicamente si su función también tiene
-                                        acceso al módulo de caja.
-                                    </span>
-                                </span>
-                            </label>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <footer class="br-modal-footer">
-                <button
-                    type="button"
-                    class="br-secondary"
-                    data-close-modal="assignmentModal"
-                >
-                    Cancelar
-                </button>
-
-                <button
-                    type="submit"
-                    class="br-primary"
-                >
-                    <i class="fas fa-check"></i>
-                    Guardar asignación
-                </button>
-            </footer>
-        </form>
-    </div>
-</div>
-
-
 <div class="br-modal" id="technicalModal" aria-hidden="true">
     <div
         class="br-modal-card br-technical-modal"
@@ -1574,27 +1110,6 @@ $sucursalActivaSesion = (int) ($_SESSION['sucursal_id'] ?? 0);
             });
         }
 
-        all('.br-tab').forEach(function (tab) {
-            tab.addEventListener('click', function () {
-                all('.br-tab').forEach(function (item) {
-                    item.classList.remove('active');
-                });
-
-                all('.br-tab-panel').forEach(function (panel) {
-                    panel.classList.remove('active');
-                });
-
-                tab.classList.add('active');
-
-                var targetPanel = document.querySelector(
-                    '[data-panel="' + tab.getAttribute('data-tab') + '"]'
-                );
-
-                if (targetPanel) {
-                    targetPanel.classList.add('active');
-                }
-            });
-        });
 
         var branchForm = byId('branchForm');
         var newBranchButton = byId('newBranchButton');
@@ -1680,47 +1195,80 @@ $sucursalActivaSesion = (int) ($_SESSION['sucursal_id'] ?? 0);
             });
         }
 
+        function openBranchEditModal() {
+            if (!editBranchButton) {
+                return;
+            }
+
+            var branch = {};
+
+            try {
+                branch = JSON.parse(
+                    editBranchButton.getAttribute('data-branch')
+                    || '{}'
+                );
+            } catch (error) {
+                branch = {};
+            }
+
+            resetBranchForm();
+
+            if (byId('branchModalTitle')) {
+                byId('branchModalTitle').textContent =
+                    'Editar datos de la sucursal';
+            }
+
+            if (byId('branchSubmitButton')) {
+                byId('branchSubmitButton').innerHTML =
+                    '<i class="fas fa-check"></i> Guardar cambios';
+            }
+
+            branchKeyEdited = true;
+
+            if (byId('branchId')) {
+                byId('branchId').value = branch.id || '';
+            }
+
+            if (byId('branchKey')) {
+                byId('branchKey').value = branch.clave || '';
+            }
+
+            if (byId('branchName')) {
+                byId('branchName').value = branch.nombre || '';
+            }
+
+            if (byId('branchPhone')) {
+                byId('branchPhone').value = branch.telefono || '';
+            }
+
+            if (byId('branchEmail')) {
+                byId('branchEmail').value = branch.email || '';
+            }
+
+            if (byId('branchAddress')) {
+                byId('branchAddress').value =
+                    branch.direccion || '';
+            }
+
+            if (byId('branchSchedule')) {
+                byId('branchSchedule').value =
+                    branch.horario || '';
+            }
+
+            if (byId('branchTimezone')) {
+                byId('branchTimezone').value =
+                    branch.zona_horaria
+                    || 'America/Mexico_City';
+            }
+
+            openModal('branchModal');
+        }
+
         if (editBranchButton) {
-            editBranchButton.addEventListener('click', function () {
-                var branch = {};
-
-                try {
-                    branch = JSON.parse(
-                        editBranchButton.getAttribute('data-branch') || '{}'
-                    );
-                } catch (error) {
-                    branch = {};
-                }
-
-                resetBranchForm();
-
-                if (byId('branchModalTitle')) {
-                    byId('branchModalTitle').textContent =
-                        'Editar datos de la sucursal';
-                }
-
-                if (byId('branchSubmitButton')) {
-                    byId('branchSubmitButton').innerHTML =
-                        '<i class="fas fa-check"></i> Guardar cambios';
-                }
-
-                branchKeyEdited = true;
-
-                if (byId('branchId')) byId('branchId').value = branch.id || '';
-                if (byId('branchKey')) byId('branchKey').value = branch.clave || '';
-                if (byId('branchName')) byId('branchName').value = branch.nombre || '';
-                if (byId('branchPhone')) byId('branchPhone').value = branch.telefono || '';
-                if (byId('branchEmail')) byId('branchEmail').value = branch.email || '';
-                if (byId('branchAddress')) byId('branchAddress').value = branch.direccion || '';
-                if (byId('branchSchedule')) byId('branchSchedule').value = branch.horario || '';
-
-                if (byId('branchTimezone')) {
-                    byId('branchTimezone').value =
-                        branch.zona_horaria || 'America/Mexico_City';
-                }
-
-                openModal('branchModal');
-            });
+            editBranchButton.addEventListener(
+                'click',
+                openBranchEditModal
+            );
         }
 
         if (branchForm) {
@@ -1838,330 +1386,26 @@ $sucursalActivaSesion = (int) ($_SESSION['sucursal_id'] ?? 0);
         var technicalSettingsButton =
             byId('technicalSettingsButton');
 
+        function openTechnicalSettings() {
+            openModal('technicalModal');
+        }
+
         if (technicalSettingsButton) {
             technicalSettingsButton.addEventListener(
                 'click',
-                function () {
-                    openModal('technicalModal');
-                }
+                openTechnicalSettings
             );
         }
 
-        var assignmentForm = byId('assignmentForm');
-        var assignmentUser = byId('assignmentUser');
-        var assignmentRole = byId('assignmentRole');
-        var assignmentCash = byId('assignmentCash');
-        var assignmentCashCard = byId('assignmentCashCard');
-        var assignmentCashHelp = byId('assignmentCashHelp');
-        var assignmentRoleHelp = byId('assignmentRoleHelp');
-        var newAssignmentButton = byId('newAssignmentButton');
-        var assignmentBranchName = <?php echo json_encode(
-            (string) $sucursalSeleccionada['nombre'],
-            JSON_UNESCAPED_UNICODE
-            | JSON_HEX_TAG
-            | JSON_HEX_AMP
-            | JSON_HEX_APOS
-            | JSON_HEX_QUOT
-        ); ?>;
+        var statusTerminalButton =
+            byId('statusTerminalButton');
 
-        function syncAssignmentOptions() {
-            if (!assignmentRole) {
-                return;
-            }
-
-            var role = assignmentRole.value;
-            var isTrainer = role === 'entrenador';
-
-            if (assignmentRoleHelp) {
-                assignmentRoleHelp.textContent =
-                    isTrainer
-                        ? 'El entrenador podrá aparecer como instructor en las clases de esta sede.'
-                        : (
-                            role === 'recepcionista'
-                                ? 'El recepcionista atenderá socios y solo operará caja si habilitas el permiso inferior.'
-                                : 'El administrador tendrá los accesos definidos para este rol.'
-                        );
-            }
-
-            if (assignmentCash) {
-                assignmentCash.disabled = isTrainer;
-
-                if (isTrainer) {
-                    assignmentCash.checked = false;
-                }
-            }
-
-            if (assignmentCashCard) {
-                assignmentCashCard.classList.toggle(
-                    'disabled',
-                    isTrainer
-                );
-            }
-
-            if (assignmentCashHelp) {
-                assignmentCashHelp.textContent =
-                    isTrainer
-                        ? 'No aplica para entrenadores.'
-                        : 'Autoriza aperturas, cobros y cierres únicamente si su función también tiene acceso al módulo de caja.';
-            }
-        }
-
-        function resetAssignmentForm() {
-            if (!assignmentForm) {
-                return;
-            }
-
-            assignmentForm.reset();
-
-            if (assignmentUser) {
-                assignmentUser.disabled = false;
-            }
-
-            if (byId('assignmentModalTitle')) {
-                byId('assignmentModalTitle').textContent =
-                    'Agregar personal a ' + assignmentBranchName;
-            }
-
-            if (byId('assignmentState')) {
-                byId('assignmentState').value = 'activo';
-            }
-
-            syncAssignmentOptions();
-        }
-
-        if (newAssignmentButton) {
-            newAssignmentButton.addEventListener('click', function () {
-                resetAssignmentForm();
-                openModal('assignmentModal');
-            });
-        }
-
-        if (assignmentUser) {
-            assignmentUser.addEventListener('change', function () {
-                var option =
-                    assignmentUser.options[assignmentUser.selectedIndex];
-
-                if (
-                    option
-                    && option.getAttribute('data-global-role')
-                    && assignmentRole
-                ) {
-                    assignmentRole.value =
-                        option.getAttribute('data-global-role');
-                }
-
-                syncAssignmentOptions();
-            });
-        }
-
-        if (assignmentRole) {
-            assignmentRole.addEventListener(
-                'change',
-                syncAssignmentOptions
+        if (statusTerminalButton) {
+            statusTerminalButton.addEventListener(
+                'click',
+                openTechnicalSettings
             );
         }
-
-        all('.edit-assignment-button').forEach(function (button) {
-            button.addEventListener('click', function () {
-                var assignment = {};
-
-                try {
-                    assignment = JSON.parse(
-                        button.getAttribute('data-assignment') || '{}'
-                    );
-                } catch (error) {
-                    assignment = {};
-                }
-
-                resetAssignmentForm();
-
-                if (byId('assignmentModalTitle')) {
-                    byId('assignmentModalTitle').textContent =
-                        'Editar acceso de personal';
-                }
-
-                if (assignmentUser) {
-                    assignmentUser.value =
-                        assignment.usuario_id || '';
-                    assignmentUser.disabled = true;
-                }
-
-                if (byId('assignmentRole')) {
-                    byId('assignmentRole').value =
-                        assignment.rol_sucursal
-                        || assignment.rol_global
-                        || 'recepcionista';
-                }
-
-                if (byId('assignmentState')) {
-                    byId('assignmentState').value =
-                        assignment.asignacion_estado || 'activo';
-                }
-
-                if (byId('assignmentMain')) {
-                    byId('assignmentMain').checked =
-                        Number(assignment.es_principal) === 1;
-                }
-
-                if (assignmentCash) {
-                    assignmentCash.checked =
-                        Number(assignment.puede_operar_caja) === 1;
-                }
-
-                syncAssignmentOptions();
-                openModal('assignmentModal');
-            });
-        });
-
-        if (assignmentForm) {
-            assignmentForm.addEventListener('submit', async function (event) {
-                event.preventDefault();
-
-                var submit =
-                    assignmentForm.querySelector('[type="submit"]');
-
-                if (submit) submit.disabled = true;
-
-                var data = {
-                    sucursal_id: selectedBranchId,
-                    usuario_id: assignmentUser
-                        ? assignmentUser.value
-                        : '',
-                    rol_sucursal: byId('assignmentRole')
-                        ? byId('assignmentRole').value
-                        : '',
-                    estado: byId('assignmentState')
-                        ? byId('assignmentState').value
-                        : 'activo',
-                    es_principal:
-                        byId('assignmentMain')
-                        && byId('assignmentMain').checked
-                            ? 1
-                            : 0,
-                    puede_operar_caja:
-                        byId('assignmentCash')
-                        && byId('assignmentCash').checked
-                            ? 1
-                            : 0
-                };
-
-                try {
-                    var payload = await postAction(
-                        'guardar_asignacion',
-                        data
-                    );
-
-                    closeModal('assignmentModal');
-
-                    await showAlert({
-                        icon: 'success',
-                        title: 'Asignación guardada',
-                        text: payload.mensaje,
-                        timer: 1500,
-                        showConfirmButton: false
-                    });
-
-                    window.location.reload();
-                } catch (error) {
-                    showAlert({
-                        icon: 'error',
-                        title: 'No se pudo guardar',
-                        text: error.message,
-                        confirmButtonColor: '#1e3a8a'
-                    });
-                } finally {
-                    if (submit) submit.disabled = false;
-                }
-            });
-        }
-
-        all('.remove-assignment-button').forEach(function (button) {
-            button.addEventListener('click', async function () {
-                var confirmation = await showAlert({
-                    icon: 'warning',
-                    title: '¿Retirar acceso?',
-                    text:
-                        (button.getAttribute('data-user-name') || 'El usuario')
-                        + ' ya no podrá ingresar a esta sucursal.',
-                    showCancelButton: true,
-                    confirmButtonText: 'Retirar acceso',
-                    cancelButtonText: 'Cancelar',
-                    confirmButtonColor: '#b91c1c'
-                });
-
-                if (!confirmation.isConfirmed) {
-                    return;
-                }
-
-                try {
-                    var payload = await postAction(
-                        'desactivar_asignacion',
-                        {
-                            sucursal_id: selectedBranchId,
-                            usuario_id:
-                                button.getAttribute('data-user-id')
-                        }
-                    );
-
-                    await showAlert({
-                        icon: 'success',
-                        title: 'Acceso retirado',
-                        text: payload.mensaje,
-                        timer: 1400,
-                        showConfirmButton: false
-                    });
-
-                    window.location.reload();
-                } catch (error) {
-                    showAlert({
-                        icon: 'error',
-                        title: 'No se pudo retirar',
-                        text: error.message,
-                        confirmButtonColor: '#1e3a8a'
-                    });
-                }
-            });
-        });
-
-        all('.plan-form').forEach(function (form) {
-            form.addEventListener('submit', async function (event) {
-                event.preventDefault();
-
-                var submit = form.querySelector('[type="submit"]');
-                if (submit) submit.disabled = true;
-
-                var data = {};
-                var formData = new FormData(form);
-
-                formData.forEach(function (value, key) {
-                    data[key] = value;
-                });
-
-                try {
-                    var payload = await postAction(
-                        'guardar_plan',
-                        data
-                    );
-
-                    showAlert({
-                        icon: 'success',
-                        title: 'Plan actualizado',
-                        text: payload.mensaje,
-                        timer: 1200,
-                        showConfirmButton: false
-                    });
-                } catch (error) {
-                    showAlert({
-                        icon: 'error',
-                        title: 'No se pudo guardar',
-                        text: error.message,
-                        confirmButtonColor: '#1e3a8a'
-                    });
-                } finally {
-                    if (submit) submit.disabled = false;
-                }
-            });
-        });
 
         var terminalForm = byId('terminalForm');
         var newTerminalButton = byId('newTerminalButton');

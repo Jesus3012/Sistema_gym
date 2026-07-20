@@ -1761,3 +1761,488 @@ body.br-modal-open {
         min-height: 130px;
     }
 }
+
+
+/* =========================================================
+   VERSIÓN SIMPLIFICADA DEL MÓDULO
+   ========================================================= */
+
+.sucursales-page .br-overview-compact {
+    width: min(560px, 100%);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.sucursales-page .br-table-head-simple,
+.sucursales-page .br-branch-item-simple {
+    grid-template-columns:
+        minmax(280px, 1fr)
+        125px
+        135px;
+}
+
+.sucursales-page .br-manage-link {
+    width: auto;
+    min-width: 112px;
+    min-height: 34px;
+    padding: 0 11px;
+    border-radius: 8px;
+    font-size: .64rem;
+    line-height: 1;
+    white-space: nowrap;
+}
+
+.sucursales-page .br-manage-link i {
+    flex: 0 0 auto;
+}
+
+.sucursales-page .br-management-body {
+    padding: 16px;
+}
+
+.sucursales-page .br-management-summary {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 9px;
+    margin-bottom: 13px;
+}
+
+.sucursales-page .br-management-summary article {
+    min-width: 0;
+    padding: 12px 13px;
+    border: 1px solid var(--br-borde);
+    border-radius: 10px;
+    background: #f8fafc;
+}
+
+.sucursales-page .br-management-summary span,
+.sucursales-page .br-management-summary strong {
+    display: block;
+}
+
+.sucursales-page .br-management-summary span {
+    color: var(--br-suave);
+    font-size: .55rem;
+    font-weight: 800;
+}
+
+.sucursales-page .br-management-summary strong {
+    margin-top: 5px;
+    color: var(--br-azul-hover);
+    font-size: .84rem;
+}
+
+.sucursales-page .br-management-summary strong.is-active {
+    color: var(--br-verde);
+}
+
+.sucursales-page .br-management-summary strong.is-inactive {
+    color: var(--br-rojo);
+}
+
+.sucursales-page .br-terminal-settings {
+    white-space: nowrap;
+}
+
+.sucursales-page .br-action-count {
+    min-width: 20px;
+    height: 20px;
+    display: inline-grid;
+    place-items: center;
+    padding: 0 5px;
+    border-radius: 999px;
+    color: var(--br-azul);
+    background: var(--br-azul-suave);
+    font-size: .54rem;
+    font-weight: 900;
+}
+
+.sucursales-page .br-light-edit {
+    min-height: 34px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 0 10px;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    color: #334155;
+    background: #ffffff;
+    cursor: pointer;
+    font-size: .6rem;
+    font-weight: 800;
+    white-space: nowrap;
+}
+
+.sucursales-page .br-light-edit:hover {
+    border-color: #9fb3d0;
+    color: var(--br-azul);
+    background: #f8fafc;
+}
+
+@media (max-width: 860px) {
+    .sucursales-page .br-table-head-simple {
+        display: none;
+    }
+
+    .sucursales-page .br-branch-item-simple {
+        grid-template-columns: minmax(0, 1fr) auto;
+    }
+
+    .sucursales-page .br-branch-item-simple
+    .br-branch-main {
+        grid-column: 1 / -1;
+    }
+
+    .sucursales-page .br-branch-item-simple
+    .br-row-action {
+        grid-column: auto;
+        justify-content: flex-end;
+    }
+
+    .sucursales-page .br-branch-item-simple
+    .br-row-action
+    .br-manage-link {
+        width: auto;
+    }
+}
+
+@media (max-width: 620px) {
+    .sucursales-page .br-overview-compact,
+    .sucursales-page .br-management-summary {
+        width: 100%;
+        grid-template-columns: 1fr;
+    }
+
+    .sucursales-page .br-branch-item-simple {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .sucursales-page .br-branch-item-simple
+    .br-row-action {
+        grid-column: 1;
+        justify-content: stretch;
+    }
+
+    .sucursales-page .br-branch-item-simple
+    .br-row-action
+    .br-manage-link {
+        width: 100%;
+        min-height: 40px;
+    }
+
+    .sucursales-page .br-management-actions {
+        grid-template-columns: 1fr;
+    }
+
+    .sucursales-page .br-management-actions > * {
+        width: 100%;
+    }
+
+    .sucursales-page .br-section-header {
+        align-items: stretch;
+    }
+
+    .sucursales-page .br-light-edit {
+        width: 100%;
+        min-height: 40px;
+    }
+}
+
+
+/* =========================================================
+   REDISEÑO DE RESÚMENES Y ACCIONES
+   ========================================================= */
+
+/* Resumen superior sin tarjetas independientes */
+.sucursales-page .br-summary-bar {
+    min-height: 78px;
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    margin-bottom: 14px;
+    padding: 14px 18px;
+    border: 1px solid var(--br-borde);
+    border-radius: 14px;
+    background:
+        linear-gradient(
+            120deg,
+            #ffffff 0%,
+            #fbfdff 58%,
+            #f1f6ff 100%
+        );
+    box-shadow: 0 6px 18px rgba(15, 23, 42, .045);
+}
+
+.sucursales-page .br-summary-item {
+    min-width: 150px;
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    flex: 0 0 auto;
+}
+
+.sucursales-page .br-summary-icon {
+    width: 40px;
+    height: 40px;
+    display: grid;
+    place-items: center;
+    flex: 0 0 40px;
+    border-radius: 12px;
+    font-size: .82rem;
+}
+
+.sucursales-page .br-summary-icon.blue {
+    color: #1d4ed8;
+    background: #e7efff;
+}
+
+.sucursales-page .br-summary-icon.green {
+    color: #047857;
+    background: #dcfce7;
+}
+
+.sucursales-page .br-summary-copy {
+    min-width: 0;
+}
+
+.sucursales-page .br-summary-copy span,
+.sucursales-page .br-summary-copy strong {
+    display: block;
+}
+
+.sucursales-page .br-summary-copy span {
+    color: var(--br-suave);
+    font-size: .59rem;
+    font-weight: 750;
+}
+
+.sucursales-page .br-summary-copy strong {
+    margin-top: 2px;
+    color: var(--br-azul-hover);
+    font-size: 1.1rem;
+    line-height: 1;
+}
+
+.sucursales-page .br-summary-divider {
+    width: 1px;
+    height: 38px;
+    flex: 0 0 1px;
+    background: #dfe7f1;
+}
+
+.sucursales-page .br-summary-message {
+    min-width: 0;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin-left: auto;
+    padding: 9px 11px;
+    border: 1px solid #dbeafe;
+    border-radius: 10px;
+    color: #52657f;
+    background: rgba(239, 246, 255, .72);
+    font-size: .58rem;
+    line-height: 1.45;
+}
+
+.sucursales-page .br-summary-message i {
+    margin-top: 2px;
+    color: var(--br-azul);
+}
+
+/* Barra única de estado dentro de la sede */
+.sucursales-page .br-branch-status-bar {
+    min-height: 74px;
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    margin-bottom: 14px;
+    padding: 13px 15px;
+    border: 1px solid #dce5f0;
+    border-radius: 12px;
+    background:
+        linear-gradient(
+            110deg,
+            #f8fbff 0%,
+            #ffffff 70%
+        );
+}
+
+.sucursales-page .br-branch-status-main {
+    min-width: 175px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.sucursales-page .br-status-dot {
+    width: 11px;
+    height: 11px;
+    flex: 0 0 11px;
+    border-radius: 50%;
+    box-shadow: 0 0 0 5px rgba(148, 163, 184, .14);
+}
+
+.sucursales-page .br-status-dot.active {
+    background: var(--br-verde);
+    box-shadow: 0 0 0 5px rgba(5, 150, 105, .12);
+}
+
+.sucursales-page .br-status-dot.inactive {
+    background: var(--br-rojo);
+    box-shadow: 0 0 0 5px rgba(185, 28, 28, .1);
+}
+
+.sucursales-page .br-branch-status-main span,
+.sucursales-page .br-branch-status-main strong,
+.sucursales-page .br-branch-status-metric span,
+.sucursales-page .br-branch-status-metric strong {
+    display: block;
+}
+
+.sucursales-page .br-branch-status-main span,
+.sucursales-page .br-branch-status-metric span {
+    color: var(--br-suave);
+    font-size: .55rem;
+    font-weight: 800;
+}
+
+.sucursales-page .br-branch-status-main strong {
+    margin-top: 3px;
+    font-size: .73rem;
+}
+
+.sucursales-page .br-branch-status-main strong.is-active {
+    color: var(--br-verde);
+}
+
+.sucursales-page .br-branch-status-main strong.is-inactive {
+    color: var(--br-rojo);
+}
+
+.sucursales-page .br-branch-status-metric {
+    min-width: 70px;
+}
+
+.sucursales-page .br-branch-status-metric strong {
+    margin-top: 3px;
+    color: var(--br-azul-hover);
+    font-size: .82rem;
+}
+
+.sucursales-page .br-status-divider {
+    width: 1px;
+    height: 34px;
+    flex: 0 0 1px;
+    background: #e1e8f0;
+}
+
+.sucursales-page .br-status-terminal-link {
+    min-height: 36px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    margin-left: auto;
+    padding: 0 11px;
+    border: 1px solid #c8d7ec;
+    border-radius: 9px;
+    color: var(--br-azul);
+    background: #ffffff;
+    cursor: pointer;
+    font-size: .59rem;
+    font-weight: 800;
+    white-space: nowrap;
+}
+
+.sucursales-page .br-status-terminal-link:hover {
+    border-color: #9fb7db;
+    background: #f4f8ff;
+}
+
+/* Una sola acción de edición */
+.sucursales-page .br-light-edit {
+    color: var(--br-azul);
+    border-color: #bfd0e8;
+    background: #ffffff;
+}
+
+.sucursales-page .br-light-edit:hover {
+    border-color: #8eacd5;
+    color: var(--br-azul-hover);
+    background: var(--br-azul-suave);
+}
+
+@media (max-width: 900px) {
+    .sucursales-page .br-summary-bar {
+        flex-wrap: wrap;
+    }
+
+    .sucursales-page .br-summary-message {
+        width: 100%;
+        margin-left: 0;
+    }
+
+    .sucursales-page .br-branch-status-bar {
+        flex-wrap: wrap;
+    }
+
+    .sucursales-page .br-status-terminal-link {
+        margin-left: 0;
+    }
+}
+
+@media (max-width: 620px) {
+    .sucursales-page .br-summary-bar {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+        padding: 13px;
+    }
+
+    .sucursales-page .br-summary-item {
+        min-width: 0;
+    }
+
+    .sucursales-page .br-summary-divider {
+        display: none;
+    }
+
+    .sucursales-page .br-summary-message {
+        grid-column: 1 / -1;
+    }
+
+    .sucursales-page .br-branch-status-bar {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+    }
+
+    .sucursales-page .br-branch-status-main {
+        min-width: 0;
+        grid-column: 1 / -1;
+    }
+
+    .sucursales-page .br-status-divider {
+        display: none;
+    }
+
+    .sucursales-page .br-status-terminal-link {
+        width: 100%;
+        min-height: 40px;
+        grid-column: 1 / -1;
+    }
+}
+
+@media (max-width: 390px) {
+    .sucursales-page .br-summary-bar,
+    .sucursales-page .br-branch-status-bar {
+        grid-template-columns: 1fr;
+    }
+
+    .sucursales-page .br-summary-message,
+    .sucursales-page .br-branch-status-main,
+    .sucursales-page .br-status-terminal-link {
+        grid-column: 1;
+    }
+}
