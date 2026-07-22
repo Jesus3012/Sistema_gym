@@ -83,6 +83,7 @@ if ($baseUrl === '.' || $baseUrl === '/') {
 
 $loginUrl = $baseUrl . '/login.php';
 $dashboardUrl = $baseUrl . '/dashboard.php';
+$panelEntrenadorUrl = $baseUrl . '/panel_entrenador.php';
 
 if (empty($_SESSION['user_id'])) {
     redirigirSeguramente(
@@ -160,13 +161,37 @@ if (!array_key_exists($rolActual, $nombresRoles)) {
     );
 }
 
+/*
+ * El entrenador cuenta con un espacio operativo exclusivo.
+ * Aunque posteriormente se modifiquen los permisos por rol, nunca podrá
+ * entrar a los módulos administrativos de clases, socios, ventas o caja.
+ */
+$esPanelEntrenador = $paginaActual === 'panel_entrenador.php';
+
+if ($rolActual === 'entrenador') {
+    $rutasEntrenador = [
+        'panel_entrenador.php',
+        'legal.php',
+        'mi_perfil.php',
+    ];
+
+    if (!in_array($paginaActual, $rutasEntrenador, true)) {
+        $_SESSION['mensaje_acceso'] =
+            'Tu cuenta de entrenador utiliza exclusivamente Mi agenda de clases.';
+
+        redirigirSeguramente($panelEntrenadorUrl);
+    }
+}
+
 $_SESSION['last_activity'] = time();
 
-$claveModuloActual = permisos_modulo_por_pagina(
-    $paginaActual
-);
+$claveModuloActual = $esPanelEntrenador
+    ? 'panel_entrenador'
+    : permisos_modulo_por_pagina($paginaActual);
 
-$nombreModuloConsultado = '';
+$nombreModuloConsultado = $esPanelEntrenador
+    ? 'Mi agenda de clases'
+    : '';
 
 /*
  * Permite registrar nuevos módulos desde modulos_sistema sin tener que
@@ -203,14 +228,18 @@ $esAdministradorActual = in_array(
     true
 );
 
-$accesoPermitido = $claveModuloActual !== null
-    && $claveModuloActual !== ''
-    && (
-        $esAdministradorActual
-        || permisos_rol_tiene_modulo(
-            $connPermisos,
-            $rolActual,
-            $claveModuloActual
+$accesoPermitido =
+    ($rolActual === 'entrenador' && $esPanelEntrenador)
+    || (
+        $claveModuloActual !== null
+        && $claveModuloActual !== ''
+        && (
+            $esAdministradorActual
+            || permisos_rol_tiene_modulo(
+                $connPermisos,
+                $rolActual,
+                $claveModuloActual
+            )
         )
     );
 

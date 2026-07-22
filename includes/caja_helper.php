@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/caja_clases_helper.php';
 // VERSION PHP 7 - TOTAL ORIGINAL Y DEVOLUCIONES CORREGIDOS - 2026-07-12
 // Archivo: includes/caja_helper.php
 // Corte de caja calculado directamente desde ventas, pagos y ventas_modificaciones.
@@ -648,6 +649,20 @@ function calcularResumenCaja(
         $fechaFin
     );
 
+    $clases = resumenClasesCaja(
+        $conn,
+        $sucursalId,
+        $usuarioId,
+        $fechaInicio,
+        $fechaFin
+    );
+
+    /*
+     * Los accesos pagados a clases se integran en ventas para conservar
+     * la estructura actual de cajas y del corte existente.
+     */
+    $ventas = integrarClasesEnVentasCaja($ventas, $clases);
+
     $devoluciones = resumenDevolucionesCaja(
         $conn,
         $sucursalId,
@@ -971,6 +986,38 @@ function listarOperacionesCaja(
                       AND p.{$colFecha} >= ?
                       AND p.{$colFecha} <= ?
                       {$condicionEstado}";
+
+        $tipos .= 'iiss';
+        $parametros[] = $usuarioId;
+        $parametros[] = $sucursalId;
+        $parametros[] = $fechaInicio;
+        $parametros[] = $fechaFin;
+    }
+
+    if (cajaClasesDisponible($conn)) {
+        $partes[] = "SELECT
+                        pc.fecha_pago AS fecha,
+                        'Acceso a clase' AS origen,
+                        CONCAT(
+                            'Clase · ',
+                            c.nombre,
+                            ' · ',
+                            pc.nombre_pagador
+                        ) AS concepto,
+                        pc.metodo_pago AS metodo_pago,
+                        'entrada' AS naturaleza,
+                        pc.monto AS monto,
+                        pc.id AS referencia_id
+                    FROM pagos_clases pc
+                    INNER JOIN inscripciones_clases ic
+                        ON ic.id = pc.inscripcion_clase_id
+                    INNER JOIN clases c
+                        ON c.id = ic.clase_id
+                    WHERE pc.usuario_id = ?
+                      AND pc.sucursal_id = ?
+                      AND pc.fecha_pago >= ?
+                      AND pc.fecha_pago <= ?
+                      AND pc.estado = 'completado'";
 
         $tipos .= 'iiss';
         $parametros[] = $usuarioId;

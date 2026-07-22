@@ -631,6 +631,8 @@ if ($sidebar_legal_activo) {
     $active_module = 'classes';
 } elseif ($current_page === 'inscripciones_clases.php') {
     $active_module = 'clases_inscriptions';
+} elseif ($current_page === 'panel_entrenador.php') {
+    $active_module = 'trainer_schedule';
 } elseif ($current_page === 'reportes.php') {
     $active_module = 'reports';
 } elseif ($current_page === 'notificaciones.php') {
@@ -728,7 +730,7 @@ $sidebar_navbar_version = is_file($sidebar_navbar_css)
     <div class="drag-handle" id="dragHandle"></div>
     
     <div class="sidebar-header">
-        <a href="dashboard.php" class="logo">
+        <a href="<?php echo $user_rol === 'entrenador' ? 'panel_entrenador.php' : 'dashboard.php'; ?>" class="logo">
             <?php if (
                 $gym_logo_url !== ''
                 && sidebarArchivoExiste(
@@ -820,7 +822,7 @@ $sidebar_navbar_version = is_file($sidebar_navbar_css)
         </div>
     </div>
 
-    <?php if ($sidebar_sucursales !== []): ?>
+    <?php if ($sidebar_sucursales !== [] && $user_rol !== 'entrenador'): ?>
         <section
             class="sidebar-branch-switcher <?php echo $sidebar_vista_global ? 'is-global' : ''; ?>"
             id="sidebarBranchSwitcher"
@@ -1131,6 +1133,31 @@ $sidebar_navbar_version = is_file($sidebar_navbar_css)
         true
     );
     $puede_permisos_roles = $sidebar_puede('permisos_roles');
+    $puede_panel_entrenador = $user_rol === 'entrenador';
+
+    /*
+     * El entrenador utiliza únicamente su agenda. No mostramos módulos de
+     * creación de clases, inscripciones, ventas, caja ni administración.
+     */
+    if ($puede_panel_entrenador) {
+        $puede_dashboard = false;
+        $puede_inscripciones = false;
+        $puede_asistencias = false;
+        $puede_ventas = false;
+        $puede_historial_ventas = false;
+        $puede_corte_caja = false;
+        $puede_inventario_resumen = false;
+        $puede_productos = false;
+        $puede_historial_stock = false;
+        $puede_clases = false;
+        $puede_inscripciones_clases = false;
+        $puede_reportes = false;
+        $puede_notificaciones = false;
+        $puede_solicitudes = false;
+        $puede_configuracion = false;
+        $puede_sucursales = false;
+        $puede_permisos_roles = false;
+    }
 
     $mostrar_grupo_socios = $puede_inscripciones || $puede_asistencias;
     $mostrar_grupo_ventas = $puede_ventas || $puede_historial_ventas || $puede_corte_caja;
@@ -1161,6 +1188,19 @@ $sidebar_navbar_version = is_file($sidebar_navbar_css)
 
     <nav class="sidebar-nav" aria-label="Módulos del sistema">
         <ul class="sidebar-menu">
+            <?php if ($puede_panel_entrenador): ?>
+                <li class="nav-item nav-trainer-schedule">
+                    <a
+                        href="panel_entrenador.php"
+                        class="nav-link <?php echo $active_module === 'trainer_schedule' ? 'active' : ''; ?>"
+                        <?php echo $active_module === 'trainer_schedule' ? 'aria-current="page"' : ''; ?>
+                    >
+                        <i class="fas fa-calendar-check"></i>
+                        <span class="nav-text">Mi agenda de clases</span>
+                    </a>
+                </li>
+            <?php endif; ?>
+
             <?php if ($puede_dashboard): ?>
                 <li class="nav-item nav-dashboard">
                     <a href="dashboard.php" class="nav-link <?php echo $active_module === 'dashboard' ? 'active' : ''; ?>">

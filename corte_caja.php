@@ -635,7 +635,7 @@ $totalPaginasOperaciones = 1;
 $errorConsultaCaja = null;
 
 $paginaOperaciones = max(1, (int) (isset($_GET['pagina_operaciones']) ? $_GET['pagina_operaciones'] : 1));
-$porPaginaOperaciones = 10;
+$porPaginaOperaciones = 8;
 
 if ($cajaAbierta) {
     try {
@@ -653,6 +653,83 @@ if ($cajaAbierta) {
     } catch (Throwable $errorCaja) {
         $errorConsultaCaja = $errorCaja->getMessage();
     }
+}
+
+/*
+ * El helper conserva los accesos a clases dentro de ventas para no romper
+ * los cortes históricos existentes. Aquí se separan únicamente para la
+ * presentación visual del turno actual.
+ */
+$resumenClasesVisual = array(
+    'operaciones' => 0,
+    'efectivo' => 0.00,
+    'tarjeta' => 0.00,
+    'transferencia' => 0.00,
+);
+$resumenProductosVisual = array(
+    'operaciones' => 0,
+    'efectivo' => 0.00,
+    'tarjeta' => 0.00,
+    'transferencia' => 0.00,
+);
+$totalProductosVisual = 0.00;
+$totalMembresiasVisual = 0.00;
+$totalClasesVisual = 0.00;
+
+if (is_array($resumen)) {
+    $resumenClasesVisual = is_array($resumen['clases'] ?? null)
+        ? $resumen['clases']
+        : (is_array($resumen['ventas']['clases'] ?? null)
+            ? $resumen['ventas']['clases']
+            : $resumenClasesVisual);
+
+    $resumenProductosVisual = is_array($resumen['ventas'] ?? null)
+        ? $resumen['ventas']
+        : $resumenProductosVisual;
+
+    /*
+     * En la integración compatible, clases se suma internamente a ventas.
+     * Se resta solo para que la tarjeta "Productos" muestre su monto real.
+     */
+    if (is_array($resumen['ventas']['clases'] ?? null)) {
+        foreach (array('efectivo', 'tarjeta', 'transferencia') as $metodoVisual) {
+            $resumenProductosVisual[$metodoVisual] = max(
+                0,
+                round(
+                    (float) ($resumenProductosVisual[$metodoVisual] ?? 0)
+                    - (float) ($resumenClasesVisual[$metodoVisual] ?? 0),
+                    2
+                )
+            );
+        }
+
+        $resumenProductosVisual['operaciones'] = max(
+            0,
+            (int) ($resumenProductosVisual['operaciones'] ?? 0)
+            - (int) ($resumenClasesVisual['operaciones'] ?? 0)
+        );
+    }
+
+    $totalProductosVisual = round(
+        (float) ($resumenProductosVisual['efectivo'] ?? 0)
+        + (float) ($resumenProductosVisual['tarjeta'] ?? 0)
+        + (float) ($resumenProductosVisual['transferencia'] ?? 0),
+        2
+    );
+
+    $totalMembresiasVisual = round(
+        (float) ($resumen['membresias']['efectivo'] ?? 0)
+        + (float) ($resumen['membresias']['tarjeta'] ?? 0)
+        + (float) ($resumen['membresias']['transferencia'] ?? 0),
+        2
+    );
+
+    $totalClasesVisual = round(
+        (float) ($resumenClasesVisual['efectivo'] ?? 0)
+        + (float) ($resumenClasesVisual['tarjeta'] ?? 0)
+        + (float) ($resumenClasesVisual['transferencia'] ?? 0),
+        2
+    );
 }
 
 $cortesRecientes = array();
@@ -700,6 +777,7 @@ try {
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <link rel="stylesheet" href="css/corte_caja.css?v=<?= is_file(__DIR__ . '/css/corte_caja.css') ? filemtime(__DIR__ . '/css/corte_caja.css') : '1' ?>">
     <link rel="stylesheet" href="css/corte_caja_multisucursal.css?v=<?= is_file(__DIR__ . '/css/corte_caja_multisucursal.css') ? filemtime(__DIR__ . '/css/corte_caja_multisucursal.css') : '1' ?>">
+    <link rel="stylesheet" href="css/corte_caja_clases.css?v=<?= is_file(__DIR__ . '/css/corte_caja_clases.css') ? filemtime(__DIR__ . '/css/corte_caja_clases.css') : '1' ?>">
 </head>
 <body>
 <?php require_once __DIR__ . '/includes/sidebar.php'; ?>
@@ -838,7 +916,7 @@ try {
                     <span class="caja-summary-icon"><i class="fas fa-chart-line"></i></span>
                     <span class="caja-summary-label">Ingresos netos</span>
                     <strong class="caja-summary-value"><?= dineroCaja($resumen['total_neto']) ?></strong>
-                    <small class="caja-summary-note">Productos + membresías − devoluciones.</small>
+                    <small class="caja-summary-note">Productos + membresías + clases − devoluciones.</small>
                 </article>
 
                 <article class="caja-card caja-summary-card caja-summary-cardpay">
@@ -864,29 +942,79 @@ try {
                             <span class="caja-head-badge"><?= hCaja($cajaAbierta['folio']) ?></span>
                         </div>
                         <div class="caja-card-body">
-                        <div class="caja-breakdown">
-                            <div class="caja-breakdown-box">
-                                <h4>Ventas de productos</h4>
-                                <div class="caja-breakdown-row"><span>Efectivo</span><strong><?= dineroCaja($resumen['ventas']['efectivo']) ?></strong></div>
-                                <div class="caja-breakdown-row"><span>Tarjeta</span><strong><?= dineroCaja($resumen['ventas']['tarjeta']) ?></strong></div>
-                                <div class="caja-breakdown-row"><span>Transferencia</span><strong><?= dineroCaja($resumen['ventas']['transferencia']) ?></strong></div>
-                                <div class="caja-breakdown-row"><span>Operaciones</span><strong><?= (int) $resumen['ventas']['operaciones'] ?></strong></div>
+                        <div class="caja-income-compact">
+                            <div class="caja-income-table-wrap">
+                                <table class="caja-income-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Concepto</th>
+                                            <th>Efectivo</th>
+                                            <th>Tarjeta</th>
+                                            <th>Transferencia</th>
+                                            <th>Operaciones</th>
+                                            <th>Total</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr class="is-products">
+                                            <td data-label="Concepto">
+                                                <span class="caja-income-concept">
+                                                    <i class="fas fa-cart-shopping"></i>
+                                                    <span>
+                                                        <strong>Productos</strong>
+                                                        <small>Ventas del turno</small>
+                                                    </span>
+                                                </span>
+                                            </td>
+                                            <td data-label="Efectivo"><?= dineroCaja($resumenProductosVisual['efectivo']) ?></td>
+                                            <td data-label="Tarjeta"><?= dineroCaja($resumenProductosVisual['tarjeta']) ?></td>
+                                            <td data-label="Transferencia"><?= dineroCaja($resumenProductosVisual['transferencia']) ?></td>
+                                            <td data-label="Operaciones"><?= (int) $resumenProductosVisual['operaciones'] ?></td>
+                                            <td data-label="Total" class="caja-income-total"><?= dineroCaja($totalProductosVisual) ?></td>
+                                        </tr>
+
+                                        <tr class="is-memberships">
+                                            <td data-label="Concepto">
+                                                <span class="caja-income-concept">
+                                                    <i class="fas fa-id-card"></i>
+                                                    <span>
+                                                        <strong>Membresías</strong>
+                                                        <small>Pagos de planes</small>
+                                                    </span>
+                                                </span>
+                                            </td>
+                                            <td data-label="Efectivo"><?= dineroCaja($resumen['membresias']['efectivo']) ?></td>
+                                            <td data-label="Tarjeta"><?= dineroCaja($resumen['membresias']['tarjeta']) ?></td>
+                                            <td data-label="Transferencia"><?= dineroCaja($resumen['membresias']['transferencia']) ?></td>
+                                            <td data-label="Operaciones"><?= (int) $resumen['membresias']['operaciones'] ?></td>
+                                            <td data-label="Total" class="caja-income-total"><?= dineroCaja($totalMembresiasVisual) ?></td>
+                                        </tr>
+
+                                        <tr class="is-classes">
+                                            <td data-label="Concepto">
+                                                <span class="caja-income-concept">
+                                                    <i class="fas fa-dumbbell"></i>
+                                                    <span>
+                                                        <strong>Clases</strong>
+                                                        <small>Accesos individuales</small>
+                                                    </span>
+                                                </span>
+                                            </td>
+                                            <td data-label="Efectivo"><?= dineroCaja($resumenClasesVisual['efectivo']) ?></td>
+                                            <td data-label="Tarjeta"><?= dineroCaja($resumenClasesVisual['tarjeta']) ?></td>
+                                            <td data-label="Transferencia"><?= dineroCaja($resumenClasesVisual['transferencia']) ?></td>
+                                            <td data-label="Operaciones"><?= (int) $resumenClasesVisual['operaciones'] ?></td>
+                                            <td data-label="Total" class="caja-income-total"><?= dineroCaja($totalClasesVisual) ?></td>
+                                        </tr>
+                                    </tbody>
+                                </table>
                             </div>
 
-                            <div class="caja-breakdown-box">
-                                <h4>Pagos de membresías</h4>
-                                <div class="caja-breakdown-row"><span>Efectivo</span><strong><?= dineroCaja($resumen['membresias']['efectivo']) ?></strong></div>
-                                <div class="caja-breakdown-row"><span>Tarjeta</span><strong><?= dineroCaja($resumen['membresias']['tarjeta']) ?></strong></div>
-                                <div class="caja-breakdown-row"><span>Transferencia</span><strong><?= dineroCaja($resumen['membresias']['transferencia']) ?></strong></div>
-                                <div class="caja-breakdown-row"><span>Operaciones</span><strong><?= (int) $resumen['membresias']['operaciones'] ?></strong></div>
-                            </div>
-
-                            <div class="caja-breakdown-box">
-                                <h4>Ajustes y devoluciones</h4>
-                                <div class="caja-breakdown-row"><span>Entradas manuales</span><strong><?= dineroCaja($resumen['manuales']['entradas']) ?></strong></div>
-                                <div class="caja-breakdown-row"><span>Salidas manuales</span><strong><?= dineroCaja($resumen['manuales']['salidas']) ?></strong></div>
-                                <div class="caja-breakdown-row"><span>Devoluciones efectivo</span><strong><?= dineroCaja($resumen['devoluciones']['efectivo']) ?></strong></div>
-                                <div class="caja-breakdown-row"><span>Fondo inicial</span><strong><?= dineroCaja($resumen['monto_inicial']) ?></strong></div>
+                            <div class="caja-adjustments-compact">
+                                <span><small>Fondo inicial</small><strong><?= dineroCaja($resumen['monto_inicial']) ?></strong></span>
+                                <span><small>Entradas manuales</small><strong><?= dineroCaja($resumen['manuales']['entradas']) ?></strong></span>
+                                <span><small>Salidas manuales</small><strong><?= dineroCaja($resumen['manuales']['salidas']) ?></strong></span>
+                                <span><small>Devoluciones</small><strong><?= dineroCaja($resumen['total_devoluciones']) ?></strong></span>
                             </div>
                         </div>
                         </div>

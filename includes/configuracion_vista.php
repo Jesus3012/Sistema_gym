@@ -9,38 +9,6 @@ if (!defined('CONFIGURACION_MODULO_CARGADO')) {
     exit('Acceso no permitido.');
 }
 
-/**
- * Datos entregados desde configuracion.php.
- *
- * @var array{
- *     conn: mysqli,
- *     usuario_id: int,
- *     vista_global: bool,
- *     sucursal_id: int,
- *     sucursal_nombre: string,
- *     seccion: string,
- *     config_gimnasio: array<string, mixed>,
- *     config_correo: array<string, mixed>|null,
- *     logo_path: string,
- *     logo_es_propio: bool,
- *     ultima_actualizacion: string,
- *     total_clientes: array{total: int},
- *     total_planes: array{total: int},
- *     total_productos: array{total: int},
- *     total_usuarios: array{total: int},
- *     total_clases: array{total: int},
- *     total_proveedores: array{total: int},
- *     total_categorias: array{total: int},
- *     clientes: mysqli_result,
- *     planes: mysqli_result,
- *     productos: mysqli_result,
- *     categorias: mysqli_result|null,
- *     proveedores: mysqli_result|null,
- *     clases: mysqli_result,
- *     usuarios: mysqli_result,
- *     entrenadores_sucursal: array<int, string>
- * } $configuracionVista
- */
 if (
     !isset($configuracionVista)
     || !is_array($configuracionVista)
@@ -966,7 +934,14 @@ $entrenadoresSucursal = is_array(
                                 <td style="display: none;"><?php echo $plan['id']; ?></td>
                                 <td><strong><?php echo htmlspecialchars($plan['nombre']); ?></strong></td>
                                 <td><?php echo $plan['duracion_dias']; ?> días</td>
-                                <td>$<?php echo number_format($plan['precio']); ?></td>
+                                <td>
+                                    $<?php echo number_format(
+                                        (float) ($plan['precio'] ?? 0),
+                                        2,
+                                        '.',
+                                        ','
+                                    ); ?>
+                                </td>
                                 <td><?php echo htmlspecialchars($plan['descripcion'] ?? '-'); ?></td>
                                 <td><span class="badge <?php echo $plan['estado'] == 'activo' ? 'badge-success' : 'badge-danger'; ?>"><?php echo $plan['estado'] == 'activo' ? 'Activo' : 'Inactivo'; ?></span></td>
                                 <td>
@@ -1030,7 +1005,14 @@ $entrenadoresSucursal = is_array(
                                 <td><strong><?php echo htmlspecialchars($prod['nombre']); ?></strong></td>
                                 <td><?php echo htmlspecialchars($prod['categoria_nombre'] ?? '-'); ?></td>
                                 <td><?php echo htmlspecialchars($prod['proveedor_nombre'] ?? '-'); ?></td>
-                                <td>$<?php echo number_format($prod['precio_venta'], 2); ?></td>
+                                <td>
+                                    $<?php echo number_format(
+                                        (float) ($prod['precio_venta'] ?? 0),
+                                        2,
+                                        '.',
+                                        ','
+                                    ); ?>
+                                </td>
                                 <td><?php echo $prod['stock']; ?> unidades</td>
                                 <td><span class="badge <?php echo $prod['estado'] == 'activo' ? 'badge-success' : 'badge-danger'; ?>"><?php echo $prod['estado'] == 'activo' ? 'Activo' : 'Inactivo'; ?></span></td>
                                 <td>

@@ -1,0 +1,651 @@
+:root {
+    --trainer-blue: #1e3a8a;
+    --trainer-blue-dark: #152c6b;
+    --trainer-blue-soft: #eff4ff;
+    --trainer-bg: #f4f6f9;
+    --trainer-card: #ffffff;
+    --trainer-text: #1f2937;
+    --trainer-muted: #6b7280;
+    --trainer-border: #e5e7eb;
+    --trainer-success: #10b981;
+    --trainer-success-soft: #d1fae5;
+    --trainer-amber: #d97706;
+    --trainer-amber-soft: #fff7ed;
+    --trainer-red-soft: #fef2f2;
+    --trainer-shadow: 0 10px 28px rgba(15, 23, 42, .06);
+}
+
+html, body { max-width: 100%; overflow-x: hidden; }
+.trainer-page, .trainer-page * { box-sizing: border-box; }
+.trainer-page {
+    min-height: 100vh;
+    padding: 24px;
+    color: var(--trainer-text);
+    background: var(--trainer-bg);
+}
+
+.trainer-header-simple {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 18px;
+    margin-bottom: 20px;
+}
+.trainer-kicker,
+.trainer-step {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: .72rem;
+    font-weight: 800;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+}
+.trainer-kicker { color: var(--trainer-blue); margin-bottom: 6px; }
+.trainer-header-simple h1 {
+    margin: 0;
+    color: var(--trainer-blue);
+    font-size: clamp(2rem, 4vw, 3rem);
+    font-weight: 900;
+    letter-spacing: -.04em;
+}
+.trainer-header-simple p { margin: 8px 0 0; color: var(--trainer-muted); font-size: .98rem; }
+.trainer-header-pill {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-width: 150px;
+    padding: 16px 20px;
+    border: 1px solid #cdd8ee;
+    border-radius: 18px;
+    background: linear-gradient(180deg, #fff, #f9fbff);
+}
+.trainer-header-pill strong { color: var(--trainer-blue); font-size: 2rem; line-height: 1; }
+.trainer-header-pill span { color: var(--trainer-muted); font-size: .84rem; margin-top: 4px; }
+
+.trainer-panel-card,
+.trainer-open-class-card,
+.trainer-roster-card,
+.trainer-empty-state {
+    border: 1px solid var(--trainer-border);
+    border-radius: 18px;
+    background: var(--trainer-card);
+    box-shadow: var(--trainer-shadow);
+}
+.trainer-panel-card,
+.trainer-roster-card,
+.trainer-open-class-card { margin-bottom: 18px; }
+.trainer-panel-head,
+.trainer-open-class-header,
+.trainer-roster-head-clean {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 22px 24px 0;
+}
+.trainer-panel-head-between { align-items: center; }
+.trainer-step {
+    padding: 6px 10px;
+    border-radius: 999px;
+    color: var(--trainer-blue);
+    background: var(--trainer-blue-soft);
+}
+.trainer-panel-head h2,
+.trainer-open-class-header h2,
+.trainer-roster-head-clean h2 {
+    margin: 10px 0 6px;
+    color: var(--trainer-blue);
+    font-size: 1.75rem;
+    font-weight: 900;
+}
+.trainer-panel-head p,
+.trainer-open-class-header p,
+.trainer-roster-head-clean p { margin: 0; color: var(--trainer-muted); }
+
+.trainer-toggle-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    border: 1px solid #d4ddec;
+    border-radius: 12px;
+    color: #334155;
+    background: #fff;
+    font-weight: 700;
+    text-decoration: none;
+}
+.trainer-toggle-link:hover { color: var(--trainer-blue); border-color: #b8c8e7; }
+
+.trainer-class-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
+    gap: 16px;
+    padding: 20px 24px 24px;
+}
+.trainer-class-card {
+    display: block;
+    padding: 18px;
+    border: 1px solid #d7dfef;
+    border-radius: 18px;
+    color: inherit;
+    text-decoration: none;
+    background: linear-gradient(180deg, #fff, #fbfcff);
+    transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
+}
+.trainer-class-card:hover { transform: translateY(-2px); border-color: #9eb8ea; box-shadow: 0 12px 24px rgba(30,58,138,.10); color: inherit; }
+.trainer-class-card.active { border-color: #7ea1df; box-shadow: 0 0 0 4px rgba(30,58,138,.08); background: linear-gradient(180deg, #f8fbff, #f1f6ff); }
+.trainer-class-card.inactive { opacity: .78; }
+.trainer-class-card-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 14px;
+}
+.trainer-class-icon {
+    display: grid;
+    width: 52px;
+    height: 52px;
+    place-items: center;
+    border-radius: 16px;
+    color: var(--trainer-blue);
+    background: var(--trainer-blue-soft);
+    font-size: 1.15rem;
+}
+.trainer-class-badge {
+    padding: 6px 12px;
+    border-radius: 999px;
+    color: #475569;
+    background: #eef2f7;
+    font-size: .78rem;
+    font-weight: 800;
+}
+.trainer-class-badge.selected { color: #fff; background: var(--trainer-blue); }
+.trainer-class-card h3 { margin: 0 0 6px; color: #0f172a; font-size: 1.28rem; font-weight: 900; }
+.trainer-class-card p { margin: 0 0 14px; color: var(--trainer-muted); min-height: 42px; }
+.trainer-class-inline-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 14px;
+}
+.trainer-class-inline-meta span,
+.trainer-open-class-quick span,
+.trainer-facts-line span {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    background: #f8fafc;
+    color: #475569;
+    font-size: .82rem;
+}
+.trainer-class-stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    margin-bottom: 14px;
+}
+.trainer-class-stats div {
+    padding: 10px 12px;
+    border-radius: 14px;
+    background: #f8fafc;
+    text-align: center;
+}
+.trainer-class-stats strong { display: block; color: var(--trainer-blue); font-size: 1.08rem; font-weight: 900; }
+.trainer-class-stats small { color: var(--trainer-muted); font-size: .74rem; }
+.trainer-class-schedule-line {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding-top: 12px;
+    border-top: 1px solid #edf0f5;
+    color: #475569;
+    font-size: .84rem;
+}
+
+.trainer-open-class-header { padding-bottom: 22px; }
+.trainer-open-class-quick {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.trainer-date-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(310px, 1fr));
+    gap: 14px;
+    padding: 20px 24px 24px;
+}
+.trainer-date-card {
+    display: grid;
+    grid-template-columns: 78px minmax(0, 1fr) auto;
+    gap: 14px;
+    align-items: center;
+    padding: 16px;
+    border: 1px solid #d9e2f1;
+    border-radius: 18px;
+    color: inherit;
+    text-decoration: none;
+    background: #fff;
+    transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
+}
+.trainer-date-card:hover { transform: translateY(-1px); border-color: #9fb7e5; box-shadow: 0 10px 22px rgba(30,58,138,.08); color: inherit; }
+.trainer-date-card.active { border-color: #7da1e5; box-shadow: 0 0 0 4px rgba(30,58,138,.08); background: #f9fbff; }
+.trainer-date-card.finished { background: #fcfcfd; }
+.trainer-date-daybox {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 76px;
+    border-radius: 16px;
+    color: var(--trainer-blue);
+    background: var(--trainer-blue-soft);
+}
+.trainer-date-daybox.today { color: #fff; background: var(--trainer-blue); }
+.trainer-date-daybox strong { font-size: 1.55rem; line-height: 1; font-weight: 900; }
+.trainer-date-daybox small { margin-top: 4px; font-size: .74rem; font-weight: 800; }
+.trainer-date-copy h3 { margin: 0 0 6px; font-size: 1.08rem; font-weight: 900; color: #0f172a; }
+.trainer-date-copy p { margin: 0 0 10px; color: #475569; }
+.trainer-date-copy p i { margin-right: 6px; color: var(--trainer-blue); }
+.trainer-date-facts { display: flex; flex-wrap: wrap; gap: 8px; }
+.trainer-date-facts span {
+    padding: 6px 10px;
+    border-radius: 999px;
+    background: #eff6ff;
+    color: #1d4ed8;
+    font-size: .77rem;
+    font-weight: 800;
+}
+.trainer-date-side { display: flex; flex-direction: column; align-items: flex-end; gap: 12px; }
+.trainer-mini-status,
+.trainer-attendance,
+.trainer-type {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 10px;
+    border-radius: 999px;
+    font-size: .76rem;
+    font-weight: 800;
+}
+.trainer-mini-status.today { color: #fff; background: var(--trainer-blue); }
+.trainer-mini-status.scheduled { color: #1d4ed8; background: #dbeafe; }
+.trainer-mini-status.finished { color: #92400e; background: #fef3c7; }
+.trainer-date-open { color: var(--trainer-blue); font-weight: 800; font-size: .83rem; }
+
+.trainer-roster-head-clean { padding-bottom: 16px; }
+.trainer-roster-counter {
+    min-width: 110px;
+    padding: 14px 16px;
+    border-radius: 16px;
+    text-align: center;
+    background: #f8fafc;
+}
+.trainer-roster-counter strong { display: block; color: var(--trainer-blue); font-size: 1.35rem; font-weight: 900; }
+.trainer-roster-counter small { color: var(--trainer-muted); font-size: .76rem; }
+
+.trainer-roster-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    padding: 0 24px 18px;
+}
+.trainer-facts-line { display: flex; flex-wrap: wrap; gap: 8px; }
+.trainer-roster-tools {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.trainer-roster-tools label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 300px;
+    padding: 0 14px;
+    border: 1px solid #d4dbe6;
+    border-radius: 14px;
+    background: #fff;
+}
+.trainer-roster-tools label i { color: #64748b; }
+.trainer-roster-tools input {
+    width: 100%;
+    min-height: 44px;
+    border: 0;
+    outline: 0;
+    background: transparent;
+}
+.trainer-roster-tools a {
+    display: grid;
+    width: 44px;
+    height: 44px;
+    place-items: center;
+    border: 1px solid #d4dbe6;
+    border-radius: 12px;
+    color: #64748b;
+    text-decoration: none;
+    background: #fff;
+}
+
+.trainer-table-wrap { width: 100%; overflow-x: auto; }
+.trainer-roster-table {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 760px;
+}
+.trainer-roster-table th,
+.trainer-roster-table td {
+    padding: 14px 18px;
+    border-top: 1px solid var(--trainer-border);
+    vertical-align: middle;
+}
+.trainer-roster-table th {
+    color: #475569;
+    background: #f8fafc;
+    font-size: .8rem;
+    font-weight: 900;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+}
+.trainer-roster-table tr.is-present { background: #f8fffb; }
+.trainer-participant-cell {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+.trainer-participant-cell > span {
+    display: grid;
+    width: 42px;
+    height: 42px;
+    flex: 0 0 42px;
+    place-items: center;
+    border-radius: 14px;
+    color: var(--trainer-blue);
+    background: var(--trainer-blue-soft);
+    font-weight: 900;
+}
+.trainer-participant-cell strong { display: block; color: #0f172a; }
+.trainer-participant-cell small,
+.trainer-contact small,
+.trainer-contact span { color: #64748b; }
+.trainer-type { color: #1d4ed8; background: #dbeafe; }
+.trainer-type.visitor { color: #92400e; background: #fef3c7; }
+.trainer-attendance.present { color: #047857; background: var(--trainer-success-soft); }
+.trainer-attendance.pending { color: #b45309; background: var(--trainer-amber-soft); }
+.trainer-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 38px;
+    padding: 8px 12px;
+    border: 0;
+    border-radius: 12px;
+    font-size: .82rem;
+    font-weight: 800;
+}
+.trainer-action.mark { color: #fff; background: var(--trainer-blue); }
+.trainer-action.done { color: #047857; background: var(--trainer-success-soft); }
+.trainer-action.upcoming,
+.trainer-action.muted { color: #64748b; background: #eef2f7; }
+
+.trainer-pagination-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    padding: 16px 24px 22px;
+    border-top: 1px solid var(--trainer-border);
+}
+.trainer-pagination-bar span { color: var(--trainer-muted); font-size: .84rem; }
+.trainer-pagination-bar nav { display: flex; gap: 8px; }
+.trainer-pagination-bar a {
+    display: grid;
+    width: 40px;
+    height: 40px;
+    place-items: center;
+    border: 1px solid #d7deea;
+    border-radius: 12px;
+    color: #475569;
+    text-decoration: none;
+    background: #fff;
+    font-weight: 800;
+}
+.trainer-pagination-bar a.active { color: #fff; border-color: var(--trainer-blue); background: var(--trainer-blue); }
+.trainer-pagination-bar a.disabled { opacity: .45; pointer-events: none; }
+
+.trainer-empty-state,
+.trainer-empty-inline {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 26px 24px;
+}
+.trainer-empty-state { flex-direction: column; text-align: center; }
+.trainer-empty-state.compact { padding: 34px 24px; }
+.trainer-empty-state > span,
+.trainer-empty-inline > i {
+    display: grid;
+    width: 62px;
+    height: 62px;
+    place-items: center;
+    border-radius: 18px;
+    color: var(--trainer-blue);
+    background: var(--trainer-blue-soft);
+    font-size: 1.4rem;
+}
+.trainer-empty-state h2,
+.trainer-empty-inline strong { margin: 0; color: #0f172a; }
+.trainer-empty-state p,
+.trainer-empty-inline p { margin: 6px 0 0; color: var(--trainer-muted); }
+
+@media (max-width: 991.98px) {
+    .trainer-page { padding: 78px 16px 22px; }
+    .trainer-header-simple,
+    .trainer-panel-head,
+    .trainer-open-class-header,
+    .trainer-roster-head-clean,
+    .trainer-roster-toolbar {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    .trainer-header-pill { min-width: 0; width: 100%; align-items: flex-start; }
+    .trainer-open-class-quick { justify-content: flex-start; }
+    .trainer-date-card { grid-template-columns: 74px 1fr; }
+    .trainer-date-side { grid-column: 1 / -1; flex-direction: row; justify-content: space-between; align-items: center; }
+    .trainer-roster-tools { width: 100%; }
+    .trainer-roster-tools label { min-width: 0; width: 100%; }
+}
+
+@media (max-width: 767.98px) {
+    .trainer-page { padding: 72px 12px 18px; }
+    .trainer-panel-head, .trainer-open-class-header, .trainer-roster-head-clean { padding: 18px 18px 0; }
+    .trainer-class-cards,
+    .trainer-date-cards { grid-template-columns: 1fr; padding: 16px 18px 18px; }
+    .trainer-roster-toolbar { padding: 0 18px 16px; }
+    .trainer-roster-table,
+    .trainer-roster-table thead,
+    .trainer-roster-table tbody,
+    .trainer-roster-table tr,
+    .trainer-roster-table td { display: block; width: 100%; }
+    .trainer-roster-table { min-width: 0; }
+    .trainer-roster-table thead { display: none; }
+    .trainer-roster-table tbody { display: grid; gap: 12px; padding: 12px 18px 18px; }
+    .trainer-roster-table tr {
+        overflow: hidden;
+        border: 1px solid var(--trainer-border);
+        border-radius: 14px;
+        background: #fff;
+    }
+    .trainer-roster-table td {
+        display: grid;
+        grid-template-columns: minmax(110px, 40%) minmax(0,1fr);
+        gap: 10px;
+        padding: 10px 12px;
+        border-top: 1px solid #edf1f5;
+        text-align: right;
+    }
+    .trainer-roster-table td::before {
+        content: attr(data-label);
+        color: #64748b;
+        font-size: .68rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        text-align: left;
+    }
+    .trainer-roster-table td:first-child { border-top: 0; }
+    .trainer-participant-cell { justify-content: flex-end; }
+    .trainer-pagination-bar { padding: 14px 18px 18px; }
+}
+
+/* =========================================================
+   AJUSTE COMPACTO DE CARDS
+   Mantiene las tarjetas claras sin ocupar todo el ancho.
+========================================================= */
+@media (min-width: 768px) {
+    .trainer-class-cards {
+        grid-template-columns: repeat(auto-fill, minmax(235px, 285px));
+        justify-content: start;
+        gap: 13px;
+        padding: 16px 20px 20px;
+    }
+
+    .trainer-class-card {
+        min-height: 0;
+        padding: 15px;
+        border-radius: 15px;
+    }
+
+    .trainer-class-card-top {
+        margin-bottom: 10px;
+    }
+
+    .trainer-class-icon {
+        width: 43px;
+        height: 43px;
+        border-radius: 12px;
+        font-size: .96rem;
+    }
+
+    .trainer-class-badge {
+        padding: 5px 9px;
+        font-size: .68rem;
+    }
+
+    .trainer-class-card h3 {
+        margin-bottom: 4px;
+        font-size: 1.05rem;
+    }
+
+    .trainer-class-card p {
+        display: -webkit-box;
+        min-height: 34px;
+        margin-bottom: 10px;
+        overflow: hidden;
+        font-size: .78rem;
+        line-height: 1.38;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 2;
+    }
+
+    .trainer-class-inline-meta {
+        gap: 6px;
+        margin-bottom: 10px;
+    }
+
+    .trainer-class-inline-meta span {
+        padding: 6px 8px;
+        font-size: .7rem;
+    }
+
+    .trainer-class-stats {
+        gap: 6px;
+        margin-bottom: 10px;
+    }
+
+    .trainer-class-stats div {
+        padding: 7px 6px;
+        border-radius: 10px;
+    }
+
+    .trainer-class-stats strong {
+        font-size: .92rem;
+    }
+
+    .trainer-class-stats small {
+        font-size: .62rem;
+    }
+
+    .trainer-class-schedule-line {
+        gap: 6px;
+        padding-top: 9px;
+        font-size: .7rem;
+        line-height: 1.35;
+    }
+
+    .trainer-date-cards {
+        grid-template-columns: repeat(auto-fill, minmax(285px, 355px));
+        justify-content: start;
+        gap: 12px;
+        padding: 16px 20px 20px;
+    }
+
+    .trainer-date-card {
+        grid-template-columns: 62px minmax(0, 1fr) auto;
+        gap: 11px;
+        padding: 13px;
+        border-radius: 15px;
+    }
+
+    .trainer-date-daybox {
+        min-height: 64px;
+        border-radius: 13px;
+    }
+
+    .trainer-date-daybox strong {
+        font-size: 1.3rem;
+    }
+
+    .trainer-date-copy h3 {
+        margin-bottom: 4px;
+        font-size: .94rem;
+    }
+
+    .trainer-date-copy p {
+        margin-bottom: 7px;
+        font-size: .76rem;
+    }
+
+    .trainer-date-facts {
+        gap: 5px;
+    }
+
+    .trainer-date-facts span {
+        padding: 5px 8px;
+        font-size: .66rem;
+    }
+
+    .trainer-date-side {
+        gap: 8px;
+    }
+
+    .trainer-mini-status {
+        padding: 5px 8px;
+        font-size: .65rem;
+    }
+
+    .trainer-date-open {
+        font-size: .7rem;
+    }
+}
+
+#buscadorAlumnos {
+    scroll-margin-top: 18px;
+}

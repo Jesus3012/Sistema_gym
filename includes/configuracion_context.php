@@ -258,6 +258,10 @@ if (!function_exists('configuracion_contar')) {
 if (!function_exists('configuracion_sincronizar_catalogos')) {
     function configuracion_sincronizar_catalogos($db, $sucursalId)
     {
+        /*
+         * Los planes sí forman parte del catálogo compartido y pueden
+         * inicializarse automáticamente para cada sucursal.
+         */
         configuracion_ejecutar(
             $db,
             "INSERT IGNORE INTO planes_sucursales
@@ -268,30 +272,18 @@ if (!function_exists('configuracion_sincronizar_catalogos')) {
             array((int) $sucursalId)
         );
 
-        configuracion_ejecutar(
-            $db,
-            "INSERT IGNORE INTO inventario_sucursales
-                (
-                    sucursal_id,
-                    producto_id,
-                    precio_compra,
-                    precio_venta,
-                    stock,
-                    stock_minimo,
-                    estado
-                )
-             SELECT
-                ?,
-                p.id,
-                p.precio_compra,
-                p.precio_venta,
-                0,
-                p.stock_minimo,
-                p.estado
-             FROM productos p",
-            'i',
-            array((int) $sucursalId)
-        );
+        /*
+         * IMPORTANTE:
+         * El inventario NO se sincroniza automáticamente.
+         *
+         * Cada fila de inventario_sucursales debe crearse únicamente desde
+         * productos.php cuando el usuario agrega el producto a la sucursal
+         * que tiene seleccionada. De esta forma, un producto registrado en
+         * una sede no aparece con stock cero en las demás sucursales.
+         *
+         * Se conserva el nombre de esta función para no romper llamadas
+         * existentes desde Configuración; ahora solo sincroniza planes.
+         */
     }
 }
 

@@ -1694,3 +1694,360 @@
         padding: 9px !important;
     }
 }
+
+/* =========================================================
+   CORTE DE CAJA · RESUMEN COMPACTO
+   Complementa corte_caja.css sin alterar el resto del módulo.
+========================================================= */
+
+/* Tarjetas superiores más bajas y ligeras */
+.caja-summary-grid {
+    gap: 10px !important;
+    margin-bottom: 14px !important;
+}
+
+.caja-summary-card {
+    min-height: 0 !important;
+    padding: 13px 14px !important;
+}
+
+.caja-summary-card .caja-summary-icon {
+    width: 34px !important;
+    height: 34px !important;
+    flex: 0 0 34px !important;
+    font-size: .86rem !important;
+}
+
+.caja-summary-card .caja-summary-label {
+    font-size: .72rem !important;
+}
+
+.caja-summary-card .caja-summary-value {
+    margin-top: 2px !important;
+    font-size: 1.25rem !important;
+    line-height: 1.15 !important;
+}
+
+.caja-summary-card .caja-summary-note {
+    margin-top: 3px !important;
+    overflow: hidden;
+    font-size: .68rem !important;
+    line-height: 1.25 !important;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Contenedor único en lugar de cuatro tarjetas grandes */
+.caja-income-compact {
+    display: grid;
+    gap: 10px;
+}
+
+.caja-income-table-wrap {
+    width: 100%;
+    overflow: hidden;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    background: #fff;
+}
+
+.caja-income-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+}
+
+.caja-income-table th,
+.caja-income-table td {
+    padding: 10px 12px;
+    border-bottom: 1px solid #edf1f6;
+    text-align: right;
+    vertical-align: middle;
+}
+
+.caja-income-table th {
+    background: #f8fafc;
+    color: #667085;
+    font-size: .66rem;
+    font-weight: 800;
+    letter-spacing: .025em;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.caja-income-table th:first-child,
+.caja-income-table td:first-child {
+    width: 25%;
+    text-align: left;
+}
+
+.caja-income-table th:nth-child(5),
+.caja-income-table td:nth-child(5) {
+    width: 11%;
+    text-align: center;
+}
+
+.caja-income-table th:last-child,
+.caja-income-table td:last-child {
+    width: 15%;
+}
+
+.caja-income-table tbody tr:last-child td {
+    border-bottom: 0;
+}
+
+.caja-income-table tbody tr:hover {
+    background: #fbfcfe;
+}
+
+.caja-income-concept {
+    display: inline-flex;
+    min-width: 0;
+    align-items: center;
+    gap: 9px;
+}
+
+.caja-income-concept > i {
+    display: inline-grid;
+    width: 32px;
+    height: 32px;
+    flex: 0 0 32px;
+    place-items: center;
+    border-radius: 8px;
+    background: #eaf0ff;
+    color: #244292;
+    font-size: .8rem;
+}
+
+.caja-income-concept > span {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+}
+
+.caja-income-concept strong {
+    color: #1f2937;
+    font-size: .79rem;
+    line-height: 1.2;
+}
+
+.caja-income-concept small {
+    margin-top: 2px;
+    color: #7b8494;
+    font-size: .65rem;
+    line-height: 1.2;
+}
+
+.caja-income-table td:not(:first-child) {
+    color: #344054;
+    font-size: .76rem;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.caja-income-total {
+    color: #1e3a8a !important;
+    font-size: .83rem !important;
+    font-weight: 800 !important;
+}
+
+.caja-income-table .is-memberships .caja-income-concept > i {
+    background: #dcfce7;
+    color: #047857;
+}
+
+.caja-income-table .is-classes .caja-income-concept > i {
+    background: #ede9fe;
+    color: #6d28d9;
+}
+
+/* Ajustes en una sola franja compacta */
+.caja-adjustments-compact {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.caja-adjustments-compact > span {
+    display: flex;
+    min-width: 0;
+    padding: 9px 11px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    border: 1px solid #e5eaf1;
+    border-radius: 8px;
+    background: #f8fafc;
+}
+
+.caja-adjustments-compact small {
+    overflow: hidden;
+    color: #667085;
+    font-size: .65rem;
+    font-weight: 700;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.caja-adjustments-compact strong {
+    color: #344054;
+    font-size: .76rem;
+    white-space: nowrap;
+}
+
+/* Menos aire dentro de la tarjeta de resumen */
+.caja-detail-card .caja-card-body {
+    padding: 13px !important;
+}
+
+@media (max-width: 1180px) {
+    .caja-summary-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    }
+
+    .caja-adjustments-compact {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+/* Sin scroll horizontal: la tabla se transforma en bloques compactos */
+@media (max-width: 760px) {
+    .caja-summary-grid {
+        grid-template-columns: 1fr !important;
+    }
+
+    .caja-summary-card .caja-summary-note {
+        white-space: normal;
+    }
+
+    .caja-income-table-wrap {
+        overflow: visible;
+        border: 0;
+        background: transparent;
+    }
+
+    .caja-income-table,
+    .caja-income-table tbody,
+    .caja-income-table tr,
+    .caja-income-table td {
+        display: block;
+        width: 100%;
+    }
+
+    .caja-income-table thead {
+        display: none;
+    }
+
+    .caja-income-table tbody {
+        display: grid;
+        gap: 8px;
+    }
+
+    .caja-income-table tr {
+        overflow: hidden;
+        border: 1px solid #e2e8f0;
+        border-radius: 9px;
+        background: #fff;
+    }
+
+    .caja-income-table td,
+    .caja-income-table td:first-child,
+    .caja-income-table td:nth-child(5),
+    .caja-income-table td:last-child {
+        display: flex;
+        width: 100%;
+        padding: 8px 11px;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        border-bottom: 1px solid #edf1f6;
+        text-align: right;
+    }
+
+    .caja-income-table td::before {
+        content: attr(data-label);
+        color: #667085;
+        font-size: .64rem;
+        font-weight: 800;
+        text-align: left;
+        text-transform: uppercase;
+    }
+
+    .caja-income-table td:first-child::before {
+        display: none;
+    }
+
+    .caja-income-table td:first-child {
+        justify-content: flex-start;
+        background: #f8fafc;
+        text-align: left;
+    }
+
+    .caja-income-table td:last-child {
+        border-bottom: 0;
+    }
+
+    .caja-adjustments-compact {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* =========================================================
+   AJUSTE FINAL · ESTIRAR TARJETA "CERRAR CAJA"
+   Iguala mejor la altura de la columna derecha con la tabla
+   de operaciones, sin afectar tablet ni móvil.
+========================================================= */
+@media (min-width: 1401px) {
+    .caja-main-grid {
+        align-items: stretch;
+    }
+
+    .caja-main-grid > div {
+        display: grid;
+        grid-template-rows: auto 1fr;
+        min-height: 100%;
+    }
+
+    .caja-table-card {
+        display: flex;
+        min-height: 0;
+        flex-direction: column;
+    }
+
+    .caja-table-card .caja-card-body {
+        display: flex;
+        min-height: 0;
+        flex: 1;
+        flex-direction: column;
+    }
+
+    .caja-side-stack {
+        display: grid;
+        height: 100%;
+        align-self: stretch;
+        grid-template-rows: auto 1fr;
+    }
+
+    .caja-close-card {
+        display: flex;
+        min-height: 430px;
+        flex-direction: column;
+    }
+
+    .caja-close-card .caja-card-body {
+        display: flex;
+        flex: 1;
+        flex-direction: column;
+    }
+
+    .caja-close-card form {
+        display: flex;
+        width: 100%;
+        height: 100%;
+        flex-direction: column;
+    }
+
+    .caja-close-card .caja-btn-danger {
+        margin-top: auto;
+    }
+}

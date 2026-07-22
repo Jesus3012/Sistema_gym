@@ -47,12 +47,326 @@ $total_sedes = (int) $contexto['total_sedes'];
 
 $swal_clases = clases_swal_consumir();
 
+/**
+ * Días normalizados para los horarios de las clases.
+ */
+function clases_dias_semana(): array
+{
+    return [
+        1 => ['corto' => 'Lun', 'nombre' => 'Lunes'],
+        2 => ['corto' => 'Mar', 'nombre' => 'Martes'],
+        3 => ['corto' => 'Mié', 'nombre' => 'Miércoles'],
+        4 => ['corto' => 'Jue', 'nombre' => 'Jueves'],
+        5 => ['corto' => 'Vie', 'nombre' => 'Viernes'],
+        6 => ['corto' => 'Sáb', 'nombre' => 'Sábado'],
+        7 => ['corto' => 'Dom', 'nombre' => 'Domingo'],
+    ];
+}
+
+function clases_hora_valida(string $hora): bool
+{
+    $fecha = DateTimeImmutable::createFromFormat('!H:i', $hora);
+
+    return $fecha instanceof DateTimeImmutable
+        && $fecha->format('H:i') === $hora;
+}
+
+/**
+ * Recibe filas dinámicas de horario y evita traslapes en el mismo día.
+ * Todas las sesiones de una clase deben conservar la misma duración.
+ */
+function clases_horarios_desde_post(): array
+{
+    $dias = $_POST['horario_dia'] ?? [];
+    $inicios = $_POST['horario_inicio'] ?? [];
+    $fines = $_POST['horario_fin'] ?? [];
+
+    if (!is_array($dias) || !is_array($inicios) || !is_array($fines)) {
+        throw new RuntimeException('El formato de los horarios es inválido.');
+    }
+
+    if ($dias === [] || count($dias) !== count($inicios) || count($dias) !== count($fines)) {
+        throw new RuntimeException('Agrega al menos un horario completo para la clase.');
+    }
+
+    $filas = [];
+    $duracionBase = null;
+    $ocupados = [];
+
+    foreach ($dias as $indice => $diaRaw) {
+        $dia = (int) $diaRaw;
+        $inicio = trim((string) ($inicios[$indice] ?? ''));
+        $fin = trim((string) ($fines[$indice] ?? ''));
+
+        if ($dia < 1 || $dia > 7 || !clases_hora_valida($inicio) || !clases_hora_valida($fin)) {
+            throw new RuntimeException('Revisa los días y horas seleccionados.');
+        }
+
+        $inicioMinutos = ((int) substr($inicio, 0, 2) * 60) + (int) substr($inicio, 3, 2);
+        $finMinutos = ((int) substr($fin, 0, 2) * 60) + (int) substr($fin, 3, 2);
+
+        if ($finMinutos <= $inicioMinutos) {
+            throw new RuntimeException('La hora de término debe ser posterior a la hora de inicio.');
+        }
+
+        $duracion = $finMinutos - $inicioMinutos;
+
+        if ($duracionBase === null) {
+            $duracionBase = $duracion;
+        } elseif ($duracion !== $duracionBase) {
+            throw new RuntimeException('Todos los horarios de la misma clase deben tener la misma duración.');
+        }
+
+        foreach ($ocupados[$dia] ?? [] as $rango) {
+            if ($inicioMinutos < $rango['fin'] && $finMinutos > $rango['inicio']) {
+                throw new RuntimeException('Existen horarios traslapados para el mismo día.');
+            }
+        }
+
+        $ocupados[$dia][] = [
+            'inicio' => $inicioMinutos,
+            'fin' => $finMinutos,
+        ];
+
+        $filas[] = [
+            'dia_semana' => $dia,
+            'hora_inicio' => $inicio . ':00',
+            'hora_fin' => $fin . ':00',
+            'duracion' => $duracion,
+        ];
+    }
+
+    usort(
+        $filas,
+        static fn (array $a, array $b): int => [
+            $a['dia_semana'],
+            $a['hora_inicio'],
+        ] <=> [
+            $b['dia_semana'],
+            $b['hora_inicio'],
+        ]
+    );
+
+    return $filas;
+}
+
+function clases_resumen_horarios(array $horarios): string
+{
+    $dias = clases_dias_semana();
+    $partes = [];
+
+    foreach ($horarios as $horario) {
+        $dia = (int) $horario['dia_semana'];
+        $inicio = substr((string) $horario['hora_inicio'], 0, 5);
+        $fin = substr((string) $horario['hora_fin'], 0, 5);
+        $partes[] = ($dias[$dia]['corto'] ?? 'Día') . ' ' . $inicio . '-' . $fin;
+    }
+
+    return implode(' · ', $partes);
+}
+
+function clases_guardar_horarios(mysqli $conn, int $claseId, array $horarios): void
+{
+    $stmtDelete = $conn->prepare(
+        'DELETE FROM clases_horarios WHERE clase_id = ?'
+    );
+    $stmtDelete->bind_param('i', $claseId);
+    $stmtDelete->execute();
+    $stmtDelete->close();
+
+    $stmtInsert = $conn->prepare(
+        "INSERT INTO clases_horarios (
+            clase_id,
+            dia_semana,
+            hora_inicio,
+            hora_fin,
+            estado
+         ) VALUES (?, ?, ?, ?, 'activo')"
+    );
+
+    foreach ($horarios as $horario) {
+        $dia = (int) $horario['dia_semana'];
+        $inicio = (string) $horario['hora_inicio'];
+        $fin = (string) $horario['hora_fin'];
+
+        $stmtInsert->bind_param(
+            'iiss',
+            $claseId,
+            $dia,
+            $inicio,
+            $fin
+        );
+        $stmtInsert->execute();
+    }
+
+    $stmtInsert->close();
+}
+
+/**
+ * Resuelve un entrenador interno o externo. Si se selecciona "nuevo",
+ * registra al entrenador externo dentro de la misma transacción de la clase.
+ */
+function clases_resolver_entrenador(
+    mysqli $conn,
+    int $sucursalId
+): array {
+    $tipo = trim((string) ($_POST['instructor_tipo'] ?? 'interno'));
+
+    if ($tipo === 'interno') {
+        $usuarioId = (int) ($_POST['instructor_usuario_id'] ?? 0);
+
+        if ($usuarioId <= 0) {
+            throw new RuntimeException('Selecciona un entrenador del sistema.');
+        }
+
+        $entrenador = clases_validar_entrenador(
+            $conn,
+            $sucursalId,
+            $usuarioId
+        );
+
+        return [
+            'tipo' => 'interno',
+            'nombre' => trim((string) $entrenador['nombre']),
+            'usuario_id' => $usuarioId,
+            'externo_id' => null,
+        ];
+    }
+
+    if ($tipo !== 'externo') {
+        throw new RuntimeException('El tipo de entrenador seleccionado no es válido.');
+    }
+
+    $externoSeleccionado = trim((string) ($_POST['entrenador_externo_id'] ?? ''));
+
+    if ($externoSeleccionado !== '' && $externoSeleccionado !== 'nuevo') {
+        $externoId = (int) $externoSeleccionado;
+        $stmt = $conn->prepare(
+            "SELECT id, nombre
+             FROM entrenadores_externos
+             WHERE id = ?
+               AND sucursal_id = ?
+               AND estado = 'activo'
+             LIMIT 1"
+        );
+        $stmt->bind_param('ii', $externoId, $sucursalId);
+        $stmt->execute();
+        $externo = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        if (!$externo) {
+            throw new RuntimeException('El entrenador externo seleccionado no está disponible.');
+        }
+
+        return [
+            'tipo' => 'externo',
+            'nombre' => trim((string) $externo['nombre']),
+            'usuario_id' => null,
+            'externo_id' => $externoId,
+        ];
+    }
+
+    $nombre = trim((string) ($_POST['entrenador_externo_nombre'] ?? ''));
+    $email = trim((string) ($_POST['entrenador_externo_email'] ?? ''));
+    $telefono = trim((string) ($_POST['entrenador_externo_telefono'] ?? ''));
+
+    if ($nombre === '') {
+        throw new RuntimeException('Escribe el nombre del entrenador externo.');
+    }
+
+    if (mb_strlen($nombre) > 120) {
+        throw new RuntimeException('El nombre del entrenador externo es demasiado largo.');
+    }
+
+    if ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        throw new RuntimeException('El correo del entrenador externo no es válido.');
+    }
+
+    if (mb_strlen($telefono) > 25) {
+        throw new RuntimeException('El número celular del entrenador externo es demasiado largo.');
+    }
+
+    $stmt = $conn->prepare(
+        "INSERT INTO entrenadores_externos (
+            sucursal_id,
+            nombre,
+            email,
+            telefono,
+            estado
+         ) VALUES (?, ?, NULLIF(?, ''), NULLIF(?, ''), 'activo')"
+    );
+    $stmt->bind_param(
+        'isss',
+        $sucursalId,
+        $nombre,
+        $email,
+        $telefono
+    );
+    $stmt->execute();
+    $externoId = (int) $conn->insert_id;
+    $stmt->close();
+
+    return [
+        'tipo' => 'externo',
+        'nombre' => $nombre,
+        'usuario_id' => null,
+        'externo_id' => $externoId,
+    ];
+}
+
+function clases_horarios_detalle(string $detalle, string $legacy = ''): array
+{
+    if ($detalle === '') {
+        return $legacy !== ''
+            ? [['legacy' => $legacy]]
+            : [];
+    }
+
+    $dias = clases_dias_semana();
+    $resultado = [];
+
+    foreach (explode(';;', $detalle) as $fila) {
+        $partes = explode('|', $fila);
+
+        if (count($partes) !== 3) {
+            continue;
+        }
+
+        $dia = (int) $partes[0];
+        $resultado[] = [
+            'dia' => $dias[$dia]['corto'] ?? 'Día',
+            'inicio' => $partes[1],
+            'fin' => $partes[2],
+        ];
+    }
+
+    return $resultado;
+}
+
 $entrenadores = $vista_global
     ? []
     : clases_entrenadores_sucursal(
         $conn,
         $sucursal_id
     );
+
+$entrenadores_externos = [];
+
+if (!$vista_global) {
+    $stmtExternos = $conn->prepare(
+        "SELECT id, nombre, email, telefono
+         FROM entrenadores_externos
+         WHERE sucursal_id = ?
+           AND estado = 'activo'
+         ORDER BY nombre ASC"
+    );
+    $stmtExternos->bind_param('i', $sucursal_id);
+    $stmtExternos->execute();
+    $entrenadores_externos = $stmtExternos
+        ->get_result()
+        ->fetch_all(MYSQLI_ASSOC);
+    $stmtExternos->close();
+}
 
 $hay_entrenadores = $entrenadores !== [];
 
@@ -61,58 +375,49 @@ if (
     && isset($_POST['action'])
 ) {
     try {
-        $sucursal_operativa = clases_exigir_sucursal(
-            $contexto
-        );
+        $sucursal_operativa = clases_exigir_sucursal($contexto);
+        $action = trim((string) $_POST['action']);
+        $nombre = trim((string) ($_POST['nombre'] ?? ''));
+        $descripcion = trim((string) ($_POST['descripcion'] ?? ''));
+        $precioTexto = str_replace(',', '.', trim((string) ($_POST['precio_clase'] ?? '')));
+        $cupo_maximo = (int) ($_POST['cupo_maximo'] ?? 0);
+        $horarios = clases_horarios_desde_post();
+        $horario = clases_resumen_horarios($horarios);
+        $duracion_minutos = (int) $horarios[0]['duracion'];
 
-        $action = (string) $_POST['action'];
-        $nombre = trim((string) (
-            $_POST['nombre'] ?? ''
-        ));
-        $descripcion = trim((string) (
-            $_POST['descripcion'] ?? ''
-        ));
-        $horario = trim((string) (
-            $_POST['horario'] ?? ''
-        ));
-        $instructor_usuario_id = (int) (
-            $_POST['instructor_usuario_id'] ?? 0
-        );
-
-        $entrenador_seleccionado =
-            clases_validar_entrenador(
-                $conn,
-                $sucursal_operativa,
-                $instructor_usuario_id
-            );
-
-        /*
-         * La estructura actual de clases conserva instructor como texto.
-         * El nombre nunca se toma del navegador: sale del usuario validado.
-         */
-        $instructor = trim((string) (
-            $entrenador_seleccionado['nombre'] ?? ''
-        ));
-
-        $cupo_maximo = (int) (
-            $_POST['cupo_maximo'] ?? 0
-        );
-        $duracion_minutos = (int) (
-            $_POST['duracion_minutos'] ?? 0
-        );
-
-        if (
-            $nombre === ''
-            || $horario === ''
-            || $instructor_usuario_id <= 0
-            || $instructor === ''
-            || $cupo_maximo <= 0
-            || $duracion_minutos <= 0
-        ) {
-            throw new RuntimeException(
-                'Completa todos los campos requeridos.'
-            );
+        if ($nombre === '' || mb_strlen($nombre) > 100) {
+            throw new RuntimeException('Escribe un nombre válido para la clase.');
         }
+
+        if ($precioTexto === '' || !is_numeric($precioTexto)) {
+            throw new RuntimeException('Escribe un precio válido para la clase.');
+        }
+
+        $precio_clase = round((float) $precioTexto, 2);
+
+        if ($precio_clase < 0 || $precio_clase > 99999999.99) {
+            throw new RuntimeException('El precio de la clase está fuera del rango permitido.');
+        }
+
+        if ($cupo_maximo <= 0 || $cupo_maximo > 10000) {
+            throw new RuntimeException('El cupo máximo de la clase no es válido.');
+        }
+
+        if (!in_array($action, ['crear_clase', 'editar_clase'], true)) {
+            throw new RuntimeException('La acción solicitada no es válida.');
+        }
+
+        $conn->begin_transaction();
+
+        $entrenador = clases_resolver_entrenador(
+            $conn,
+            $sucursal_operativa
+        );
+
+        $instructor = (string) $entrenador['nombre'];
+        $instructor_tipo = (string) $entrenador['tipo'];
+        $instructor_usuario_id = $entrenador['usuario_id'];
+        $entrenador_externo_id = $entrenador['externo_id'];
 
         if ($action === 'crear_clase') {
             $stmt = $conn->prepare(
@@ -120,68 +425,52 @@ if (
                     sucursal_id,
                     nombre,
                     descripcion,
+                    precio_clase,
                     horario,
                     instructor,
+                    instructor_tipo,
+                    instructor_usuario_id,
+                    entrenador_externo_id,
                     cupo_maximo,
                     cupo_actual,
                     duracion_minutos,
                     estado
-                 ) VALUES (
-                    ?,
-                    ?,
-                    ?,
-                    ?,
-                    ?,
-                    ?,
-                    0,
-                    ?,
-                    'activa'
-                 )"
+                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'activa')"
             );
-
             $stmt->bind_param(
-                'issssii',
+                'issdsssiiii',
                 $sucursal_operativa,
                 $nombre,
                 $descripcion,
+                $precio_clase,
                 $horario,
                 $instructor,
+                $instructor_tipo,
+                $instructor_usuario_id,
+                $entrenador_externo_id,
                 $cupo_maximo,
                 $duracion_minutos
             );
-
             $stmt->execute();
+            $clase_id = (int) $conn->insert_id;
             $stmt->close();
+
+            clases_guardar_horarios($conn, $clase_id, $horarios);
+            $conn->commit();
 
             clases_swal_guardar(
                 'success',
                 'Clase creada',
-                'La clase se registró correctamente en '
-                . $sucursal_nombre
-                . ' con '
-                . $instructor
-                . ' como entrenador.'
+                'La clase se registró con un precio de $'
+                . number_format($precio_clase, 2)
+                . '. Los socios con membresía vigente no pagarán este importe.'
             );
-        } elseif ($action === 'editar_clase') {
-            $clase_id = (int) (
-                $_POST['clase_id'] ?? 0
-            );
+        } else {
+            $clase_id = (int) ($_POST['clase_id'] ?? 0);
+            $estado = trim((string) ($_POST['estado'] ?? 'activa'));
 
-            $estado = (string) (
-                $_POST['estado'] ?? 'activa'
-            );
-
-            if (
-                $clase_id <= 0
-                || !in_array(
-                    $estado,
-                    ['activa', 'inactiva'],
-                    true
-                )
-            ) {
-                throw new RuntimeException(
-                    'Los datos de la clase son inválidos.'
-                );
+            if ($clase_id <= 0 || !in_array($estado, ['activa', 'inactiva'], true)) {
+                throw new RuntimeException('Los datos de la clase son inválidos.');
             }
 
             $stmtActual = $conn->prepare(
@@ -189,90 +478,79 @@ if (
                  FROM clases
                  WHERE id = ?
                    AND sucursal_id = ?
-                 LIMIT 1"
+                 LIMIT 1
+                 FOR UPDATE"
             );
-
-            $stmtActual->bind_param(
-                'ii',
-                $clase_id,
-                $sucursal_operativa
-            );
-
+            $stmtActual->bind_param('ii', $clase_id, $sucursal_operativa);
             $stmtActual->execute();
-
-            $claseActual = $stmtActual
-                ->get_result()
-                ->fetch_assoc();
-
+            $claseActual = $stmtActual->get_result()->fetch_assoc();
             $stmtActual->close();
 
             if (!$claseActual) {
-                throw new RuntimeException(
-                    'La clase no pertenece a la sucursal seleccionada.'
-                );
+                throw new RuntimeException('La clase no pertenece a la sucursal seleccionada.');
             }
 
-            if (
-                $cupo_maximo
-                < (int) $claseActual['cupo_actual']
-            ) {
-                throw new RuntimeException(
-                    'El cupo máximo no puede ser menor al número de personas inscritas.'
-                );
+            if ($cupo_maximo < (int) $claseActual['cupo_actual']) {
+                throw new RuntimeException('El cupo máximo no puede ser menor al número de personas inscritas.');
             }
 
             $stmt = $conn->prepare(
                 "UPDATE clases
-                 SET
-                    nombre = ?,
-                    descripcion = ?,
-                    horario = ?,
-                    instructor = ?,
-                    cupo_maximo = ?,
-                    duracion_minutos = ?,
-                    estado = ?
+                 SET nombre = ?,
+                     descripcion = ?,
+                     precio_clase = ?,
+                     horario = ?,
+                     instructor = ?,
+                     instructor_tipo = ?,
+                     instructor_usuario_id = ?,
+                     entrenador_externo_id = ?,
+                     cupo_maximo = ?,
+                     duracion_minutos = ?,
+                     estado = ?
                  WHERE id = ?
                    AND sucursal_id = ?"
             );
-
             $stmt->bind_param(
-                'ssssiisii',
+                'ssdsssiiiisii',
                 $nombre,
                 $descripcion,
+                $precio_clase,
                 $horario,
                 $instructor,
+                $instructor_tipo,
+                $instructor_usuario_id,
+                $entrenador_externo_id,
                 $cupo_maximo,
                 $duracion_minutos,
                 $estado,
                 $clase_id,
                 $sucursal_operativa
             );
-
             $stmt->execute();
-
-            if ($stmt->affected_rows < 0) {
-                throw new RuntimeException(
-                    'No se pudo actualizar la clase.'
-                );
-            }
-
             $stmt->close();
+
+            clases_guardar_horarios($conn, $clase_id, $horarios);
+            $conn->commit();
 
             clases_swal_guardar(
                 'success',
                 'Clase actualizada',
-                'Los datos de la clase se actualizaron correctamente.'
+                'El precio, entrenador y horarios se actualizaron correctamente.'
             );
         }
 
         clases_redirect('clases.php', $contexto);
     } catch (Throwable $error) {
+        try {
+            $conn->rollback();
+        } catch (Throwable $rollbackError) {
+        }
+
         clases_swal_guardar(
             'error',
             'No fue posible guardar la clase',
             $error->getMessage()
         );
-
         clases_redirect('clases.php', $contexto);
     }
 }
@@ -424,6 +702,7 @@ $sort_columns = [
     'sucursal' => 's.nombre',
     'instructor' => 'c.instructor',
     'horario' => 'c.horario',
+    'precio' => 'c.precio_clase',
     'cupo' => 'c.cupo_maximo',
     'duracion' => 'c.duracion_minutos',
     'estado' => 'c.estado',
@@ -520,6 +799,22 @@ $offset = ($page - 1) * $limit;
 $query = "
     SELECT
         c.*,
+        (
+            SELECT GROUP_CONCAT(
+                CONCAT(
+                    ch.dia_semana,
+                    '|',
+                    TIME_FORMAT(ch.hora_inicio, '%H:%i'),
+                    '|',
+                    TIME_FORMAT(ch.hora_fin, '%H:%i')
+                )
+                ORDER BY ch.dia_semana, ch.hora_inicio
+                SEPARATOR ';;'
+            )
+            FROM clases_horarios ch
+            WHERE ch.clase_id = c.id
+              AND ch.estado = 'activo'
+        ) AS horarios_detalle,
         s.nombre AS sucursal_nombre,
         s.clave AS sucursal_clave,
         s.es_matriz AS sucursal_es_matriz
@@ -641,26 +936,15 @@ $baseQuery = [
                 </span>
 
                 <?php if (!$vista_global): ?>
-                    <?php if ($hay_entrenadores): ?>
-                        <button
-                            class="btn-custom-primary"
-                            type="button"
-                            data-bs-toggle="modal"
-                            data-bs-target="#modalNuevaClase"
-                        >
-                            <i class="fas fa-plus-circle"></i>
-                            Nueva Clase
-                        </button>
-                    <?php else: ?>
-                        <button
-                            class="btn-custom-primary"
-                            type="button"
-                            onclick="mostrarSinEntrenadores()"
-                        >
-                            <i class="fas fa-user-slash"></i>
-                            Nueva Clase
-                        </button>
-                    <?php endif; ?>
+                    <button
+                        class="btn-custom-primary"
+                        type="button"
+                        data-bs-toggle="modal"
+                        data-bs-target="#modalNuevaClase"
+                    >
+                        <i class="fas fa-plus-circle"></i>
+                        Nueva Clase
+                    </button>
                 <?php else: ?>
                     <button
                         class="btn-custom-primary is-disabled"
@@ -674,19 +958,6 @@ $baseQuery = [
                 <?php endif; ?>
             </div>
         </div>
-
-
-        <?php if (!$vista_global && !$hay_entrenadores): ?>
-            <div class="class-branch-warning class-trainer-warning">
-                <i class="fas fa-user-slash"></i>
-                <span>
-                    No hay
-                    <strong>entrenadores</strong> asignados a
-                    <strong><?php echo clases_h($sucursal_nombre); ?></strong>.
-                    Asigna un entrenador a esta sucursal para registrar o editar clases.
-                </span>
-            </div>
-        <?php endif; ?>
 
         <div class="card-custom">
             <div class="card-header-custom card-header-flex">
@@ -776,28 +1047,20 @@ $baseQuery = [
                     <table class="table-simple responsive-table <?php echo $vista_global ? 'is-global' : ''; ?>">
                         <thead>
                             <tr>
+                                <th>Clase</th>
+                                <?php if ($vista_global): ?>
+                                    <th>Sucursal</th>
+                                <?php endif; ?>
+                                <th>Entrenador</th>
+                                <th>Horarios</th>
                                 <th>
                                     <a href="<?php echo clases_h(clases_url('clases.php', array_merge($baseQuery, [
-                                        'sort' => 'nombre',
-                                        'order' => $sort === 'nombre' && $order_dir === 'ASC' ? 'DESC' : 'ASC',
+                                        'sort' => 'precio',
+                                        'order' => $sort === 'precio' && $order_dir === 'ASC' ? 'DESC' : 'ASC',
                                     ]))); ?>">
-                                        Clase
+                                        Precio
                                     </a>
                                 </th>
-
-                                <?php if ($vista_global): ?>
-                                    <th>
-                                        <a href="<?php echo clases_h(clases_url('clases.php', array_merge($baseQuery, [
-                                            'sort' => 'sucursal',
-                                            'order' => $sort === 'sucursal' && $order_dir === 'ASC' ? 'DESC' : 'ASC',
-                                        ]))); ?>">
-                                            Sucursal
-                                        </a>
-                                    </th>
-                                <?php endif; ?>
-
-                                <th>Instructor</th>
-                                <th>Horario</th>
                                 <th>Cupo</th>
                                 <th>Duración</th>
                                 <th>Estado</th>
@@ -808,51 +1071,32 @@ $baseQuery = [
                         <tbody>
                             <?php foreach ($clases as $clase): ?>
                                 <?php
-                                $cupoMaximo = max(
-                                    1,
-                                    (int) $clase['cupo_maximo']
+                                $cupoMaximo = max(1, (int) $clase['cupo_maximo']);
+                                $cupoActual = max(0, (int) $clase['cupo_actual']);
+                                $cupoDisponible = max(0, $cupoMaximo - $cupoActual);
+                                $porcentajeOcupado = ($cupoActual / $cupoMaximo) * 100;
+                                $horariosClase = clases_horarios_detalle(
+                                    (string) ($clase['horarios_detalle'] ?? ''),
+                                    (string) ($clase['horario'] ?? '')
                                 );
-                                $cupoActual = max(
-                                    0,
-                                    (int) $clase['cupo_actual']
-                                );
-                                $cupoDisponible = max(
-                                    0,
-                                    $cupoMaximo - $cupoActual
-                                );
-                                $porcentajeOcupado =
-                                    ($cupoActual / $cupoMaximo) * 100;
 
                                 if ($cupoDisponible === 0) {
                                     $cupoClass = 'text-danger';
                                     $cupoTexto = 'Completo';
                                 } elseif ($porcentajeOcupado >= 80) {
                                     $cupoClass = 'text-warning';
-                                    $cupoTexto =
-                                        $cupoDisponible
-                                        . ' disponibles';
+                                    $cupoTexto = $cupoDisponible . ' disponibles';
                                 } else {
                                     $cupoClass = 'text-success';
-                                    $cupoTexto =
-                                        $cupoDisponible
-                                        . ' disponibles';
+                                    $cupoTexto = $cupoDisponible . ' disponibles';
                                 }
                                 ?>
                                 <tr>
                                     <td>
-                                        <strong>
-                                            <?php echo clases_h($clase['nombre']); ?>
-                                        </strong>
-                                        <br>
-                                        <small class="text-muted">
-                                            <?php echo clases_h(
-                                                mb_substr(
-                                                    (string) $clase['descripcion'],
-                                                    0,
-                                                    50
-                                                )
-                                            ); ?>
-                                        </small>
+                                        <div class="class-name-cell">
+                                            <strong><?php echo clases_h($clase['nombre']); ?></strong>
+                                            <small><?php echo clases_h(mb_substr((string) $clase['descripcion'], 0, 70)); ?></small>
+                                        </div>
                                     </td>
 
                                     <?php if ($vista_global): ?>
@@ -860,14 +1104,10 @@ $baseQuery = [
                                             <span class="class-branch-pill">
                                                 <i class="fas fa-building"></i>
                                                 <span>
-                                                    <strong>
-                                                        <?php echo clases_h($clase['sucursal_nombre']); ?>
-                                                    </strong>
+                                                    <strong><?php echo clases_h($clase['sucursal_nombre']); ?></strong>
                                                     <small>
                                                         <?php echo clases_h($clase['sucursal_clave']); ?>
-                                                        <?php if ((int) $clase['sucursal_es_matriz'] === 1): ?>
-                                                            · Matriz
-                                                        <?php endif; ?>
+                                                        <?php echo (int) $clase['sucursal_es_matriz'] === 1 ? ' · Matriz' : ''; ?>
                                                     </small>
                                                 </span>
                                             </span>
@@ -875,89 +1115,82 @@ $baseQuery = [
                                     <?php endif; ?>
 
                                     <td>
-                                        <?php echo clases_h($clase['instructor']); ?>
+                                        <div class="trainer-cell">
+                                            <span class="trainer-avatar">
+                                                <i class="fas <?php echo $clase['instructor_tipo'] === 'externo' ? 'fa-user-plus' : 'fa-user-shield'; ?>"></i>
+                                            </span>
+                                            <span>
+                                                <strong><?php echo clases_h($clase['instructor']); ?></strong>
+                                                <small><?php echo $clase['instructor_tipo'] === 'externo' ? 'Entrenador externo' : 'Personal del sistema'; ?></small>
+                                            </span>
+                                        </div>
                                     </td>
 
                                     <td>
-                                        <i class="far fa-clock"></i>
-                                        <?php echo clases_h($clase['horario']); ?>
+                                        <div class="schedule-pills">
+                                            <?php foreach ($horariosClase as $horarioClase): ?>
+                                                <?php if (isset($horarioClase['legacy'])): ?>
+                                                    <span class="schedule-pill legacy">
+                                                        <i class="far fa-clock"></i>
+                                                        <?php echo clases_h($horarioClase['legacy']); ?>
+                                                    </span>
+                                                <?php else: ?>
+                                                    <span class="schedule-pill">
+                                                        <strong><?php echo clases_h($horarioClase['dia']); ?></strong>
+                                                        <?php echo clases_h($horarioClase['inicio'] . '–' . $horarioClase['fin']); ?>
+                                                    </span>
+                                                <?php endif; ?>
+                                            <?php endforeach; ?>
+                                        </div>
+                                    </td>
+
+                                    <td>
+                                        <div class="class-price-cell">
+                                            <strong>$<?php echo number_format((float) $clase['precio_clase'], 2); ?></strong>
+                                            <small>Membresía activa: incluido</small>
+                                        </div>
                                     </td>
 
                                     <td>
                                         <span class="<?php echo $cupoClass; ?>">
-                                            <?php echo $cupoActual; ?>/<?php echo $cupoMaximo; ?>
-                                            <small>
-                                                (<?php echo clases_h($cupoTexto); ?>)
-                                            </small>
+                                            <strong><?php echo $cupoActual; ?>/<?php echo $cupoMaximo; ?></strong>
+                                            <small class="d-block"><?php echo clases_h($cupoTexto); ?></small>
                                         </span>
                                     </td>
 
-                                    <td>
-                                        <?php echo (int) $clase['duracion_minutos']; ?>
-                                        min
-                                    </td>
+                                    <td><?php echo (int) $clase['duracion_minutos']; ?> min</td>
 
                                     <td>
-                                        <?php if ($clase['estado'] === 'activa'): ?>
-                                            <span class="badge-activa">
-                                                Activa
-                                            </span>
-                                        <?php else: ?>
-                                            <span class="badge-inactiva">
-                                                Inactiva
-                                            </span>
-                                        <?php endif; ?>
+                                        <span class="<?php echo $clase['estado'] === 'activa' ? 'badge-activa' : 'badge-inactiva'; ?>">
+                                            <?php echo $clase['estado'] === 'activa' ? 'Activa' : 'Inactiva'; ?>
+                                        </span>
                                     </td>
 
                                     <td>
                                         <?php if (!$vista_global): ?>
                                             <div class="acciones-clase">
-                                                <?php if ($hay_entrenadores): ?>
-                                                    <button
-                                                        type="button"
-                                                        class="btn-accion btn-editar"
-                                                        onclick="editarClase(<?php echo (int) $clase['id']; ?>)"
-                                                        title="Editar"
-                                                    >
-                                                        <i class="fas fa-edit"></i>
-                                                        Editar
-                                                    </button>
-                                                <?php else: ?>
-                                                    <button
-                                                        type="button"
-                                                        class="btn-accion btn-editar"
-                                                        onclick="mostrarSinEntrenadores()"
-                                                        title="No hay entrenadores disponibles"
-                                                    >
-                                                        <i class="fas fa-user-slash"></i>
-                                                        Editar
-                                                    </button>
-                                                <?php endif; ?>
-
+                                                <button
+                                                    type="button"
+                                                    class="btn-accion btn-editar"
+                                                    onclick="editarClase(<?php echo (int) $clase['id']; ?>)"
+                                                >
+                                                    <i class="fas fa-edit"></i>
+                                                    Editar
+                                                </button>
                                                 <button
                                                     type="button"
                                                     class="btn-accion btn-eliminar"
                                                     onclick='eliminarClase(
                                                         <?php echo (int) $clase['id']; ?>,
-                                                        <?php echo json_encode(
-                                                            (string) $clase['nombre'],
-                                                            JSON_HEX_TAG
-                                                            | JSON_HEX_AMP
-                                                            | JSON_HEX_APOS
-                                                            | JSON_HEX_QUOT
-                                                        ); ?>
+                                                        <?php echo json_encode((string) $clase['nombre'], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>
                                                     )'
-                                                    title="Eliminar"
                                                 >
                                                     <i class="fas fa-trash"></i>
                                                     Eliminar
                                                 </button>
                                             </div>
                                         <?php else: ?>
-                                            <span class="class-readonly">
-                                                <i class="fas fa-eye"></i>
-                                                Consulta
-                                            </span>
+                                            <span class="class-readonly"><i class="fas fa-eye"></i> Consulta</span>
                                         <?php endif; ?>
                                     </td>
                                 </tr>
@@ -965,18 +1198,11 @@ $baseQuery = [
 
                             <?php if ($clases === []): ?>
                                 <tr>
-                                    <td colspan="<?php echo $vista_global ? 8 : 7; ?>">
+                                    <td colspan="<?php echo $vista_global ? 10 : 9; ?>">
                                         <div class="empty-state">
                                             <i class="fas fa-chalkboard"></i>
-                                            <h3>
-                                                No hay clases registradas
-                                            </h3>
-                                            <p>
-                                                <?php echo $vista_global
-                                                    ? 'No existen clases que coincidan con los filtros.'
-                                                    : 'Crea una nueva clase o modifica los filtros.';
-                                                ?>
-                                            </p>
+                                            <h3>No hay clases registradas</h3>
+                                            <p><?php echo $vista_global ? 'No existen clases que coincidan con los filtros.' : 'Crea una nueva clase o modifica los filtros.'; ?></p>
                                         </div>
                                     </td>
                                 </tr>
@@ -1030,347 +1256,284 @@ $baseQuery = [
     </div>
 
     <?php if (!$vista_global): ?>
-        <div
-            class="modal fade"
-            id="modalNuevaClase"
-            tabindex="-1"
-        >
-            <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal fade class-editor-modal" id="modalNuevaClase" tabindex="-1" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered">
                 <div class="modal-content modal-custom">
                     <div class="modal-header modal-header-custom">
-                        <h5 class="modal-title">
-                            <i class="fas fa-plus-circle"></i>
-                            Nueva Clase
-                        </h5>
-                        <button
-                            type="button"
-                            class="btn-close btn-close-white"
-                            data-bs-dismiss="modal"
-                        ></button>
+                        <div>
+                            <h5 class="modal-title"><i class="fas fa-plus-circle"></i> Nueva clase</h5>
+                            <small><?php echo clases_h($sucursal_nombre); ?></small>
+                        </div>
+                        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
                     </div>
 
-                    <form
-                        id="formNuevaClase"
-                        method="POST"
-                    >
-                        <input
-                            type="hidden"
-                            name="action"
-                            value="crear_clase"
-                        >
+                    <form id="formNuevaClase" method="POST" class="class-editor-form">
+                        <input type="hidden" name="action" value="crear_clase">
 
                         <div class="modal-body">
                             <div class="class-modal-branch">
-                                <i class="fas fa-building"></i>
-                                Se registrará en
-                                <strong>
-                                    <?php echo clases_h($sucursal_nombre); ?>
-                                </strong>
+                                <i class="fas fa-circle-info"></i>
+                                El precio solo se cobra a visitantes, externos y socios sin membresía vigente.
                             </div>
 
-                            <div class="mb-3">
-                                <label class="form-label">
-                                    Nombre de la clase *
-                                </label>
-                                <input
-                                    type="text"
-                                    class="form-control"
-                                    name="nombre"
-                                    required
-                                >
-                            </div>
-
-                            <div class="mb-3">
-                                <label class="form-label">
-                                    Descripción
-                                </label>
-                                <textarea
-                                    class="form-control"
-                                    name="descripcion"
-                                    rows="3"
-                                    placeholder="Descripción de la clase..."
-                                ></textarea>
-                            </div>
-
-                            <div class="mb-3">
-                                <label class="form-label">
-                                    Horario *
-                                </label>
-                                <input
-                                    type="text"
-                                    class="form-control"
-                                    name="horario"
-                                    placeholder="Ej: Lunes y Miércoles 19:00 - 20:00"
-                                    required
-                                >
-                            </div>
-
-                            <div class="mb-3">
-                                <label class="form-label">
-                                    Entrenador *
-                                </label>
-
-                                <select
-                                    class="form-select"
-                                    name="instructor_usuario_id"
-                                    required
-                                >
-                                    <option value="">
-                                        Seleccionar entrenador
-                                    </option>
-
-                                    <?php foreach ($entrenadores as $entrenador): ?>
-                                        <option value="<?php echo (int) $entrenador['id']; ?>">
-                                            <?php echo clases_h(
-                                                $entrenador['nombre']
-                                                . (
-                                                    trim((string) $entrenador['email']) !== ''
-                                                        ? ' · ' . $entrenador['email']
-                                                        : ''
-                                                )
-                                            ); ?>
-                                        </option>
-                                    <?php endforeach; ?>
-                                </select>
-
-                                <small class="class-trainer-note">
-                                    Solo aparecen entrenadores activos asignados a esta sucursal.
-                                </small>
-                            </div>
-
-                            <div class="row">
-                                <div class="col-md-6 mb-3">
-                                    <label class="form-label">
-                                        Cupo máximo *
-                                    </label>
-                                    <input
-                                        type="number"
-                                        class="form-control"
-                                        name="cupo_maximo"
-                                        min="1"
-                                        value="20"
-                                        required
-                                    >
+                            <section class="class-form-section">
+                                <div class="class-section-title">
+                                    <span><i class="fas fa-dumbbell"></i></span>
+                                    <div><strong>Datos de la clase</strong><small>Información principal y cobro individual.</small></div>
                                 </div>
 
-                                <div class="col-md-6 mb-3">
-                                    <label class="form-label">
-                                        Duración (minutos) *
-                                    </label>
-                                    <input
-                                        type="number"
-                                        class="form-control"
-                                        name="duracion_minutos"
-                                        min="15"
-                                        step="15"
-                                        value="60"
-                                        required
-                                    >
+                                <div class="row g-3">
+                                    <div class="col-md-8">
+                                        <label class="form-label">Nombre de la clase *</label>
+                                        <input type="text" class="form-control" name="nombre" maxlength="100" required>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">Precio por persona *</label>
+                                        <div class="input-group">
+                                            <span class="input-group-text">$</span>
+                                            <input type="number" class="form-control" name="precio_clase" min="0" step="0.5" value="0.00" required>
+                                        </div>
+                                    </div>
+                                    <div class="col-12">
+                                        <label class="form-label">Descripción</label>
+                                        <textarea class="form-control" name="descripcion" rows="2" placeholder="Ej. Sesión de box para nivel principiante e intermedio"></textarea>
+                                    </div>
                                 </div>
-                            </div>
+                            </section>
+
+                            <section class="class-form-section">
+                                <div class="class-section-title with-action">
+                                    <div class="d-flex align-items-center gap-2">
+                                        <span><i class="fas fa-calendar-days"></i></span>
+                                        <div><strong>Horarios semanales</strong><small>Agrega uno o varios días sin escribirlos manualmente.</small></div>
+                                    </div>
+                                    <button type="button" class="btn-add-schedule" data-schedule-add="new">
+                                        <i class="fas fa-plus"></i> Agregar horario
+                                    </button>
+                                </div>
+                                <div class="schedule-editor" id="newScheduleRows"></div>
+                            </section>
+
+                            <section class="class-form-section">
+                                <div class="class-section-title">
+                                    <span><i class="fas fa-user-group"></i></span>
+                                    <div><strong>Entrenador</strong><small>Puede pertenecer al sistema o ser externo.</small></div>
+                                </div>
+
+                                <div class="trainer-type-grid" data-trainer-scope="new">
+                                    <label class="trainer-type-option">
+                                        <input type="radio" name="instructor_tipo" value="interno" checked>
+                                        <span><i class="fas fa-user-shield"></i><strong>Del sistema</strong><small>Usuario entrenador asignado a la sede.</small></span>
+                                    </label>
+                                    <label class="trainer-type-option">
+                                        <input type="radio" name="instructor_tipo" value="externo">
+                                        <span><i class="fas fa-user-plus"></i><strong>Externo</strong><small>Entrenador independiente o invitado.</small></span>
+                                    </label>
+                                </div>
+
+                                <div class="trainer-panel" data-trainer-panel="new-interno">
+                                    <label class="form-label">Entrenador del sistema *</label>
+                                    <select class="form-select" name="instructor_usuario_id">
+                                        <option value="">Seleccionar entrenador</option>
+                                        <?php foreach ($entrenadores as $entrenador): ?>
+                                            <option value="<?php echo (int) $entrenador['id']; ?>">
+                                                <?php echo clases_h($entrenador['nombre'] . (trim((string) $entrenador['email']) !== '' ? ' · ' . $entrenador['email'] : '')); ?>
+                                            </option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                    <?php if (!$hay_entrenadores): ?>
+                                        <small class="class-trainer-note warning">No hay entrenadores internos activos; puedes registrar uno externo.</small>
+                                    <?php endif; ?>
+                                </div>
+
+                                <div class="trainer-panel d-none" data-trainer-panel="new-externo">
+                                    <label class="form-label">Entrenador externo *</label>
+                                    <select class="form-select external-trainer-select" name="entrenador_externo_id" data-scope="new">
+                                        <option value="nuevo">Registrar un entrenador nuevo</option>
+                                        <?php foreach ($entrenadores_externos as $externo): ?>
+                                            <option value="<?php echo (int) $externo['id']; ?>">
+                                                <?php echo clases_h($externo['nombre'] . (trim((string) $externo['telefono']) !== '' ? ' · ' . $externo['telefono'] : '')); ?>
+                                            </option>
+                                        <?php endforeach; ?>
+                                    </select>
+
+                                    <div class="external-trainer-fields" data-external-fields="new">
+                                        <div class="row g-3 mt-0">
+                                            <div class="col-md-6">
+                                                <label class="form-label">Nombre *</label>
+                                                <input type="text" class="form-control" name="entrenador_externo_nombre" maxlength="120">
+                                            </div>
+                                            <div class="col-md-6">
+                                                <label class="form-label">Número celular</label>
+                                                <input type="tel" class="form-control" name="entrenador_externo_telefono" maxlength="25">
+                                            </div>
+                                            <div class="col-12">
+                                                <label class="form-label">Correo electrónico</label>
+                                                <input type="email" class="form-control" name="entrenador_externo_email" maxlength="150">
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </section>
+
+                            <section class="class-form-section compact">
+                                <div class="row g-3">
+                                    <div class="col-md-6">
+                                        <label class="form-label">Cupo máximo *</label>
+                                        <input type="number" class="form-control" name="cupo_maximo" min="1" max="10000" value="20" required>
+                                    </div>
+                                    <div class="col-md-6 class-duration-preview">
+                                        <label class="form-label">Duración calculada</label>
+                                        <div class="duration-box" data-duration-preview="new"><i class="far fa-clock"></i> 60 minutos</div>
+                                    </div>
+                                </div>
+                            </section>
                         </div>
 
                         <div class="modal-footer">
-                            <button
-                                type="button"
-                                class="btn btn-secondary"
-                                data-bs-dismiss="modal"
-                            >
-                                Cancelar
-                            </button>
-                            <button
-                                type="submit"
-                                class="btn btn-primary"
-                            >
-                                Guardar Clase
-                            </button>
+                            <button type="button" class="btn btn-light" data-bs-dismiss="modal"><i class="fas fa-xmark"></i> Cancelar</button>
+                            <button type="submit" class="btn btn-primary"><i class="fas fa-check"></i> Guardar clase</button>
                         </div>
                     </form>
                 </div>
             </div>
         </div>
 
-        <div
-            class="modal fade"
-            id="modalEditarClase"
-            tabindex="-1"
-        >
-            <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal fade class-editor-modal" id="modalEditarClase" tabindex="-1" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered">
                 <div class="modal-content modal-custom">
                     <div class="modal-header modal-header-custom">
-                        <h5 class="modal-title">
-                            <i class="fas fa-edit"></i>
-                            Editar Clase
-                        </h5>
-                        <button
-                            type="button"
-                            class="btn-close btn-close-white"
-                            data-bs-dismiss="modal"
-                        ></button>
+                        <div>
+                            <h5 class="modal-title"><i class="fas fa-pen-to-square"></i> Editar clase</h5>
+                            <small><?php echo clases_h($sucursal_nombre); ?></small>
+                        </div>
+                        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
                     </div>
 
-                    <form
-                        id="formEditarClase"
-                        method="POST"
-                    >
-                        <input
-                            type="hidden"
-                            name="action"
-                            value="editar_clase"
-                        >
-                        <input
-                            type="hidden"
-                            name="clase_id"
-                            id="edit_clase_id"
-                        >
+                    <form id="formEditarClase" method="POST" class="class-editor-form">
+                        <input type="hidden" name="action" value="editar_clase">
+                        <input type="hidden" name="clase_id" id="edit_clase_id">
 
                         <div class="modal-body">
                             <div class="class-modal-branch">
-                                <i class="fas fa-building"></i>
-                                Sucursal:
-                                <strong>
-                                    <?php echo clases_h($sucursal_nombre); ?>
-                                </strong>
+                                <i class="fas fa-circle-info"></i>
+                                Los socios con membresía activa conservan la clase incluida sin cobro.
                             </div>
 
-                            <div class="mb-3">
-                                <label class="form-label">
-                                    Nombre de la clase *
-                                </label>
-                                <input
-                                    type="text"
-                                    class="form-control"
-                                    name="nombre"
-                                    id="edit_nombre"
-                                    required
-                                >
-                            </div>
+                            <section class="class-form-section">
+                                <div class="class-section-title">
+                                    <span><i class="fas fa-dumbbell"></i></span>
+                                    <div><strong>Datos de la clase</strong><small>Información principal y cobro individual.</small></div>
+                                </div>
+                                <div class="row g-3">
+                                    <div class="col-md-8">
+                                        <label class="form-label">Nombre de la clase *</label>
+                                        <input type="text" class="form-control" name="nombre" id="edit_nombre" maxlength="100" required>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">Precio por persona *</label>
+                                        <div class="input-group">
+                                            <span class="input-group-text">$</span>
+                                            <input type="number" class="form-control" name="precio_clase" id="edit_precio_clase" min="0" step="0.01" required>
+                                        </div>
+                                    </div>
+                                    <div class="col-12">
+                                        <label class="form-label">Descripción</label>
+                                        <textarea class="form-control" name="descripcion" id="edit_descripcion" rows="2"></textarea>
+                                    </div>
+                                </div>
+                            </section>
 
-                            <div class="mb-3">
-                                <label class="form-label">
-                                    Descripción
-                                </label>
-                                <textarea
-                                    class="form-control"
-                                    name="descripcion"
-                                    id="edit_descripcion"
-                                    rows="3"
-                                ></textarea>
-                            </div>
+                            <section class="class-form-section">
+                                <div class="class-section-title with-action">
+                                    <div class="d-flex align-items-center gap-2">
+                                        <span><i class="fas fa-calendar-days"></i></span>
+                                        <div><strong>Horarios semanales</strong><small>Puedes agregar más de una sesión por semana.</small></div>
+                                    </div>
+                                    <button type="button" class="btn-add-schedule" data-schedule-add="edit"><i class="fas fa-plus"></i> Agregar horario</button>
+                                </div>
+                                <div class="schedule-editor" id="editScheduleRows"></div>
+                                <div class="legacy-schedule-note d-none" id="editHorarioLegacy"></div>
+                            </section>
 
-                            <div class="mb-3">
-                                <label class="form-label">
-                                    Horario *
-                                </label>
-                                <input
-                                    type="text"
-                                    class="form-control"
-                                    name="horario"
-                                    id="edit_horario"
-                                    required
-                                >
-                            </div>
-
-                            <div class="mb-3">
-                                <label class="form-label">
-                                    Entrenador *
-                                </label>
-
-                                <select
-                                    class="form-select"
-                                    name="instructor_usuario_id"
-                                    id="edit_instructor_usuario_id"
-                                    required
-                                >
-                                    <option value="">
-                                        Seleccionar entrenador
-                                    </option>
-
-                                    <?php foreach ($entrenadores as $entrenador): ?>
-                                        <option value="<?php echo (int) $entrenador['id']; ?>">
-                                            <?php echo clases_h(
-                                                $entrenador['nombre']
-                                                . (
-                                                    trim((string) $entrenador['email']) !== ''
-                                                        ? ' · ' . $entrenador['email']
-                                                        : ''
-                                                )
-                                            ); ?>
-                                        </option>
-                                    <?php endforeach; ?>
-                                </select>
-
-                                <small
-                                    class="class-trainer-note d-none"
-                                    id="edit_instructor_legacy"
-                                ></small>
-                            </div>
-
-                            <div class="row">
-                                <div class="col-md-6 mb-3">
-                                    <label class="form-label">
-                                        Cupo máximo *
-                                    </label>
-                                    <input
-                                        type="number"
-                                        class="form-control"
-                                        name="cupo_maximo"
-                                        id="edit_cupo_maximo"
-                                        min="1"
-                                        required
-                                    >
+                            <section class="class-form-section">
+                                <div class="class-section-title">
+                                    <span><i class="fas fa-user-group"></i></span>
+                                    <div><strong>Entrenador</strong><small>Selecciona personal interno o un entrenador externo.</small></div>
                                 </div>
 
-                                <div class="col-md-6 mb-3">
-                                    <label class="form-label">
-                                        Duración (minutos) *
+                                <div class="trainer-type-grid" data-trainer-scope="edit">
+                                    <label class="trainer-type-option">
+                                        <input type="radio" name="instructor_tipo" value="interno" checked>
+                                        <span><i class="fas fa-user-shield"></i><strong>Del sistema</strong><small>Usuario entrenador asignado.</small></span>
                                     </label>
-                                    <input
-                                        type="number"
-                                        class="form-control"
-                                        name="duracion_minutos"
-                                        id="edit_duracion_minutos"
-                                        min="15"
-                                        step="15"
-                                        required
-                                    >
+                                    <label class="trainer-type-option">
+                                        <input type="radio" name="instructor_tipo" value="externo">
+                                        <span><i class="fas fa-user-plus"></i><strong>Externo</strong><small>Entrenador independiente.</small></span>
+                                    </label>
                                 </div>
-                            </div>
 
-                            <div class="mb-3">
-                                <label class="form-label">
-                                    Estado *
-                                </label>
-                                <select
-                                    class="form-select"
-                                    name="estado"
-                                    id="edit_estado"
-                                    required
-                                >
-                                    <option value="activa">
-                                        Activa
-                                    </option>
-                                    <option value="inactiva">
-                                        Inactiva
-                                    </option>
-                                </select>
-                            </div>
+                                <div class="trainer-panel" data-trainer-panel="edit-interno">
+                                    <label class="form-label">Entrenador del sistema *</label>
+                                    <select class="form-select" name="instructor_usuario_id" id="edit_instructor_usuario_id">
+                                        <option value="">Seleccionar entrenador</option>
+                                        <?php foreach ($entrenadores as $entrenador): ?>
+                                            <option value="<?php echo (int) $entrenador['id']; ?>"><?php echo clases_h($entrenador['nombre'] . (trim((string) $entrenador['email']) !== '' ? ' · ' . $entrenador['email'] : '')); ?></option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </div>
+
+                                <div class="trainer-panel d-none" data-trainer-panel="edit-externo">
+                                    <label class="form-label">Entrenador externo *</label>
+                                    <select class="form-select external-trainer-select" name="entrenador_externo_id" id="edit_entrenador_externo_id" data-scope="edit">
+                                        <option value="nuevo">Registrar un entrenador nuevo</option>
+                                        <?php foreach ($entrenadores_externos as $externo): ?>
+                                            <option value="<?php echo (int) $externo['id']; ?>"><?php echo clases_h($externo['nombre'] . (trim((string) $externo['telefono']) !== '' ? ' · ' . $externo['telefono'] : '')); ?></option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                    <div class="external-trainer-fields" data-external-fields="edit">
+                                        <div class="row g-3 mt-0">
+                                            <div class="col-md-6">
+                                                <label class="form-label">Nombre *</label>
+                                                <input type="text" class="form-control" name="entrenador_externo_nombre" maxlength="120">
+                                            </div>
+                                            <div class="col-md-6">
+                                                <label class="form-label">Número celular</label>
+                                                <input type="tel" class="form-control" name="entrenador_externo_telefono" maxlength="25">
+                                            </div>
+                                            <div class="col-12">
+                                                <label class="form-label">Correo electrónico</label>
+                                                <input type="email" class="form-control" name="entrenador_externo_email" maxlength="150">
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </section>
+
+                            <section class="class-form-section compact">
+                                <div class="row g-3">
+                                    <div class="col-md-4">
+                                        <label class="form-label">Cupo máximo *</label>
+                                        <input type="number" class="form-control" name="cupo_maximo" id="edit_cupo_maximo" min="1" max="10000" required>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">Estado *</label>
+                                        <select class="form-select" name="estado" id="edit_estado" required>
+                                            <option value="activa">Activa</option>
+                                            <option value="inactiva">Inactiva</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-4 class-duration-preview">
+                                        <label class="form-label">Duración calculada</label>
+                                        <div class="duration-box" data-duration-preview="edit"><i class="far fa-clock"></i> 60 minutos</div>
+                                    </div>
+                                </div>
+                            </section>
                         </div>
 
                         <div class="modal-footer">
-                            <button
-                                type="button"
-                                class="btn btn-secondary"
-                                data-bs-dismiss="modal"
-                            >
-                                Cancelar
-                            </button>
-                            <button
-                                type="submit"
-                                class="btn btn-primary"
-                            >
-                                Actualizar Clase
-                            </button>
+                            <button type="button" class="btn btn-light" data-bs-dismiss="modal"><i class="fas fa-xmark"></i> Cancelar</button>
+                            <button type="submit" class="btn btn-primary"><i class="fas fa-check"></i> Guardar cambios</button>
                         </div>
                     </form>
                 </div>
@@ -1419,143 +1582,269 @@ $baseQuery = [
 
     <script>
     (function () {
-        const vista = document.getElementById(
-            'vistaActual'
-        )?.value || 'sucursal';
+        const vista = document.getElementById('vistaActual')?.value || 'sucursal';
+        const dias = [
+            {value: '1', label: 'Lunes'},
+            {value: '2', label: 'Martes'},
+            {value: '3', label: 'Miércoles'},
+            {value: '4', label: 'Jueves'},
+            {value: '5', label: 'Viernes'},
+            {value: '6', label: 'Sábado'},
+            {value: '7', label: 'Domingo'}
+        ];
+
+        function escaparHtml(value) {
+            return String(value ?? '')
+                .replaceAll('&', '&amp;')
+                .replaceAll('<', '&lt;')
+                .replaceAll('>', '&gt;')
+                .replaceAll('"', '&quot;')
+                .replaceAll("'", '&#039;');
+        }
 
         function prepararTablaResponsive() {
-            const tabla = document.querySelector(
-                '.responsive-table'
-            );
+            const tabla = document.querySelector('.responsive-table');
+            if (!tabla) return;
 
-            if (!tabla) {
-                return;
-            }
+            const encabezados = Array.from(tabla.querySelectorAll('thead th'))
+                .map((th) => th.textContent.trim());
 
-            const encabezados = Array.from(
-                tabla.querySelectorAll('thead th')
-            ).map(function (th) {
-                return th.textContent.trim();
+            tabla.querySelectorAll('tbody tr').forEach((fila) => {
+                fila.querySelectorAll('td').forEach((celda, indice) => {
+                    if (!celda.hasAttribute('colspan')) {
+                        celda.setAttribute('data-label', encabezados[indice] || '');
+                    }
+                });
+            });
+        }
+
+        function irAFiltros() {
+            const params = new URLSearchParams({
+                vista: vista,
+                search: $('#searchInput').val().trim(),
+                estado: $('#estadoSelect').val()
+            });
+            window.location.href = 'clases.php?' + params.toString();
+        }
+
+        function opcionesDias(seleccionado) {
+            return dias.map((dia) => (
+                '<option value="' + dia.value + '"'
+                + (String(seleccionado) === dia.value ? ' selected' : '')
+                + '>' + dia.label + '</option>'
+            )).join('');
+        }
+
+        function crearFilaHorario(scope, horario = {}) {
+            const container = document.getElementById(scope + 'ScheduleRows');
+            if (!container) return;
+
+            const row = document.createElement('div');
+            row.className = 'schedule-row';
+            row.innerHTML = `
+                <div class="schedule-field schedule-day">
+                    <label>Día</label>
+                    <select class="form-select" name="horario_dia[]" required>
+                        ${opcionesDias(horario.dia_semana || '1')}
+                    </select>
+                </div>
+                <div class="schedule-field">
+                    <label>Inicio</label>
+                    <input type="time" class="form-control schedule-time" name="horario_inicio[]" value="${escaparHtml(horario.hora_inicio || '18:00')}" required>
+                </div>
+                <div class="schedule-field">
+                    <label>Fin</label>
+                    <input type="time" class="form-control schedule-time" name="horario_fin[]" value="${escaparHtml(horario.hora_fin || '19:00')}" required>
+                </div>
+                <button type="button" class="schedule-remove" title="Quitar horario" aria-label="Quitar horario">
+                    <i class="fas fa-trash"></i>
+                </button>
+            `;
+
+            row.querySelector('.schedule-remove').addEventListener('click', () => {
+                if (container.querySelectorAll('.schedule-row').length <= 1) {
+                    Swal.fire({
+                        icon: 'info',
+                        title: 'Se requiere un horario',
+                        text: 'La clase debe conservar al menos un día y una hora.',
+                        confirmButtonColor: '#1e3a8a'
+                    });
+                    return;
+                }
+                row.remove();
+                actualizarDuracion(scope);
             });
 
-            tabla.querySelectorAll('tbody tr').forEach(
-                function (fila) {
-                    fila.querySelectorAll('td').forEach(
-                        function (celda, indice) {
-                            if (!celda.hasAttribute('colspan')) {
-                                celda.setAttribute(
-                                    'data-label',
-                                    encabezados[indice] || ''
-                                );
-                            }
-                        }
-                    );
+            row.querySelectorAll('.schedule-time').forEach((input) => {
+                input.addEventListener('change', () => actualizarDuracion(scope));
+            });
+
+            container.appendChild(row);
+            actualizarDuracion(scope);
+        }
+
+        function minutos(hora) {
+            if (!/^\d{2}:\d{2}$/.test(hora || '')) return null;
+            const [h, m] = hora.split(':').map(Number);
+            return (h * 60) + m;
+        }
+
+        function actualizarDuracion(scope) {
+            const row = document.querySelector('#' + scope + 'ScheduleRows .schedule-row');
+            const preview = document.querySelector('[data-duration-preview="' + scope + '"]');
+            if (!row || !preview) return;
+
+            const inicio = minutos(row.querySelector('[name="horario_inicio[]"]')?.value);
+            const fin = minutos(row.querySelector('[name="horario_fin[]"]')?.value);
+            const duracion = inicio !== null && fin !== null && fin > inicio ? fin - inicio : 0;
+            preview.innerHTML = '<i class="far fa-clock"></i> ' + (duracion > 0 ? duracion + ' minutos' : 'Por calcular');
+        }
+
+        function cambiarTipoEntrenador(scope, tipo) {
+            const interno = document.querySelector('[data-trainer-panel="' + scope + '-interno"]');
+            const externo = document.querySelector('[data-trainer-panel="' + scope + '-externo"]');
+            if (!interno || !externo) return;
+
+            interno.classList.toggle('d-none', tipo !== 'interno');
+            externo.classList.toggle('d-none', tipo !== 'externo');
+
+            const selectInterno = interno.querySelector('select[name="instructor_usuario_id"]');
+            if (selectInterno) selectInterno.required = tipo === 'interno';
+
+            actualizarCamposExternos(scope);
+        }
+
+        function actualizarCamposExternos(scope) {
+            const panel = document.querySelector('[data-trainer-panel="' + scope + '-externo"]');
+            const fields = document.querySelector('[data-external-fields="' + scope + '"]');
+            const select = panel?.querySelector('.external-trainer-select');
+            if (!panel || !fields || !select) return;
+
+            const tipo = document.querySelector('[data-trainer-scope="' + scope + '"] input[name="instructor_tipo"]:checked')?.value;
+            const registrarNuevo = tipo === 'externo' && select.value === 'nuevo';
+            fields.classList.toggle('d-none', !registrarNuevo);
+
+            const nombre = fields.querySelector('input[name="entrenador_externo_nombre"]');
+            if (nombre) nombre.required = registrarNuevo;
+        }
+
+        function validarFormulario(form, scope) {
+            const rows = form.querySelectorAll('.schedule-row');
+            if (!rows.length) return 'Agrega al menos un horario.';
+
+            let duracionBase = null;
+            const rangos = {};
+
+            for (const row of rows) {
+                const dia = row.querySelector('[name="horario_dia[]"]')?.value;
+                const inicio = minutos(row.querySelector('[name="horario_inicio[]"]')?.value);
+                const fin = minutos(row.querySelector('[name="horario_fin[]"]')?.value);
+
+                if (!dia || inicio === null || fin === null || fin <= inicio) {
+                    return 'Revisa las horas de inicio y término.';
                 }
-            );
+
+                const duracion = fin - inicio;
+                if (duracionBase === null) duracionBase = duracion;
+                if (duracion !== duracionBase) {
+                    return 'Todos los horarios deben conservar la misma duración.';
+                }
+
+                rangos[dia] = rangos[dia] || [];
+                if (rangos[dia].some((rango) => inicio < rango.fin && fin > rango.inicio)) {
+                    return 'Hay horarios traslapados para el mismo día.';
+                }
+                rangos[dia].push({inicio, fin});
+            }
+
+            const tipo = form.querySelector('input[name="instructor_tipo"]:checked')?.value;
+            if (tipo === 'interno' && !form.querySelector('select[name="instructor_usuario_id"]')?.value) {
+                return 'Selecciona un entrenador del sistema.';
+            }
+
+            if (tipo === 'externo') {
+                const select = form.querySelector('select[name="entrenador_externo_id"]');
+                const nombre = form.querySelector('input[name="entrenador_externo_nombre"]');
+                if (select?.value === 'nuevo' && !nombre?.value.trim()) {
+                    return 'Escribe el nombre del entrenador externo.';
+                }
+            }
+
+            actualizarDuracion(scope);
+            return '';
         }
 
         prepararTablaResponsive();
+        crearFilaHorario('new');
 
-        function irAFiltros() {
-            const search =
-                $('#searchInput').val().trim();
-            const estado =
-                $('#estadoSelect').val();
+        document.querySelectorAll('[data-schedule-add]').forEach((button) => {
+            button.addEventListener('click', () => crearFilaHorario(button.dataset.scheduleAdd));
+        });
 
-            const params = new URLSearchParams({
-                vista: vista,
-                search: search,
-                estado: estado
+        document.querySelectorAll('[data-trainer-scope]').forEach((group) => {
+            const scope = group.dataset.trainerScope;
+            group.querySelectorAll('input[name="instructor_tipo"]').forEach((radio) => {
+                radio.addEventListener('change', () => cambiarTipoEntrenador(scope, radio.value));
             });
+        });
 
-            window.location.href =
-                'clases.php?' + params.toString();
-        }
+        document.querySelectorAll('.external-trainer-select').forEach((select) => {
+            select.addEventListener('change', () => actualizarCamposExternos(select.dataset.scope));
+        });
+
+        cambiarTipoEntrenador('new', 'interno');
+        cambiarTipoEntrenador('edit', 'interno');
 
         let timeoutBusqueda;
-
         $('#searchInput').on('input', function () {
             clearTimeout(timeoutBusqueda);
-
-            timeoutBusqueda = setTimeout(
-                irAFiltros,
-                500
-            );
+            timeoutBusqueda = setTimeout(irAFiltros, 500);
+        });
+        $('#estadoSelect').on('change', irAFiltros);
+        $('#limpiarFiltros').on('click', function () {
+            window.location.href = 'clases.php?vista=' + encodeURIComponent(vista);
         });
 
-        $('#estadoSelect').on(
-            'change',
-            irAFiltros
-        );
+        $('#formNuevaClase, #formEditarClase').on('submit', function (event) {
+            const scope = this.id === 'formNuevaClase' ? 'new' : 'edit';
+            const mensaje = validarFormulario(this, scope);
 
-        $('#limpiarFiltros').on(
-            'click',
-            function () {
-                window.location.href =
-                    'clases.php?vista='
-                    + encodeURIComponent(vista);
+            if (mensaje) {
+                event.preventDefault();
+                Swal.fire({
+                    icon: 'warning',
+                    title: 'Revisa la información',
+                    text: mensaje,
+                    confirmButtonColor: '#1e3a8a'
+                });
+                return false;
             }
-        );
 
-        $('#formNuevaClase, #formEditarClase').on(
-            'submit',
-            function () {
-                const $btn = $(this).find(
-                    'button[type="submit"]'
-                );
+            const $btn = $(this).find('button[type="submit"]');
+            if ($btn.data('submitted') === true) return false;
 
-                if ($btn.data('submitted') === true) {
-                    return false;
-                }
-
-                $btn.data('submitted', true);
-                $btn.prop('disabled', true).html(
-                    '<i class="fas fa-spinner fa-spin"></i> Procesando...'
-                );
-
-                return true;
-            }
-        );
+            $btn.data('submitted', true);
+            $btn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> Guardando...');
+            return true;
+        });
 
         $('button[type="submit"]').each(function () {
-            $(this).data(
-                'original-text',
-                $(this).html()
-            );
+            $(this).data('original-text', $(this).html());
         });
 
-        $('#modalNuevaClase, #modalEditarClase').on(
-            'hidden.bs.modal',
-            function () {
-                const $btn = $(this).find(
-                    'button[type="submit"]'
-                );
+        $('#modalNuevaClase, #modalEditarClase').on('hidden.bs.modal', function () {
+            const $btn = $(this).find('button[type="submit"]');
+            $btn.prop('disabled', false).html($btn.data('original-text') || 'Guardar');
+            $btn.removeData('submitted');
+        });
 
-                $btn.prop('disabled', false).html(
-                    $btn.data('original-text')
-                    || 'Guardar'
-                );
-
-                $btn.removeData('submitted');
-
-                const form = $(this).find('form')[0];
-
-                if (form) {
-                    form.reset();
-                }
-            }
-        );
-
-        window.mostrarSinEntrenadores = function () {
-            Swal.fire({
-                icon: 'warning',
-                title: 'No hay entrenadores disponibles',
-                text:
-                    'Asigna un entrenador a esta sucursal antes de registrar o editar una clase.',
-                confirmButtonText: 'Entendido',
-                confirmButtonColor: '#1e3a8a'
-            });
-        };
+        $('#modalNuevaClase').on('hidden.bs.modal', function () {
+            const form = document.getElementById('formNuevaClase');
+            form?.reset();
+            document.getElementById('newScheduleRows').innerHTML = '';
+            crearFilaHorario('new');
+            cambiarTipoEntrenador('new', 'interno');
+        });
 
         window.editarClase = function (id) {
             $.ajax({
@@ -1565,86 +1854,57 @@ $baseQuery = [
                 dataType: 'json',
                 success: function (data) {
                     if (!data.success) {
-                        Swal.fire(
-                            'Clase no disponible',
-                            data.message
-                            || 'No se pudo obtener la clase.',
-                            'error'
-                        );
+                        Swal.fire('Clase no disponible', data.message || 'No se pudo obtener la clase.', 'error');
                         return;
                     }
 
                     $('#edit_clase_id').val(data.id);
                     $('#edit_nombre').val(data.nombre);
-                    $('#edit_descripcion').val(
-                        data.descripcion
-                    );
-                    $('#edit_horario').val(data.horario);
-                    const entrenadorId = String(
-                        data.instructor_usuario_id || ''
-                    );
-
-                    $('#edit_instructor_usuario_id').val(
-                        entrenadorId
-                    );
-
-                    const $notaInstructor =
-                        $('#edit_instructor_legacy');
-
-                    if (entrenadorId === '') {
-                        $notaInstructor
-                            .removeClass('d-none')
-                            .text(
-                                'Instructor guardado anteriormente: '
-                                + (data.instructor || 'Sin identificar')
-                                + '. Selecciona un entrenador activo de la sucursal.'
-                            );
-                    } else {
-                        $notaInstructor
-                            .addClass('d-none')
-                            .text('');
-                    }
-
-                    $('#edit_cupo_maximo').val(
-                        data.cupo_maximo
-                    );
-                    $('#edit_duracion_minutos').val(
-                        data.duracion_minutos
-                    );
+                    $('#edit_descripcion').val(data.descripcion || '');
+                    $('#edit_precio_clase').val(Number(data.precio_clase || 0).toFixed(2));
+                    $('#edit_cupo_maximo').val(data.cupo_maximo);
                     $('#edit_estado').val(data.estado);
 
-                    const modal = bootstrap.Modal
-                        .getOrCreateInstance(
-                            document.getElementById(
-                                'modalEditarClase'
-                            )
-                        );
+                    const scope = 'edit';
+                    const tipo = data.instructor_tipo === 'externo' ? 'externo' : 'interno';
+                    const radio = document.querySelector('[data-trainer-scope="edit"] input[value="' + tipo + '"]');
+                    if (radio) radio.checked = true;
+                    cambiarTipoEntrenador(scope, tipo);
 
-                    modal.show();
+                    $('#edit_instructor_usuario_id').val(String(data.instructor_usuario_id || ''));
+                    $('#edit_entrenador_externo_id').val(String(data.entrenador_externo_id || 'nuevo'));
+                    actualizarCamposExternos('edit');
+
+                    const container = document.getElementById('editScheduleRows');
+                    container.innerHTML = '';
+                    const horarios = Array.isArray(data.horarios) ? data.horarios : [];
+
+                    if (horarios.length) {
+                        horarios.forEach((horario) => crearFilaHorario('edit', horario));
+                        $('#editHorarioLegacy').addClass('d-none').text('');
+                    } else {
+                        crearFilaHorario('edit');
+                        $('#editHorarioLegacy')
+                            .removeClass('d-none')
+                            .text('Horario anterior: ' + (data.horario || 'Sin horario estructurado') + '. Define el nuevo horario antes de guardar.');
+                    }
+
+                    bootstrap.Modal.getOrCreateInstance(document.getElementById('modalEditarClase')).show();
                 },
-                error: function () {
+                error: function (xhr) {
                     Swal.fire(
                         'Error',
-                        'Error al cargar los datos de la clase.',
+                        xhr.responseJSON?.message || 'Error al cargar los datos de la clase.',
                         'error'
                     );
                 }
             });
         };
 
-        window.eliminarClase = function (
-            id,
-            nombre
-        ) {
+        window.eliminarClase = function (id, nombre) {
             Swal.fire({
                 title: '¿Eliminar clase?',
-                html:
-                    '¿Deseas eliminar "<strong>'
-                    + nombre
-                    + '</strong>"?<br>'
-                    + '<small class="text-danger">'
-                    + 'Esta acción no se puede deshacer.'
-                    + '</small>',
+                html: '¿Deseas eliminar <strong>' + escaparHtml(nombre) + '</strong>?<br><small class="text-danger">Esta acción no se puede deshacer.</small>',
                 icon: 'warning',
                 showCancelButton: true,
                 confirmButtonColor: '#dc2626',
@@ -1652,17 +1912,9 @@ $baseQuery = [
                 confirmButtonText: 'Sí, eliminar',
                 cancelButtonText: 'Cancelar'
             }).then(function (result) {
-                if (!result.isConfirmed) {
-                    return;
-                }
-
-                const params = new URLSearchParams({
-                    vista: vista,
-                    eliminar: String(id)
-                });
-
-                window.location.href =
-                    'clases.php?' + params.toString();
+                if (!result.isConfirmed) return;
+                const params = new URLSearchParams({vista: vista, eliminar: String(id)});
+                window.location.href = 'clases.php?' + params.toString();
             });
         };
     })();

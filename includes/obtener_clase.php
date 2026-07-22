@@ -3,90 +3,85 @@ declare(strict_types=1);
 
 session_start();
 
-header(
-    'Content-Type: application/json; charset=utf-8'
-);
+header('Content-Type: application/json; charset=utf-8');
 
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/clases_context.php';
 
-function obtenerClaseResponder(
+function responder_clase(
     bool $success,
-    string $message,
-    array $extra = [],
-    int $http = 200
-): void {
-    http_response_code($http);
+    array $data = [],
+    int $status = 200
+): never {
+    http_response_code($status);
 
     echo json_encode(
-        array_merge(
-            [
-                'success' => $success,
-                'message' => $message,
-            ],
-            $extra
-        ),
+        array_merge(['success' => $success], $data),
         JSON_UNESCAPED_UNICODE
         | JSON_UNESCAPED_SLASHES
+        | JSON_HEX_TAG
+        | JSON_HEX_AMP
+        | JSON_HEX_APOS
+        | JSON_HEX_QUOT
     );
-
     exit;
 }
 
-if (empty($_SESSION['user_id'])) {
-    obtenerClaseResponder(
-        false,
-        'No autorizado.',
-        [],
-        401
-    );
-}
-
-if (
-    $_SERVER['REQUEST_METHOD'] !== 'POST'
-    || empty($_POST['id'])
-) {
-    obtenerClaseResponder(
-        false,
-        'Solicitud inválida.',
-        [],
-        400
-    );
-}
-
-$database = new Database();
-$conn = $database->getConnection();
-
-if (!$conn instanceof mysqli) {
-    obtenerClaseResponder(
-        false,
-        'No fue posible conectar con la base de datos.',
-        [],
-        500
-    );
-}
-
-$conn->set_charset('utf8mb4');
-
 try {
+    if (empty($_SESSION['user_id'])) {
+        responder_clase(
+            false,
+            ['message' => 'La sesión ha expirado.'],
+            401
+        );
+    }
+
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+        responder_clase(
+            false,
+            ['message' => 'Método no permitido.'],
+            405
+        );
+    }
+
+    $claseId = (int) ($_POST['id'] ?? 0);
+
+    if ($claseId <= 0) {
+        responder_clase(
+            false,
+            ['message' => 'La clase seleccionada no es válida.'],
+            422
+        );
+    }
+
+    $database = new Database();
+    $conn = $database->getConnection();
+
+    if (!$conn instanceof mysqli) {
+        throw new RuntimeException(
+            'No fue posible establecer la conexión con la base de datos.'
+        );
+    }
+
+    $conn->set_charset('utf8mb4');
+
     $contexto = clases_contexto(
         $conn,
         (int) $_SESSION['user_id']
     );
-
-    $sucursalId = clases_exigir_sucursal(
-        $contexto
-    );
-
-    $claseId = (int) $_POST['id'];
+    $sucursalId = clases_exigir_sucursal($contexto);
 
     $stmt = $conn->prepare(
         "SELECT
             id,
             nombre,
             descripcion,
+            precio_clase,
             horario,
             instructor,
+            instructor_tipo,
+            instructor_usuario_id,
+            entrenador_externo_id,
             cupo_maximo,
             cupo_actual,
             duracion_minutos,
@@ -96,65 +91,81 @@ try {
            AND sucursal_id = ?
          LIMIT 1"
     );
-
-    $stmt->bind_param(
-        'ii',
-        $claseId,
-        $sucursalId
-    );
-
+    $stmt->bind_param('ii', $claseId, $sucursalId);
     $stmt->execute();
-
-    $row = $stmt
-        ->get_result()
-        ->fetch_assoc();
-
+    $clase = $stmt->get_result()->fetch_assoc();
     $stmt->close();
 
-    if (!$row) {
-        throw new RuntimeException(
-            'La clase no existe en la sucursal seleccionada.'
+    if (!$clase) {
+        responder_clase(
+            false,
+            ['message' => 'La clase no pertenece a la sucursal seleccionada.'],
+            404
         );
     }
 
-    $entrenadorActual =
-        clases_buscar_entrenador_por_nombre(
-            $conn,
-            $sucursalId,
-            (string) $row['instructor']
-        );
+    $stmtHorarios = $conn->prepare(
+        "SELECT
+            dia_semana,
+            TIME_FORMAT(hora_inicio, '%H:%i') AS hora_inicio,
+            TIME_FORMAT(hora_fin, '%H:%i') AS hora_fin
+         FROM clases_horarios
+         WHERE clase_id = ?
+           AND estado = 'activo'
+         ORDER BY dia_semana ASC, hora_inicio ASC"
+    );
+    $stmtHorarios->bind_param('i', $claseId);
+    $stmtHorarios->execute();
+    $horarios = $stmtHorarios
+        ->get_result()
+        ->fetch_all(MYSQLI_ASSOC);
+    $stmtHorarios->close();
 
-    obtenerClaseResponder(
+    responder_clase(
         true,
-        'Clase encontrada.',
         [
-            'id' => (int) $row['id'],
-            'nombre' => (string) $row['nombre'],
-            'descripcion' =>
-                (string) $row['descripcion'],
-            'horario' =>
-                (string) $row['horario'],
-            'instructor' =>
-                (string) $row['instructor'],
-            'instructor_usuario_id' =>
-                $entrenadorActual
-                    ? (int) $entrenadorActual['id']
-                    : null,
-            'cupo_maximo' =>
-                (int) $row['cupo_maximo'],
-            'cupo_actual' =>
-                (int) $row['cupo_actual'],
-            'duracion_minutos' =>
-                (int) $row['duracion_minutos'],
-            'estado' =>
-                (string) $row['estado'],
+            'id' => (int) $clase['id'],
+            'nombre' => (string) $clase['nombre'],
+            'descripcion' => (string) ($clase['descripcion'] ?? ''),
+            'precio_clase' => number_format(
+                (float) $clase['precio_clase'],
+                2,
+                '.',
+                ''
+            ),
+            'horario' => (string) ($clase['horario'] ?? ''),
+            'horarios' => array_map(
+                static fn (array $horario): array => [
+                    'dia_semana' => (int) $horario['dia_semana'],
+                    'hora_inicio' => (string) $horario['hora_inicio'],
+                    'hora_fin' => (string) $horario['hora_fin'],
+                ],
+                $horarios
+            ),
+            'instructor' => (string) $clase['instructor'],
+            'instructor_tipo' => in_array(
+                $clase['instructor_tipo'],
+                ['interno', 'externo'],
+                true
+            )
+                ? (string) $clase['instructor_tipo']
+                : 'interno',
+            'instructor_usuario_id' => $clase['instructor_usuario_id'] !== null
+                ? (int) $clase['instructor_usuario_id']
+                : null,
+            'entrenador_externo_id' => $clase['entrenador_externo_id'] !== null
+                ? (int) $clase['entrenador_externo_id']
+                : null,
+            'cupo_maximo' => (int) $clase['cupo_maximo'],
+            'cupo_actual' => (int) $clase['cupo_actual'],
+            'duracion_minutos' => (int) $clase['duracion_minutos'],
+            'estado' => (string) $clase['estado'],
         ]
     );
 } catch (Throwable $error) {
-    obtenerClaseResponder(
+    responder_clase(
         false,
-        $error->getMessage(),
-        [],
-        409
+        ['message' => $error->getMessage()],
+        500
     );
 }
