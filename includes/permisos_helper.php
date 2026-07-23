@@ -164,6 +164,15 @@ if (!function_exists('permisos_catalogo_base')) {
                 'tipo_acceso' => 'solo_admin',
                 'orden' => 140,
             ],
+            'servicio_plataforma' => [
+                'nombre' => 'Servicio de plataforma',
+                'descripcion' => 'Vigencia, renovaciones y precio del servicio contratado.',
+                'ruta' => 'servicio_plataforma.php',
+                'grupo' => 'Administración',
+                'icono' => 'fa-calendar-check',
+                'tipo_acceso' => 'solo_admin',
+                'orden' => 145,
+            ],
             'permisos_roles' => [
                 'nombre' => 'Control de acceso',
                 'descripcion' => 'Módulos disponibles para cada rol y sucursal.',
@@ -238,6 +247,7 @@ if (!function_exists('permisos_modulo_por_pagina')) {
             'sucursales.php' => 'sucursales',
             'configuracion.php' => 'configuracion',
             'permisos_roles.php' => 'permisos_roles',
+            'servicio_plataforma.php' => 'servicio_plataforma',
             'legal.php' => 'legal',
             'mi_perfil.php' => 'mi_perfil',
         ];

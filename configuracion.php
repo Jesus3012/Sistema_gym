@@ -1523,6 +1523,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ));
             $estado = (string) ($_POST['estado'] ?? 'activo');
 
+            /*
+             * Las cuentas superadministradoras permanecen protegidas.
+             * Desde este catálogo únicamente se crean administradores,
+             * recepcionistas y entrenadores.
+             */
             if ($id > 0) {
                 $cuentaProtegida = configuracion_fila(
                     $conn,
@@ -1540,8 +1545,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     )) === 'super_administrador'
                 ) {
                     throw new RuntimeException(
-                        'Las cuentas superadministradoras son globales y '
-                        . 'no se editan desde este catálogo.'
+                        'Las cuentas superadministradoras están protegidas '
+                        . 'y no se administran desde este catálogo.'
                     );
                 }
             }
@@ -1561,41 +1566,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'entrenador'
             );
 
-            if ($esSuperAdministradorActual) {
-                $rolesPermitidos[] = 'super_administrador';
-            }
-
             if (!in_array($rol, $rolesPermitidos, true)) {
                 throw new RuntimeException(
                     'El rol seleccionado no es válido.'
                 );
             }
 
-            if ($rol === 'super_administrador') {
-                if (!$esSuperAdministradorActual) {
-                    throw new RuntimeException(
-                        'Solo un superadministrador puede crear otra '
-                        . 'cuenta superadministradora.'
-                    );
-                }
-
-                if (!$vistaGlobalConfiguracion) {
-                    throw new RuntimeException(
-                        'El superadministrador debe crearse desde '
-                        . 'Todas las sucursales.'
-                    );
-                }
-
-                /*
-                 * Un superadministrador siempre queda activo y su rol
-                 * operativo por sucursal es "admin".
-                 */
-                $estado = 'activo';
-            } elseif (!in_array(
+            if (!in_array(
                 $estado,
                 array('activo', 'inactivo'),
                 true
             )) {
+                $estado = 'activo';
+            }
+
+            /*
+             * En la vista Todas las sucursales el alta nueva es
+             * exclusivamente para un Administrador global. Solo una cuenta
+             * superadministradora puede realizar esta operación.
+             */
+            if ($vistaGlobalConfiguracion && $id === 0) {
+                if (!$esSuperAdministradorActual) {
+                    throw new RuntimeException(
+                        'Solo un superadministrador puede crear un '
+                        . 'administrador para todas las sucursales.'
+                    );
+                }
+
+                if ($rol !== 'admin') {
+                    throw new RuntimeException(
+                        'Desde Todas las sucursales únicamente se puede '
+                        . 'crear un Administrador.'
+                    );
+                }
+
                 $estado = 'activo';
             }
 
@@ -1797,19 +1801,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             );
 
             /*
-             * El alta global se reserva para superadministradores.
-             * La cuenta queda relacionada con todas las sucursales activas
-             * usando "admin" como rol operativo.
+             * Alta de Administrador global:
+             * - usuarios.rol = admin
+             * - rol_sucursal = admin
+             * - acceso a todas las sucursales activas
+             * - la matriz queda como sede principal
              */
             if ($vistaGlobalConfiguracion) {
-                if ($rol !== 'super_administrador') {
-                    throw new RuntimeException(
-                        'Desde Todas las sucursales únicamente puedes '
-                        . 'crear un superadministrador. Para otro rol, '
-                        . 'selecciona primero una sucursal.'
-                    );
-                }
-
                 $sucursalPrincipal = configuracion_fila(
                     $conn,
                     "SELECT id
@@ -1826,7 +1824,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($sucursalPrincipalId <= 0) {
                     throw new RuntimeException(
                         'No existe una sucursal activa para asignar '
-                        . 'al nuevo superadministrador.'
+                        . 'al nuevo administrador.'
                     );
                 }
 
@@ -1848,7 +1846,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             ?,
                             ?,
                             ?,
-                            'super_administrador',
+                            'admin',
                             'activo',
                             1
                          )",
@@ -1882,19 +1880,49 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         array($id, $sucursalPrincipalId)
                     );
 
-                    $sedesAsignadas = (int) $conn->affected_rows;
+                    /*
+                     * configuracion_ejecutar() cierra el statement antes de
+                     * regresar. Por eso $conn->affected_rows puede volver a
+                     * cero aunque el INSERT ... SELECT sí haya funcionado.
+                     * La verificación correcta se hace consultando las
+                     * relaciones guardadas dentro de la misma transacción.
+                     */
+                    $sedesEsperadas = configuracion_contar(
+                        $conn,
+                        "SELECT COUNT(*) AS total
+                         FROM sucursales
+                         WHERE estado = 'activa'"
+                    );
 
-                    if ($sedesAsignadas <= 0) {
+                    $sedesAsignadas = configuracion_contar(
+                        $conn,
+                        "SELECT COUNT(*) AS total
+                         FROM usuarios_sucursales
+                         WHERE usuario_id = ?
+                           AND rol_sucursal = 'admin'
+                           AND estado = 'activo'",
+                        'i',
+                        array($id)
+                    );
+
+                    if (
+                        $sedesEsperadas <= 0
+                        || $sedesAsignadas !== $sedesEsperadas
+                    ) {
                         throw new RuntimeException(
-                            'No fue posible asignar las sucursales '
-                            . 'al nuevo superadministrador.'
+                            'No fue posible completar la asignación global. '
+                            . 'Se esperaban '
+                            . $sedesEsperadas
+                            . ' sucursal(es) y se registraron '
+                            . $sedesAsignadas
+                            . '.'
                         );
                     }
 
                     $conn->commit();
-                } catch (Throwable $errorNuevoSuperAdministrador) {
+                } catch (Throwable $errorNuevoAdministrador) {
                     $conn->rollback();
-                    throw $errorNuevoSuperAdministrador;
+                    throw $errorNuevoAdministrador;
                 }
 
                 $correo = enviarCredencialesAcceso(
@@ -1902,13 +1930,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $nombre,
                     $email,
                     $passwordTemporal,
-                    'super_administrador'
+                    'admin'
                 );
 
                 configuracion_json(array(
                     'success' => true,
                     'usuario_nuevo' => true,
-                    'super_administrador' => true,
+                    'administrador_global' => true,
                     'sedes_asignadas' => $sedesAsignadas,
                     'correo_enviado' => $correo['enviado'],
                     'correo_error' => $correo['error'],
@@ -1916,15 +1944,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         ? ''
                         : $passwordTemporal,
                     'message' => $correo['enviado']
-                        ? 'Superadministrador creado y asignado a '
+                        ? 'Administrador creado y asignado a '
                             . $sedesAsignadas
                             . ' sucursal(es). Las credenciales fueron enviadas.'
-                        : 'Superadministrador creado y asignado a '
+                        : 'Administrador creado y asignado a '
                             . $sedesAsignadas
                             . ' sucursal(es), pero el correo no pudo enviarse.'
                 ));
             }
 
+            /* Alta local para recepcionistas, entrenadores o administradores. */
             $conn->begin_transaction();
 
             try {
@@ -2693,4 +2722,709 @@ $configuracionVista = array(
  */
 define('CONFIGURACION_MODULO_CARGADO', true);
 
+/*
+ * La interfaz continúa separada en configuracion_vista.php. Este módulo
+ * únicamente ajusta el botón de alta cuando el superadministrador está
+ * dentro de Todas las sucursales > Usuarios.
+ */
+ob_start();
 require __DIR__ . '/includes/configuracion_vista.php';
+$contenidoVistaConfiguracion = (string) ob_get_clean();
+
+if (
+    $vistaGlobalConfiguracion
+    && $esSuperAdministradorActual
+    && $seccion === 'usuarios'
+) {
+    $botonAdministradorGlobal = <<<'HTML'
+<button
+    type="button"
+    class="btn btn-primary btn-sm"
+    id="btnNuevoAdministradorGlobal"
+    onclick="abrirAltaAdministradorGlobal()"
+>
+    <i class="fas fa-user-shield"></i>
+    Nuevo administrador
+</button>
+HTML;
+
+    $patronAvisoAlta = '#<span\s+class="config-action-hint">\s*'
+        . '<i\s+class="fas\s+fa-location-dot"></i>\s*'
+        . 'Elige una sucursal para crear y asignar\s*'
+        . '</span>#u';
+
+    $contenidoVistaConfiguracion = (string) preg_replace(
+        $patronAvisoAlta,
+        $botonAdministradorGlobal,
+        $contenidoVistaConfiguracion,
+        1
+    );
+
+    $scriptAdministradorGlobal = <<<'HTML'
+<script>
+(function () {
+    'use strict';
+
+    function obtenerModal(modalId) {
+        if (!modalId) {
+            return null;
+        }
+
+        return document.getElementById(String(modalId));
+    }
+
+    function existenModalesAbiertos() {
+        return document.querySelector('.modal.active') !== null;
+    }
+
+    function actualizarBloqueoPagina() {
+        document.body.classList.toggle(
+            'modal-open',
+            existenModalesAbiertos()
+        );
+    }
+
+    function limpiarFormularioModal(modal) {
+        if (!modal) {
+            return;
+        }
+
+        const formulario = modal.querySelector('form');
+
+        if (formulario && typeof formulario.reset === 'function') {
+            formulario.reset();
+        }
+
+        const campoId = modal.querySelector('input[name="id"]');
+
+        if (campoId) {
+            campoId.value = '';
+        }
+    }
+
+    function obtenerAlertasPorId(alertaId) {
+        return Array.prototype.filter.call(
+            document.querySelectorAll('[data-alerta-id]'),
+            function (alerta) {
+                return String(alerta.getAttribute('data-alerta-id'))
+                    === String(alertaId);
+            }
+        );
+    }
+
+    function textoBotonAlerta(alertaId) {
+        switch (String(alertaId)) {
+            case 'info_gimnasio':
+                return {
+                    texto: 'Ver consejo',
+                    icono: 'fa-lightbulb'
+                };
+            case 'usuario_info':
+                return {
+                    texto: 'Más información',
+                    icono: 'fa-circle-info'
+                };
+            case 'admin_global':
+                return {
+                    texto: 'Ver alcance global',
+                    icono: 'fa-building'
+                };
+            case 'logo_info':
+                return {
+                    texto: 'Mostrar recomendaciones',
+                    icono: 'fa-image'
+                };
+            default:
+                return {
+                    texto: 'Mostrar información',
+                    icono: 'fa-eye'
+                };
+        }
+    }
+
+    function crearBotonMostrarAlerta(alerta, alertaId) {
+        if (!alerta || !alerta.parentNode) {
+            return;
+        }
+
+        const siguiente = alerta.nextElementSibling;
+
+        if (
+            siguiente
+            && siguiente.classList.contains('alert-boton-container')
+        ) {
+            return;
+        }
+
+        const datos = textoBotonAlerta(alertaId);
+        const contenedor = document.createElement('div');
+        const boton = document.createElement('button');
+
+        contenedor.className = 'alert-boton-container';
+        contenedor.setAttribute('data-alerta-boton', String(alertaId));
+
+        boton.type = 'button';
+        boton.className = 'btn-mostrar-alerta';
+        boton.innerHTML =
+            '<i class="fas ' + datos.icono + '"></i> ' +
+            datos.texto;
+
+        boton.addEventListener('click', function () {
+            window.mostrarAlertaEspecifica(alertaId);
+        });
+
+        contenedor.appendChild(boton);
+        alerta.parentNode.insertBefore(
+            contenedor,
+            alerta.nextSibling
+        );
+    }
+
+    function guardarEstadoAlerta(alertaId, oculto) {
+        try {
+            if (oculto) {
+                window.localStorage.setItem(
+                    'alerta_oculta_' + alertaId,
+                    'true'
+                );
+            } else {
+                window.localStorage.removeItem(
+                    'alerta_oculta_' + alertaId
+                );
+            }
+        } catch (error) {
+            // El módulo sigue funcionando aunque el navegador bloquee storage.
+        }
+    }
+
+    function alertaEstaGuardadaComoOculta(alertaId) {
+        try {
+            return window.localStorage.getItem(
+                'alerta_oculta_' + alertaId
+            ) === 'true';
+        } catch (error) {
+            return false;
+        }
+    }
+
+    window.ocultarAlerta = function (alertaId) {
+        obtenerAlertasPorId(alertaId).forEach(function (alerta) {
+            alerta.classList.add('oculto');
+            crearBotonMostrarAlerta(alerta, alertaId);
+        });
+
+        guardarEstadoAlerta(alertaId, true);
+    };
+
+    window.mostrarAlertaEspecifica = function (alertaId) {
+        obtenerAlertasPorId(alertaId).forEach(function (alerta) {
+            alerta.classList.remove('oculto');
+
+            const siguiente = alerta.nextElementSibling;
+
+            if (
+                siguiente
+                && siguiente.classList.contains('alert-boton-container')
+            ) {
+                siguiente.remove();
+            }
+        });
+
+        guardarEstadoAlerta(alertaId, false);
+    };
+
+    function aplicarEstadoGuardadoAlerta(alerta) {
+        if (!alerta) {
+            return;
+        }
+
+        const alertaId = alerta.getAttribute('data-alerta-id');
+
+        if (alertaId && alertaEstaGuardadaComoOculta(alertaId)) {
+            alerta.classList.add('oculto');
+            crearBotonMostrarAlerta(alerta, alertaId);
+        }
+    }
+
+    /*
+     * Se definen controles propios sin depender de jQuery ni del script
+     * anterior de la vista. De esta forma los botones Cerrar y Cancelar
+     * siguen funcionando incluso si otro bloque JavaScript presenta un
+     * error antes de inicializar sus eventos.
+     */
+    window.abrirModal = function (modalId) {
+        const modal = obtenerModal(modalId);
+
+        if (!modal) {
+            return;
+        }
+
+        modal.classList.add('active');
+        modal.setAttribute('aria-hidden', 'false');
+        actualizarBloqueoPagina();
+    };
+
+    window.cerrarModal = function (modalId) {
+        const modal = obtenerModal(modalId);
+
+        if (!modal) {
+            return;
+        }
+
+        modal.classList.remove('active');
+        modal.setAttribute('aria-hidden', 'true');
+        limpiarFormularioModal(modal);
+        actualizarBloqueoPagina();
+    };
+
+    function cerrarModalDesdeElemento(elemento) {
+        const modal = elemento
+            ? elemento.closest('.modal')
+            : null;
+
+        if (modal && modal.id) {
+            window.cerrarModal(modal.id);
+        }
+    }
+
+    document.addEventListener('click', function (evento) {
+        const botonCerrar = evento.target.closest(
+            '.modal-close, [data-modal-close]'
+        );
+
+        if (botonCerrar) {
+            evento.preventDefault();
+            evento.stopPropagation();
+            cerrarModalDesdeElemento(botonCerrar);
+            return;
+        }
+
+        const modalFondo = evento.target;
+
+        if (
+            modalFondo
+            && modalFondo.classList
+            && modalFondo.classList.contains('modal')
+            && modalFondo.classList.contains('active')
+        ) {
+            window.cerrarModal(modalFondo.id);
+        }
+    });
+
+    document.addEventListener('keydown', function (evento) {
+        if (evento.key !== 'Escape') {
+            return;
+        }
+
+        const abiertos = document.querySelectorAll('.modal.active');
+        const ultimo = abiertos.length > 0
+            ? abiertos[abiertos.length - 1]
+            : null;
+
+        if (ultimo && ultimo.id) {
+            window.cerrarModal(ultimo.id);
+        }
+    });
+
+    function encontrarTarjetaUsuarios() {
+        const titulos = document.querySelectorAll('.card-title');
+
+        for (const titulo of titulos) {
+            const texto = titulo.textContent
+                .trim()
+                .toLowerCase();
+
+            if (texto.includes('usuarios del sistema')) {
+                return titulo.closest('.card');
+            }
+        }
+
+        return null;
+    }
+
+    function asegurarBotonAdministrador() {
+        if (document.getElementById('btnNuevoAdministradorGlobal')) {
+            return;
+        }
+
+        const tarjeta = encontrarTarjetaUsuarios();
+
+        if (!tarjeta) {
+            return;
+        }
+
+        const herramientas = tarjeta.querySelector('.card-tools');
+
+        if (!herramientas) {
+            return;
+        }
+
+        const boton = document.createElement('button');
+        boton.type = 'button';
+        boton.id = 'btnNuevoAdministradorGlobal';
+        boton.className = 'btn btn-primary btn-sm';
+        boton.innerHTML =
+            '<i class="fas fa-user-shield"></i> ' +
+            'Nuevo administrador';
+        boton.addEventListener('click', function () {
+            window.abrirAltaAdministradorGlobal();
+        });
+
+        herramientas.innerHTML = '';
+        herramientas.appendChild(boton);
+    }
+
+    window.abrirAltaAdministradorGlobal = function () {
+        const modal = document.getElementById('modalUsuario');
+        const formulario = document.getElementById('formUsuario');
+
+        if (!modal || !formulario) {
+            return;
+        }
+
+        formulario.reset();
+
+        const id = formulario.querySelector('[name="id"]');
+        const rol = formulario.querySelector('[name="rol"]');
+        const estado = formulario.querySelector('[name="estado"]');
+        const titulo = modal.querySelector('.modal-header h4');
+        const cuerpo = modal.querySelector('.modal-body');
+
+        if (id) {
+            id.value = '';
+        }
+
+        if (rol) {
+            rol.value = 'admin';
+        }
+
+        if (estado) {
+            estado.value = 'activo';
+        }
+
+        if (titulo) {
+            titulo.innerHTML =
+                '<i class="fas fa-user-shield"></i> ' +
+                'Nuevo administrador';
+        }
+
+        if (cuerpo) {
+            /*
+             * El modal original trae un aviso ocultable sobre la contraseña.
+             * En el alta global se sustituye junto con el aviso anterior por
+             * un único resumen compacto y permanente.
+             */
+            ['usuario_info', 'admin_global'].forEach(function (alertaId) {
+                cuerpo.querySelectorAll(
+                    '[data-alerta-id="' + alertaId + '"]'
+                ).forEach(function (alerta) {
+                    const siguiente = alerta.nextElementSibling;
+
+                    if (
+                        siguiente
+                        && siguiente.classList.contains(
+                            'alert-boton-container'
+                        )
+                    ) {
+                        siguiente.remove();
+                    }
+
+                    alerta.remove();
+                });
+
+                cuerpo.querySelectorAll(
+                    '[data-alerta-boton="' + alertaId + '"]'
+                ).forEach(function (botonAviso) {
+                    botonAviso.remove();
+                });
+            });
+
+            let resumen = document.getElementById(
+                'resumenAltaAdministradorGlobal'
+            );
+
+            if (!resumen) {
+                resumen = document.createElement('div');
+                resumen.id = 'resumenAltaAdministradorGlobal';
+                resumen.className = 'admin-global-summary';
+                resumen.innerHTML =
+                    '<div class="admin-global-summary__icon">' +
+                        '<i class="fas fa-user-shield"></i>' +
+                    '</div>' +
+                    '<div class="admin-global-summary__content">' +
+                        '<strong>Cuenta administrativa global</strong>' +
+                        '<p>Se asignará automáticamente a todas las ' +
+                        'sucursales activas con permisos de Administrador.</p>' +
+                        '<div class="admin-global-summary__details">' +
+                            '<span><i class="fas fa-key"></i> ' +
+                            'Contraseña temporal: <b>ego1</b></span>' +
+                            '<span><i class="fas fa-envelope"></i> ' +
+                            'Las credenciales se enviarán al correo indicado</span>' +
+                        '</div>' +
+                    '</div>';
+
+                const campoEstado = formulario.querySelector(
+                    '[name="estado"]'
+                );
+                const grupoEstado = campoEstado
+                    ? campoEstado.closest('.form-group')
+                    : null;
+
+                if (grupoEstado && grupoEstado.parentNode) {
+                    grupoEstado.parentNode.insertBefore(
+                        resumen,
+                        grupoEstado.nextSibling
+                    );
+                } else {
+                    cuerpo.appendChild(resumen);
+                }
+            }
+        }
+
+        if (typeof window.abrirModal === 'function') {
+            window.abrirModal('modalUsuario');
+        } else {
+            modal.classList.add('active');
+        }
+
+        window.setTimeout(function () {
+            if (rol) {
+                rol.value = 'admin';
+            }
+
+            if (estado) {
+                estado.value = 'activo';
+            }
+        }, 0);
+    };
+
+    const formulario = document.getElementById('formUsuario');
+
+    function escaparHtml(valor) {
+        const elemento = document.createElement('div');
+        elemento.textContent = String(valor || '');
+        return elemento.innerHTML;
+    }
+
+    function mostrarResultadoAltaAdministrador(respuesta) {
+        window.cerrarModal('modalUsuario');
+
+        if (typeof window.Swal === 'undefined') {
+            const mensaje = respuesta.correo_enviado
+                ? 'Administrador creado. Las credenciales fueron enviadas.'
+                : 'Administrador creado. Contraseña temporal: ' +
+                    String(respuesta.password_temporal || 'ego1') +
+                    '. Error de correo: ' +
+                    String(respuesta.correo_error || 'No especificado.');
+
+            window.alert(mensaje);
+            window.location.reload();
+            return;
+        }
+
+        if (respuesta.correo_enviado) {
+            window.Swal.fire({
+                icon: 'success',
+                title: 'Administrador creado',
+                text:
+                    'La cuenta fue asignada a ' +
+                    String(respuesta.sedes_asignadas || 0) +
+                    ' sucursal(es) y las credenciales fueron enviadas al correo registrado.',
+                confirmButtonText: 'Aceptar',
+                target: document.body
+            }).then(function () {
+                window.location.reload();
+            });
+
+            return;
+        }
+
+        window.Swal.fire({
+            icon: 'warning',
+            title: 'Administrador creado sin correo',
+            html:
+                '<p>La cuenta sí fue creada y asignada a todas las sucursales activas.</p>' +
+                '<p><strong>Contraseña temporal:</strong> ' +
+                '<code>' +
+                escaparHtml(respuesta.password_temporal || 'ego1') +
+                '</code></p>' +
+                '<p><strong>Error al enviar:</strong><br>' +
+                escaparHtml(
+                    respuesta.correo_error ||
+                    'El servidor SMTP no devolvió un detalle.'
+                ) +
+                '</p>',
+            confirmButtonText: 'Aceptar',
+            target: document.body
+        }).then(function () {
+            window.location.reload();
+        });
+    }
+
+    function enviarAltaAdministradorGlobal(evento) {
+        if (!formulario) {
+            return;
+        }
+
+        const campoId = formulario.querySelector('[name="id"]');
+
+        /*
+         * Las ediciones existentes continúan usando el manejador original.
+         * Este flujo propio se usa únicamente para el alta global nueva.
+         */
+        if (campoId && campoId.value.trim() !== '') {
+            return;
+        }
+
+        evento.preventDefault();
+        evento.stopImmediatePropagation();
+
+        const rol = formulario.querySelector('[name="rol"]');
+        const estado = formulario.querySelector('[name="estado"]');
+        const botonGuardar = formulario.querySelector(
+            'button[type="submit"], input[type="submit"]'
+        );
+
+        if (rol) {
+            rol.value = 'admin';
+        }
+
+        if (estado) {
+            estado.value = 'activo';
+        }
+
+        if (botonGuardar) {
+            botonGuardar.disabled = true;
+        }
+
+        const datos = new FormData(formulario);
+        datos.set('action', 'save_usuario');
+        datos.set('rol', 'admin');
+        datos.set('estado', 'activo');
+
+        if (typeof window.Swal !== 'undefined') {
+            window.Swal.fire({
+                title: 'Creando administrador...',
+                text: 'Se está asignando la cuenta a todas las sucursales.',
+                allowOutsideClick: false,
+                allowEscapeKey: false,
+                didOpen: function () {
+                    window.Swal.showLoading();
+                },
+                target: document.body
+            });
+        }
+
+        window.fetch(
+            'configuracion.php?vista=global&section=usuarios',
+            {
+                method: 'POST',
+                body: datos,
+                credentials: 'same-origin',
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest'
+                }
+            }
+        )
+            .then(function (respuestaHttp) {
+                return respuestaHttp.text().then(function (texto) {
+                    let respuestaJson;
+
+                    try {
+                        respuestaJson = JSON.parse(texto);
+                    } catch (errorJson) {
+                        throw new Error(
+                            'El servidor devolvió una respuesta no válida. ' +
+                            texto.slice(0, 300)
+                        );
+                    }
+
+                    if (!respuestaHttp.ok || !respuestaJson.success) {
+                        throw new Error(
+                            respuestaJson.message ||
+                            'No fue posible crear el administrador.'
+                        );
+                    }
+
+                    return respuestaJson;
+                });
+            })
+            .then(function (respuestaJson) {
+                mostrarResultadoAltaAdministrador(respuestaJson);
+            })
+            .catch(function (error) {
+                if (typeof window.Swal !== 'undefined') {
+                    window.Swal.fire({
+                        icon: 'error',
+                        title: 'No se completó el alta',
+                        text: error.message || 'Ocurrió un error inesperado.',
+                        confirmButtonText: 'Aceptar',
+                        target: document.body
+                    });
+                } else {
+                    window.alert(
+                        error.message || 'Ocurrió un error inesperado.'
+                    );
+                }
+            })
+            .finally(function () {
+                if (botonGuardar) {
+                    botonGuardar.disabled = false;
+                }
+            });
+    }
+
+    if (formulario) {
+        formulario.addEventListener(
+            'submit',
+            enviarAltaAdministradorGlobal,
+            true
+        );
+    }
+
+    function inicializarControlesConfiguracion() {
+        asegurarBotonAdministrador();
+
+        document.querySelectorAll('.alert-ocultable')
+            .forEach(function (alerta) {
+                aplicarEstadoGuardadoAlerta(alerta);
+            });
+
+        document.querySelectorAll('.modal')
+            .forEach(function (modal) {
+                if (!modal.classList.contains('active')) {
+                    modal.setAttribute('aria-hidden', 'true');
+                }
+            });
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener(
+            'DOMContentLoaded',
+            inicializarControlesConfiguracion
+        );
+    } else {
+        inicializarControlesConfiguracion();
+    }
+})();
+</script>
+HTML;
+
+    $posicionCierreBody = strrpos(
+        $contenidoVistaConfiguracion,
+        '</body>'
+    );
+
+    if ($posicionCierreBody !== false) {
+        $contenidoVistaConfiguracion = substr_replace(
+            $contenidoVistaConfiguracion,
+            $scriptAdministradorGlobal . "\n",
+            $posicionCierreBody,
+            0
+        );
+    } else {
+        $contenidoVistaConfiguracion .= $scriptAdministradorGlobal;
+    }
+}
+
+echo $contenidoVistaConfiguracion;

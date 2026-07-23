@@ -490,14 +490,31 @@ if (isset($_GET['action']) && $_GET['action'] === 'ticket_datos') {
                 </td>
                 <td data-label="Vendedor / Sucursal">
                     <span class="venta-persona venta-persona-sucursal">
-                        <span class="venta-vendedor-linea">
-                            <i class="fas fa-user-tie" style="color:#7c3aed;"></i>
-                            <span>${escapeHtml(venta.usuario_nombre)}</span>
+                        <span
+                            class="venta-vendedor-linea"
+                            title="${escapeHtml(venta.usuario_nombre || 'Usuario del sistema')}"
+                        >
+                            <i class="fas fa-user-tie" aria-hidden="true"></i>
+                            <span class="venta-vendedor-nombre">
+                                ${escapeHtml(venta.usuario_nombre || 'Usuario del sistema')}
+                            </span>
                         </span>
-                        <span class="venta-sucursal-badge ${Number(venta.sucursal_es_matriz) === 1 ? 'is-matriz' : ''}">
-                            <i class="fas fa-building"></i>
-                            ${escapeHtml(venta.sucursal_nombre || 'Sucursal')}
-                            <small>${escapeHtml(venta.sucursal_clave || '')}</small>
+
+                        <span
+                            class="venta-sucursal-badge ${Number(venta.sucursal_es_matriz) === 1 ? 'is-matriz' : ''}"
+                            title="${escapeHtml(
+                                (venta.sucursal_nombre || 'Sucursal') +
+                                (venta.sucursal_clave ? ' · ' + venta.sucursal_clave : '')
+                            )}"
+                        >
+                            <i class="fas fa-building" aria-hidden="true"></i>
+                            <span class="venta-sucursal-nombre">
+                                ${escapeHtml(venta.sucursal_nombre || 'Sucursal')}
+                            </span>
+                            ${venta.sucursal_clave
+                                ? `<span class="venta-sucursal-clave">${escapeHtml(venta.sucursal_clave)}</span>`
+                                : ''
+                            }
                         </span>
                     </span>
                 </td>

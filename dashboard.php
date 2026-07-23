@@ -8,6 +8,7 @@
  */
 require_once __DIR__ . '/includes/auth_guard.php';
 require_once __DIR__ . '/config/database.php';
+require_once __DIR__ . '/includes/servicio_plataforma_helper.php';
 
 /* Permite limpiar cualquier salida previa antes de generar reportes PDF. */
 if (ob_get_level() === 0) {
@@ -226,11 +227,37 @@ $rolBaseDashboard = strtolower(trim((string) (
     $_SESSION['user_rol_base'] ?? $user_rol
 )));
 
-$puedeVistaGlobalDashboard = in_array(
+$puedeVistaGlobalDashboard = rol_es_administrativo(
+    $rolBaseDashboard
+);
+
+$servicio_plataforma_dashboard = null;
+$mostrar_aviso_servicio_dashboard = false;
+$es_super_administrador_dashboard =
+    $rolBaseDashboard === 'super_administrador';
+$es_administrador_dashboard = in_array(
     $rolBaseDashboard,
-    ['admin', 'administrador'],
+    ['super_administrador', 'admin', 'administrador'],
     true
 );
+
+if ($es_administrador_dashboard) {
+    try {
+        $servicio_plataforma_dashboard =
+            servicio_plataforma_resumen($db);
+
+        $mostrar_aviso_servicio_dashboard =
+            $es_super_administrador_dashboard
+            || !empty(
+                $servicio_plataforma_dashboard['mostrar_aviso']
+            );
+    } catch (Throwable $servicioDashboardError) {
+        error_log(
+            '[Dashboard servicio plataforma] '
+            . $servicioDashboardError->getMessage()
+        );
+    }
+}
 
 $vistaSolicitadaDashboard = strtolower(trim((string) (
     $_GET['vista'] ?? ''
@@ -1155,6 +1182,7 @@ if (
     <!-- AdminLTE / Bootstrap -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/admin-lte@3.2/dist/css/adminlte.min.css">
     <link rel="stylesheet" href="css/dashboard.css">
+    <link rel="stylesheet" href="css/servicio_plataforma_alerta.css?v=1">
 
     <style>
         /*
@@ -1262,6 +1290,111 @@ if (
                 </div>
             </div>
         </div>
+
+        <?php if (
+            $mostrar_aviso_servicio_dashboard
+            && is_array($servicio_plataforma_dashboard)
+        ): ?>
+            <?php
+            $servicioDashboardNivel = (string) (
+                $servicio_plataforma_dashboard['nivel']
+                ?? 'neutral'
+            );
+            $servicioDashboardConfig = (array) (
+                $servicio_plataforma_dashboard['configuracion']
+                ?? []
+            );
+            $servicioDashboardDias =
+                $servicio_plataforma_dashboard['dias_restantes']
+                ?? null;
+            ?>
+            <section
+                class="platform-service-alert platform-service-alert--<?php echo htmlspecialchars($servicioDashboardNivel, ENT_QUOTES, 'UTF-8'); ?>"
+                aria-label="Estado del servicio de la plataforma"
+            >
+                <span class="platform-service-alert__icon">
+                    <i class="fas <?php echo in_array(
+                        (string) ($servicio_plataforma_dashboard['estado'] ?? ''),
+                        ['vencido', 'suspendido', 'configuracion_invalida'],
+                        true
+                    ) ? 'fa-triangle-exclamation' : 'fa-clock'; ?>"></i>
+                </span>
+
+                <div class="platform-service-alert__copy">
+                    <span class="platform-service-alert__eyebrow">
+                        Servicio de plataforma
+                    </span>
+                    <h2>
+                        <?php echo htmlspecialchars(
+                            (string) (
+                                $servicio_plataforma_dashboard['titulo']
+                                ?? 'Estado del servicio'
+                            ),
+                            ENT_QUOTES,
+                            'UTF-8'
+                        ); ?>
+                    </h2>
+                    <p>
+                        <?php echo htmlspecialchars(
+                            (string) (
+                                $servicio_plataforma_dashboard['mensaje']
+                                ?? ''
+                            ),
+                            ENT_QUOTES,
+                            'UTF-8'
+                        ); ?>
+                    </p>
+
+                    <div class="platform-service-alert__meta">
+                        <span>
+                            <i class="fas fa-calendar-day"></i>
+                            Vence:
+                            <strong>
+                                <?php echo htmlspecialchars(
+                                    (string) (
+                                        $servicio_plataforma_dashboard['fecha_vencimiento_formateada']
+                                        ?? 'Sin definir'
+                                    ),
+                                    ENT_QUOTES,
+                                    'UTF-8'
+                                ); ?>
+                            </strong>
+                        </span>
+
+                        <?php if ($servicioDashboardDias !== null): ?>
+                            <span>
+                                <i class="fas fa-hourglass-half"></i>
+                                <strong><?php echo (int) $servicioDashboardDias; ?></strong>
+                                <?php echo (int) $servicioDashboardDias === 1
+                                    ? 'día restante'
+                                    : 'días restantes'; ?>
+                            </span>
+                        <?php endif; ?>
+
+                        <?php if (!empty($servicioDashboardConfig['proveedor_nombre'])): ?>
+                            <span>
+                                <i class="fas fa-headset"></i>
+                                <?php echo htmlspecialchars(
+                                    (string) $servicioDashboardConfig['proveedor_nombre'],
+                                    ENT_QUOTES,
+                                    'UTF-8'
+                                ); ?>
+                            </span>
+                        <?php endif; ?>
+                    </div>
+                </div>
+
+                <?php if ($es_super_administrador_dashboard): ?>
+                    <a
+                        href="servicio_plataforma.php"
+                        class="platform-service-alert__action"
+                    >
+                        <i class="fas fa-pen-to-square"></i>
+                        Administrar servicio
+                    </a>
+                <?php endif; ?>
+            </section>
+        <?php endif; ?>
 
         <!-- Small boxes (Stat box) - VISTA ADMIN -->
         <?php if ($user_rol == 'admin'): ?>

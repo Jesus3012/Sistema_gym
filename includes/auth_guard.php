@@ -138,6 +138,7 @@ $baseUrl = obtenerBaseUrlSistema();
 $loginUrl = $baseUrl . '/login.php';
 $dashboardUrl = $baseUrl . '/dashboard.php';
 $panelEntrenadorUrl = $baseUrl . '/panel_entrenador.php';
+$servicioVencidoUrl = $baseUrl . '/servicio_vencido.php';
 
 if (empty($_SESSION['user_id'])) {
     redirigirSeguramente(
@@ -149,6 +150,7 @@ require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/super_admin_helper.php';
 require_once __DIR__ . '/sucursal_context.php';
 require_once __DIR__ . '/permisos_helper.php';
+require_once __DIR__ . '/servicio_plataforma_helper.php';
 
 $databasePermisos = new Database();
 $connPermisos = $databasePermisos->getConnection();
@@ -187,6 +189,8 @@ $rolActual = rol_normalizar_sistema((string) (
     $_SESSION['user_rol'] ?? ''
 ));
 $rolBaseReal = rol_base_real_sesion();
+$esSuperAdministradorReal =
+    $rolBaseReal === 'super_administrador';
 
 $paginaActual = basename(
     (string) parse_url(
@@ -223,13 +227,41 @@ if (
     );
 }
 
+/*
+ * Este módulo es más restringido que los módulos solo_admin: únicamente
+ * puede abrirlo el rol real super_administrador. El rol operativo puede
+ * continuar normalizado como admin para el resto del sistema.
+ */
+if (
+    $paginaParaPermisos === 'servicio_plataforma.php'
+    && !$esSuperAdministradorReal
+) {
+    $_SESSION['alerta_acceso_denegado'] = [
+        'titulo' => 'Acceso exclusivo',
+        'mensaje' =>
+            'Solo el superadministrador puede administrar la vigencia del servicio.',
+        'rol' => $nombresRoles[$rolBaseReal]
+            ?? $nombresRoles[$rolActual]
+            ?? 'Usuario',
+        'modulo' => 'Servicio de plataforma',
+        'sucursal' => $sucursal_nombre,
+    ];
+
+    redirigirSeguramente(
+        $dashboardUrl . '?error=acceso_denegado'
+    );
+}
+
 $esPanelEntrenador = $paginaParaPermisos === 'panel_entrenador.php';
+$esPantallaServicioVencido =
+    $paginaParaPermisos === 'servicio_vencido.php';
 
 if ($rolActual === 'entrenador') {
     $rutasEntrenador = [
         'panel_entrenador.php',
         'legal.php',
         'mi_perfil.php',
+        'servicio_vencido.php',
     ];
 
     if (!in_array($paginaParaPermisos, $rutasEntrenador, true)) {
@@ -250,7 +282,7 @@ $nombreModuloConsultado = $esPanelEntrenador
     ? 'Mi agenda de clases'
     : '';
 
-if ($claveModuloActual === null) {
+if ($claveModuloActual === null && !$esPantallaServicioVencido) {
     $stmtModuloRuta = $connPermisos->prepare(
         "SELECT clave, nombre
          FROM modulos_sistema
@@ -279,7 +311,8 @@ $esAdministradorActual = rol_es_administrativo($rolBaseReal)
     || rol_es_administrativo($rolActual);
 
 $accesoPermitido =
-    ($rolActual === 'entrenador' && $esPanelEntrenador)
+    $esPantallaServicioVencido
+    || ($rolActual === 'entrenador' && $esPanelEntrenador)
     || (
         $claveModuloActual !== null
         && $claveModuloActual !== ''
@@ -337,5 +370,33 @@ if (!$accesoPermitido) {
     );
 }
 
-require_once __DIR__ . '/legal_guard.php';
-legal_require_acceptance();
+/*
+ * El superadministrador siempre conserva acceso para renovar o corregir
+ * el servicio. Los demás perfiles se envían a una pantalla informativa
+ * únicamente cuando el servicio está suspendido o venció con bloqueo activo.
+ * Si todavía no se ejecutó la migración, el sistema sigue funcionando.
+ */
+if (!$esSuperAdministradorReal && !$esPantallaServicioVencido) {
+    try {
+        $estadoServicioPlataforma =
+            servicio_plataforma_resumen($connPermisos);
+
+        if (!empty($estadoServicioPlataforma['debe_bloquear'])) {
+            redirigirSeguramente($servicioVencidoUrl);
+        }
+    } catch (Throwable $servicioException) {
+        error_log(
+            '[Auth guard servicio plataforma] '
+            . $servicioException->getMessage()
+        );
+    }
+}
+
+/*
+ * La pantalla de servicio vencido no carga el modal legal porque debe
+ * permanecer simple y permitir únicamente consultar la renovación o salir.
+ */
+if (!$esPantallaServicioVencido) {
+    require_once __DIR__ . '/legal_guard.php';
+    legal_require_acceptance();
+}

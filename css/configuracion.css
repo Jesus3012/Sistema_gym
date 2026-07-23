@@ -1837,3 +1837,245 @@ body.configuracion-page.modal-open {
         min-height: 40px;
     }
 }
+
+/* =========================================================
+   CORRECCIÓN DE CONTROLES DEL MODAL Y AVISOS
+   ========================================================= */
+
+.configuracion-page .modal.active {
+    visibility: visible;
+    pointer-events: auto;
+}
+
+.configuracion-page .modal-content,
+.configuracion-page .modal-header,
+.configuracion-page .modal-body,
+.configuracion-page .modal-footer {
+    position: relative;
+}
+
+.configuracion-page .modal-content {
+    z-index: 1;
+}
+
+.configuracion-page .modal-close,
+.configuracion-page .btn-ocultar {
+    position: relative;
+    z-index: 4;
+    pointer-events: auto !important;
+    touch-action: manipulation;
+}
+
+.configuracion-page .alert-ocultable {
+    min-height: 54px;
+}
+
+.configuracion-page .alert-ocultable .btn-ocultar {
+    position: absolute;
+}
+
+.configuracion-page .modal-close:active,
+.configuracion-page .btn-ocultar:active {
+    transform: scale(.96);
+}
+
+/* =========================================================
+   ALTA DE ADMINISTRADOR GLOBAL: RESUMEN COMPACTO
+   ========================================================= */
+
+.configuracion-page .admin-global-summary {
+    display: grid;
+    grid-template-columns: 40px minmax(0, 1fr);
+    gap: 11px;
+    margin: 4px 0 0;
+    padding: 12px;
+    border: 1px solid #cddcf0;
+    border-radius: 10px;
+    color: #334155;
+    background: #f8fbff;
+}
+
+.configuracion-page .admin-global-summary__icon {
+    width: 40px;
+    height: 40px;
+    display: grid;
+    place-items: center;
+    border-radius: 9px;
+    color: #1e5fb8;
+    background: #e5efff;
+    font-size: 1rem;
+}
+
+.configuracion-page .admin-global-summary__content {
+    min-width: 0;
+}
+
+.configuracion-page .admin-global-summary__content > strong {
+    display: block;
+    margin: 0;
+    color: #183657;
+    font-size: .79rem;
+    line-height: 1.3;
+}
+
+.configuracion-page .admin-global-summary__content > p {
+    margin: 3px 0 8px;
+    color: #64748b;
+    font-size: .7rem;
+    line-height: 1.42;
+}
+
+.configuracion-page .admin-global-summary__details {
+    display: flex;
+    align-items: center;
+    gap: 7px 14px;
+    flex-wrap: wrap;
+    color: #475569;
+    font-size: .66rem;
+    line-height: 1.35;
+}
+
+.configuracion-page .admin-global-summary__details span {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.configuracion-page .admin-global-summary__details i {
+    color: #2367c9;
+}
+
+@media (max-width: 768px) {
+    .configuracion-page .admin-global-summary {
+        grid-template-columns: 35px minmax(0, 1fr);
+        gap: 9px;
+        padding: 10px;
+    }
+
+    .configuracion-page .admin-global-summary__icon {
+        width: 35px;
+        height: 35px;
+    }
+
+    .configuracion-page .admin-global-summary__details {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 6px;
+    }
+}
+
+/* =========================================================
+   USUARIOS: ACCIONES EN UNA SOLA LÍNEA
+   ========================================================= */
+
+@media (min-width: 769px) {
+    .configuracion-page .config-users-table th:nth-child(2),
+    .configuracion-page .config-users-table td:nth-child(2) {
+        width: 13%;
+    }
+
+    .configuracion-page .config-users-table th:nth-child(3),
+    .configuracion-page .config-users-table td:nth-child(3) {
+        width: 17%;
+    }
+
+    .configuracion-page .config-users-table th:nth-child(4),
+    .configuracion-page .config-users-table td:nth-child(4) {
+        width: 9%;
+    }
+
+    .configuracion-page .config-users-table th:nth-child(5),
+    .configuracion-page .config-users-table td:nth-child(5) {
+        width: 9%;
+    }
+
+    .configuracion-page .config-users-table th:nth-child(6),
+    .configuracion-page .config-users-table td:nth-child(6) {
+        width: 11%;
+    }
+
+    .configuracion-page .config-users-table th:nth-child(7),
+    .configuracion-page .config-users-table td:nth-child(7) {
+        width: 10%;
+    }
+
+    .configuracion-page .config-users-table th:nth-child(8),
+    .configuracion-page .config-users-table td:nth-child(8) {
+        width: 31%;
+    }
+
+    .configuracion-page .config-users-table
+    .config-users-actions-cell {
+        padding-right: 12px;
+        padding-left: 8px;
+        white-space: nowrap !important;
+    }
+
+    .configuracion-page .config-users-actions {
+        width: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 5px;
+        flex-wrap: nowrap !important;
+        white-space: nowrap;
+    }
+
+    .configuracion-page .config-users-actions .btn {
+        min-width: 0;
+        min-height: 34px;
+        margin: 0;
+        padding: 7px 8px;
+        flex: 0 0 auto;
+        font-size: .66rem;
+        white-space: nowrap;
+    }
+}
+
+@media (max-width: 1180px) and (min-width: 769px) {
+    .configuracion-page .config-users-table th:nth-child(2),
+    .configuracion-page .config-users-table td:nth-child(2) {
+        width: 12%;
+    }
+
+    .configuracion-page .config-users-table th:nth-child(3),
+    .configuracion-page .config-users-table td:nth-child(3) {
+        width: 15%;
+    }
+
+    .configuracion-page .config-users-table th:nth-child(4),
+    .configuracion-page .config-users-table td:nth-child(4) {
+        width: 8%;
+    }
+
+    .configuracion-page .config-users-table th:nth-child(5),
+    .configuracion-page .config-users-table td:nth-child(5) {
+        width: 8%;
+    }
+
+    .configuracion-page .config-users-table th:nth-child(6),
+    .configuracion-page .config-users-table td:nth-child(6) {
+        width: 10%;
+    }
+
+    .configuracion-page .config-users-table th:nth-child(7),
+    .configuracion-page .config-users-table td:nth-child(7) {
+        width: 9%;
+    }
+
+    .configuracion-page .config-users-table th:nth-child(8),
+    .configuracion-page .config-users-table td:nth-child(8) {
+        width: 38%;
+    }
+
+    .configuracion-page .config-users-actions {
+        justify-content: flex-end;
+        gap: 4px;
+    }
+
+    .configuracion-page .config-users-actions .btn {
+        min-height: 32px;
+        padding: 6px 7px;
+        font-size: .61rem;
+    }
+}

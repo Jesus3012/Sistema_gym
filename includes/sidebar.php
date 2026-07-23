@@ -661,6 +661,8 @@ if ($sidebar_legal_activo) {
     $active_module = 'user_requests';
 } elseif ($current_page === 'permisos_roles.php') {
     $active_module = 'role_permissions';
+} elseif ($current_page === 'servicio_plataforma.php') {
+    $active_module = 'platform_service';
 } elseif ($current_page === 'mi_perfil.php') {
     $active_module = 'perfil';
 } elseif (
@@ -865,7 +867,11 @@ $sidebar_navbar_version = is_file($sidebar_navbar_css)
         </div>
     </div>
 
-    <?php if ($sidebar_sucursales !== [] && $user_rol !== 'entrenador'): ?>
+    <?php if (
+        $sidebar_sucursales !== []
+        && $user_rol !== 'entrenador'
+        && $current_page !== 'servicio_plataforma.php'
+    ): ?>
         <section
             class="sidebar-branch-switcher <?php echo $sidebar_vista_global ? 'is-global' : ''; ?>"
             id="sidebarBranchSwitcher"
@@ -1182,6 +1188,8 @@ $sidebar_navbar_version = is_file($sidebar_navbar_css)
     $puede_configuracion = $sidebar_puede('configuracion');
     $puede_sucursales = rol_es_administrativo($sidebar_user_rol_base);
     $puede_permisos_roles = $sidebar_puede('permisos_roles');
+    $puede_servicio_plataforma =
+        $sidebar_user_rol_base === 'super_administrador';
     $puede_panel_entrenador = $user_rol === 'entrenador';
 
     /*
@@ -1208,6 +1216,7 @@ $sidebar_navbar_version = is_file($sidebar_navbar_css)
         $puede_configuracion = false;
         $puede_sucursales = false;
         $puede_permisos_roles = false;
+        $puede_servicio_plataforma = false;
     }
 
     $mostrar_grupo_socios = $puede_socios || $puede_inscripciones || $puede_planes || $puede_asistencias;
@@ -1220,7 +1229,8 @@ $sidebar_navbar_version = is_file($sidebar_navbar_css)
         || $puede_notificaciones
         || $puede_solicitudes
         || $puede_sucursales
-        || $puede_configuracion;
+        || $puede_configuracion
+        || $puede_servicio_plataforma;
 
     $grupo_inventario_activo = in_array(
         $active_module,
@@ -1232,7 +1242,14 @@ $sidebar_navbar_version = is_file($sidebar_navbar_css)
     $grupo_clases_activo = in_array($active_module, ['classes', 'clases_inscriptions'], true);
     $grupo_admin_activo = in_array(
         $active_module,
-        ['reports', 'notificaciones', 'settings', 'user_requests', 'branches'],
+        [
+            'reports',
+            'notificaciones',
+            'settings',
+            'user_requests',
+            'branches',
+            'platform_service',
+        ],
         true
     );
     ?>
@@ -1458,6 +1475,18 @@ $sidebar_navbar_version = is_file($sidebar_navbar_css)
                                 <a href="configuracion.php" class="nav-link <?php echo $active_module === 'settings' ? 'active' : ''; ?>">
                                     <i class="fas fa-gear"></i>
                                     <span class="nav-text">Configuración</span>
+                                </a>
+                            </li>
+                        <?php endif; ?>
+                        <?php if ($puede_servicio_plataforma): ?>
+                            <li>
+                                <a
+                                    href="servicio_plataforma.php"
+                                    class="nav-link <?php echo $active_module === 'platform_service' ? 'active' : ''; ?>"
+                                    <?php echo $active_module === 'platform_service' ? 'aria-current="page"' : ''; ?>
+                                >
+                                    <i class="fas fa-calendar-check"></i>
+                                    <span class="nav-text">Servicio de plataforma</span>
                                 </a>
                             </li>
                         <?php endif; ?>

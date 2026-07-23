@@ -1273,42 +1273,101 @@ body {
 }
 
 .venta-persona-sucursal {
-    display: flex !important;
-    flex-direction: column;
-    align-items: flex-start !important;
-    gap: 5px !important;
+    width: 100%;
+    min-width: 0;
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start !important;
+    gap: 4px !important;
 }
 
 .venta-vendedor-linea {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
+    width: 100%;
+    min-width: 0;
+    display: grid;
+    grid-template-columns: 13px minmax(0, 1fr);
+    align-items: start;
+    gap: 5px;
+    color: #334155;
+    font-size: .70rem;
+    line-height: 1.18;
+}
+
+.venta-vendedor-linea > i {
+    margin-top: 1px;
+    color: var(--ventas-morado);
+    font-size: .67rem;
+}
+
+.venta-vendedor-nombre {
+    min-width: 0;
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow-wrap: anywhere;
 }
 
 .venta-sucursal-badge {
-    max-width: 180px;
+    width: fit-content;
+    max-width: 118px;
+    min-width: 0;
+    min-height: 21px;
     display: inline-flex;
     align-items: center;
-    gap: 5px;
-    padding: 4px 7px;
-    border: 1px solid #e2e8f0;
-    border-radius: 7px;
+    gap: 4px;
+    padding: 3px 5px;
+    overflow: hidden;
+    border: 1px solid #d9e2ec;
+    border-radius: 6px;
+    color: #526176;
     background: #f8fafc;
-    color: #475569;
-    font-size: .66rem;
+    font-size: .55rem;
     font-weight: 800;
     line-height: 1;
+    white-space: nowrap;
 }
 
-.venta-sucursal-badge small {
-    color: #94a3b8;
-    font-size: .58rem;
+.venta-sucursal-badge > i {
+    flex: 0 0 auto;
+    color: #64748b;
+    font-size: .56rem;
+}
+
+.venta-sucursal-nombre {
+    min-width: 0;
+    max-width: 69px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.venta-sucursal-clave {
+    min-width: 0;
+    flex: 0 0 auto;
+    padding-left: 4px;
+    border-left: 1px solid #d4dde8;
+    color: #8793a4;
+    font-size: .48rem;
+    font-weight: 900;
+    letter-spacing: .02em;
+    white-space: nowrap;
 }
 
 .venta-sucursal-badge.is-matriz {
-    border-color: #bfdbfe;
-    background: #eff6ff;
+    border-color: #c5d8f7;
     color: #1e40af;
+    background: #f3f7ff;
+}
+
+.venta-sucursal-badge.is-matriz > i {
+    color: #2563eb;
+}
+
+.venta-sucursal-badge.is-matriz .venta-sucursal-clave {
+    border-left-color: #c5d8f7;
+    color: #6780a8;
 }
 
 @media (max-width: 760px) {
@@ -1324,5 +1383,47 @@ body {
     .historial-sucursal-chip strong,
     .venta-sucursal-badge {
         max-width: 100%;
+    }
+}
+
+
+/* =====================================================
+   VENDEDOR / SUCURSAL COMPACTO
+   Evita que el nombre de la sede deforme la fila.
+   ===================================================== */
+@media (min-width: 1181px) {
+    .ventas-table td:nth-child(4) {
+        padding-right: 7px;
+        padding-left: 7px;
+    }
+}
+
+@media (max-width: 1180px) {
+    .ventas-table td .venta-persona-sucursal {
+        width: min(170px, 100%);
+        justify-self: end;
+    }
+
+    .venta-sucursal-badge {
+        max-width: 124px;
+    }
+}
+
+@media (max-width: 620px) {
+    .ventas-table td .venta-persona-sucursal {
+        width: 100%;
+        justify-self: start;
+    }
+
+    .venta-vendedor-linea {
+        font-size: .74rem;
+    }
+
+    .venta-sucursal-badge {
+        max-width: 138px;
+    }
+
+    .venta-sucursal-nombre {
+        max-width: 84px;
     }
 }
