@@ -525,15 +525,6 @@ $sucursalActivaSesion = (int) ($_SESSION['sucursal_id'] ?? 0);
                                     <?php echo $terminalesActivas; ?>
                                 </strong>
                             </div>
-
-                            <button
-                                type="button"
-                                class="br-status-terminal-link"
-                                id="statusTerminalButton"
-                            >
-                                <i class="fas fa-credit-card"></i>
-                                Administrar terminales
-                            </button>
                         </div>
 
                         <section class="br-section">

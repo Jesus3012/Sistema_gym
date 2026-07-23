@@ -1702,3 +1702,155 @@ body.sidebar-collapsed .main-content {
         min-height: 48px;
     }
 }
+
+/* =========================================================
+   CORRECCIÓN MÓVIL: FOOTER Y BOTÓN CERRAR SESIÓN VISIBLES
+   ========================================================= */
+@media (max-width: 768px) {
+    /* La altura dinámica evita que la barra del navegador tape el footer. */
+    .sidebar,
+    #sidebar,
+    aside.sidebar {
+        top: 0;
+        bottom: 0;
+        height: 100vh !important;
+        height: 100dvh !important;
+        min-height: 0 !important;
+        max-height: 100dvh !important;
+        display: flex !important;
+        flex-direction: column !important;
+        overflow: hidden !important;
+        padding-bottom: env(safe-area-inset-bottom, 0px);
+    }
+
+    /* Cabecera, perfil, selector y footer nunca deben encogerse. */
+    .sidebar-header,
+    .sidebar .user-profile,
+    .sidebar .sidebar-branch-switcher,
+    .sidebar-footer {
+        flex: 0 0 auto !important;
+        flex-shrink: 0 !important;
+    }
+
+    /* Solo el menú central puede desplazarse. */
+    .sidebar-nav {
+        flex: 1 1 auto !important;
+        min-height: 0 !important;
+        max-height: none !important;
+        overflow-x: hidden !important;
+        overflow-y: auto !important;
+        overscroll-behavior: contain;
+        -webkit-overflow-scrolling: touch;
+        padding-bottom: 14px !important;
+    }
+
+    /* Mantener el cierre de sesión dentro del área visible. */
+    .sidebar-footer {
+        position: relative;
+        z-index: 25;
+        width: 100%;
+        margin-top: 0 !important;
+        padding: 10px 10px calc(10px + env(safe-area-inset-bottom, 0px)) !important;
+        border-top: 1px solid var(--sidebar-border);
+        background: var(--sidebar-bg-deep, #0b1730);
+        box-shadow: 0 -10px 24px rgba(5, 15, 32, .22);
+    }
+
+    .sidebar-footer .logout-btn {
+        width: 100%;
+        min-height: 46px;
+        display: flex !important;
+        align-items: center;
+        justify-content: flex-start;
+        gap: 11px;
+        padding: 11px 13px !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+    }
+
+    .sidebar-footer .logout-text {
+        display: inline !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+        white-space: nowrap;
+    }
+
+    /* En móvil nunca conservar el estado visual colapsado de escritorio. */
+    .sidebar.collapsed .sidebar-footer {
+        padding: 10px 10px calc(10px + env(safe-area-inset-bottom, 0px)) !important;
+    }
+
+    .sidebar.collapsed .logout-btn {
+        justify-content: flex-start !important;
+        padding: 11px 13px !important;
+    }
+
+    .sidebar.collapsed .logout-text {
+        display: inline !important;
+    }
+}
+
+/* =========================================================
+   CORRECCIÓN MÓVIL: BOTÓN ABRIR / CERRAR SIN SUPERPOSICIÓN
+   El botón hamburguesa solo abre el menú. Cuando el sidebar
+   está visible, se oculta y aparece una X dentro del header.
+========================================================= */
+@media (max-width: 768px) {
+    /* Reserva espacio para el botón de cierre dentro del header. */
+    .sidebar .sidebar-header {
+        position: relative;
+        padding-right: 62px !important;
+    }
+
+    /* El botón externo solo se usa para abrir el menú. */
+    .hamburger-mobile {
+        transition:
+            opacity .18s ease,
+            visibility .18s ease,
+            transform .18s ease,
+            background .18s ease;
+    }
+
+    body.sidebar-open .hamburger-mobile {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+        transform: scale(.88);
+    }
+
+    /* En móvil, el botón de colapsar de escritorio funciona como cerrar. */
+    .sidebar .sidebar-collapse-btn {
+        display: flex !important;
+        top: 20px !important;
+        right: 14px !important;
+        width: 36px !important;
+        height: 36px !important;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid rgba(255, 255, 255, .13) !important;
+        border-radius: 10px !important;
+        background: rgba(255, 255, 255, .075) !important;
+        color: #dbeafe !important;
+        box-shadow: none !important;
+        z-index: 20;
+    }
+
+    .sidebar .sidebar-collapse-btn:hover,
+    .sidebar .sidebar-collapse-btn:focus-visible {
+        border-color: rgba(251, 113, 133, .32) !important;
+        background: rgba(225, 29, 72, .16) !important;
+        color: #fecdd3 !important;
+        outline: none;
+    }
+
+    .sidebar .sidebar-collapse-btn i {
+        margin: 0 !important;
+        transform: none !important;
+        font-size: .95rem !important;
+    }
+
+    /* Sustituye visualmente el chevrón por una X de Font Awesome. */
+    .sidebar .sidebar-collapse-btn i::before {
+        content: "\f00d" !important;
+    }
+}

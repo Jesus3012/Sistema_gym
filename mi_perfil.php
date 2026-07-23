@@ -554,6 +554,16 @@ $avatarUrl = !empty($user['foto_perfil']) && is_file($user['foto_perfil'])
     const passwordStatusText = document.getElementById('passwordStatusText');
 
     function actualizarEstadoPassword() {
+        if (
+            !newPassword
+            || !confirmPassword
+            || !passwordMeterBar
+            || !passwordStatus
+            || !passwordStatusText
+        ) {
+            return;
+        }
+
         const password = newPassword.value;
         const confirm = confirmPassword.value;
         let score = 0;
@@ -598,10 +608,15 @@ $avatarUrl = !empty($user['foto_perfil']) && is_file($user['foto_perfil'])
         }
     }
 
-    newPassword.addEventListener('input', actualizarEstadoPassword);
-    confirmPassword.addEventListener('input', actualizarEstadoPassword);
+    if (newPassword && confirmPassword) {
+        newPassword.addEventListener('input', actualizarEstadoPassword);
+        confirmPassword.addEventListener('input', actualizarEstadoPassword);
+    }
 
-    document.getElementById('profileForm').addEventListener('submit', async event => {
+    const profileForm = document.getElementById('profileForm');
+
+    if (profileForm) {
+        profileForm.addEventListener('submit', async event => {
         event.preventDefault();
 
         const nombre = document.getElementById('nombre').value.trim();
@@ -629,42 +644,54 @@ $avatarUrl = !empty($user['foto_perfil']) && is_file($user['foto_perfil'])
         } finally {
             setButtonLoading(button, false);
         }
-    });
+        });
+    }
 
-    document.getElementById('passwordForm').addEventListener('submit', async event => {
-        event.preventDefault();
+    const passwordForm = document.getElementById('passwordForm');
 
-        const password = newPassword.value;
-        const confirm = confirmPassword.value;
-        const button = document.getElementById('btnGuardarPassword');
+    if (passwordForm) {
+        passwordForm.addEventListener('submit', async event => {
+            event.preventDefault();
 
-        if (password.length < 6) {
-            await mostrarError('La contraseña debe tener al menos 6 caracteres.');
-            return;
-        }
+            const form = event.currentTarget;
+            const password = newPassword ? newPassword.value : '';
+            const confirm = confirmPassword ? confirmPassword.value : '';
+            const button = document.getElementById('btnGuardarPassword');
 
-        if (password !== confirm) {
-            await mostrarError('Las contraseñas no coinciden.');
-            return;
-        }
+            if (password.length < 6) {
+                await mostrarError('La contraseña debe tener al menos 6 caracteres.');
+                return;
+            }
 
-        const formData = new FormData();
-        formData.append('action', 'update_password');
-        formData.append('new_password', password);
-        formData.append('confirm_password', confirm);
+            if (password !== confirm) {
+                await mostrarError('Las contraseñas no coinciden.');
+                return;
+            }
 
-        try {
-            setButtonLoading(button, true, 'Actualizando...');
-            const data = await enviarFormulario(formData);
-            event.currentTarget.reset();
-            actualizarEstadoPassword();
-            await mostrarExito(data.message);
-        } catch (error) {
-            await mostrarError(error.message);
-        } finally {
-            setButtonLoading(button, false);
-        }
-    });
+            const formData = new FormData();
+            formData.append('action', 'update_password');
+            formData.append('new_password', password);
+            formData.append('confirm_password', confirm);
+
+            try {
+                setButtonLoading(button, true, 'Actualizando...');
+
+                const data = await enviarFormulario(formData);
+
+                form.reset();
+                actualizarEstadoPassword();
+                await mostrarExito(data.message);
+            } catch (error) {
+                await mostrarError(
+                    error instanceof Error
+                        ? error.message
+                        : 'No fue posible actualizar la contraseña.'
+                );
+            } finally {
+                setButtonLoading(button, false);
+            }
+        });
+    }
 
     const fotoInput = document.getElementById('foto_input');
     const avatarImage = document.getElementById('avatar-img');
@@ -674,14 +701,25 @@ $avatarUrl = !empty($user['foto_perfil']) && is_file($user['foto_perfil'])
         fotoInput.click();
     }
 
-    document.getElementById('btnCambiarFoto').addEventListener('click', abrirSelectorFoto);
-    document.getElementById('btnCambiarFotoTexto').addEventListener('click', abrirSelectorFoto);
+    const btnCambiarFoto = document.getElementById('btnCambiarFoto');
+    const btnCambiarFotoTexto = document.getElementById('btnCambiarFotoTexto');
 
-    avatarImage.addEventListener('error', () => {
-        avatarImage.src = avatarImage.dataset.fallback;
-    });
+    if (btnCambiarFoto) {
+        btnCambiarFoto.addEventListener('click', abrirSelectorFoto);
+    }
 
-    fotoInput.addEventListener('change', async () => {
+    if (btnCambiarFotoTexto) {
+        btnCambiarFotoTexto.addEventListener('click', abrirSelectorFoto);
+    }
+
+    if (avatarImage) {
+        avatarImage.addEventListener('error', () => {
+            avatarImage.src = avatarImage.dataset.fallback;
+        });
+    }
+
+    if (fotoInput) {
+        fotoInput.addEventListener('change', async () => {
         const file = fotoInput.files?.[0];
         if (!file) return;
 
@@ -717,7 +755,8 @@ $avatarUrl = !empty($user['foto_perfil']) && is_file($user['foto_perfil'])
             photoButtons.forEach(button => button.disabled = false);
             document.querySelector('.profile-avatar-wrap').classList.remove('uploading');
         }
-    });
+        });
+    }
     </script>
 </body>
 </html>

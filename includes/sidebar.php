@@ -1534,7 +1534,7 @@ $sidebar_navbar_version = is_file($sidebar_navbar_css)
     </nav>
 
     <div class="sidebar-footer">
-        <a href="logout.php" class="logout-btn">
+        <a href="logout.php" class="logout-btn" aria-label="Cerrar sesión" title="Cerrar sesión">
             <i class="fas fa-sign-out-alt"></i>
             <span class="logout-text">Cerrar Sesión</span>
         </a>
@@ -3502,7 +3502,14 @@ document.addEventListener('DOMContentLoaded', function () {
     };
     
     if (sidebarCollapseBtn) {
-        sidebarCollapseBtn.addEventListener('click', toggleCollapse);
+        sidebarCollapseBtn.addEventListener('click', () => {
+            if (window.innerWidth <= 768) {
+                closeMobileSidebar();
+                return;
+            }
+
+            toggleCollapse();
+        });
     }
     
     if (hamburgerMobile) {
