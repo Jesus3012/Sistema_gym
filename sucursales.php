@@ -43,6 +43,12 @@ if (!$dbSucursales instanceof mysqli) {
     $errorInstalacion =
         'El módulo todavía no está instalado. Ejecuta primero '
         . 'sql/01_migracion_multisucursal.sql.';
+} elseif (!sucursales_terminales_configuracion_instalada(
+    $dbSucursales
+)) {
+    $errorInstalacion =
+        'Falta actualizar la configuración de terminales. Ejecuta '
+        . 'sql/005_mercadopago_terminales_configuracion.sql.';
 } else {
     try {
         $sucursales = sucursales_listar($dbSucursales);
@@ -131,6 +137,15 @@ $sucursalActivaSesion = (int) ($_SESSION['sucursal_id'] ?? 0);
     <link
         rel="stylesheet"
         href="css/sucursales.css?v=<?php echo is_file($sucursalesCss) ? (int) filemtime($sucursalesCss) : time(); ?>"
+    >
+
+
+    <?php
+    $terminalesCss = __DIR__ . '/css/sucursales_terminales.css';
+    ?>
+    <link
+        rel="stylesheet"
+        href="css/sucursales_terminales.css?v=<?php echo is_file($terminalesCss) ? (int) filemtime($terminalesCss) : time(); ?>"
     >
 
 </head>
@@ -850,21 +865,81 @@ $sucursalActivaSesion = (int) ($_SESSION['sucursal_id'] ?? 0);
                         </div>
                     <?php else: ?>
                         <?php foreach ($terminalesSucursal as $terminal): ?>
+                            <?php
+                            $estadoValidacion = (string) (
+                                $terminal['validacion_estado'] ?? 'pendiente'
+                            );
+                            $validacionClase = $estadoValidacion === 'valida'
+                                ? 'valid'
+                                : ($estadoValidacion === 'error'
+                                    ? 'error'
+                                    : 'pending');
+                            $validacionTexto = $estadoValidacion === 'valida'
+                                ? 'Conexión verificada'
+                                : ($estadoValidacion === 'error'
+                                    ? 'Requiere revisión'
+                                    : 'Pendiente de validar');
+                            $validacionIcono = $estadoValidacion === 'valida'
+                                ? 'fa-circle-check'
+                                : ($estadoValidacion === 'error'
+                                    ? 'fa-triangle-exclamation'
+                                    : 'fa-clock');
+                            $impresionTexto = (
+                                (string) ($terminal['print_on_terminal'] ?? '')
+                                === 'seller_ticket'
+                            ) ? 'Ticket del vendedor' : 'Sin impresión';
+                            $expiracionTexto = preg_replace(
+                                '/^PT([0-9]+)M$/',
+                                '$1 min',
+                                (string) ($terminal['order_expiration'] ?? 'PT3M')
+                            );
+                            ?>
                             <article class="br-terminal-row">
                                 <div class="br-terminal-main">
                                     <span class="br-row-icon">
                                         <i class="fas fa-mobile-screen-button"></i>
                                     </span>
 
-                                    <div class="br-row-copy">
-                                        <strong>
-                                            <?php echo sucursalesH($terminal['nombre']); ?>
-                                        </strong>
+                                    <div class="br-terminal-details">
+                                        <div class="br-terminal-title-line">
+                                            <strong>
+                                                <?php echo sucursalesH($terminal['nombre']); ?>
+                                            </strong>
+
+                                            <span class="br-validation-badge <?php echo $validacionClase; ?>">
+                                                <i class="fas <?php echo $validacionIcono; ?>"></i>
+                                                <?php echo $validacionTexto; ?>
+                                            </span>
+                                        </div>
 
                                         <span class="br-terminal-id">
                                             ID técnico:
                                             <?php echo sucursalesH($terminal['terminal_id']); ?>
                                         </span>
+
+                                        <div class="br-terminal-meta">
+                                            <span class="br-terminal-meta-item">
+                                                <i class="fas fa-key"></i>
+                                                <?php echo sucursalesH((string) $terminal['token_mascara']); ?>
+                                            </span>
+                                            <span class="br-terminal-meta-item">
+                                                <i class="fas fa-print"></i>
+                                                <?php echo sucursalesH($impresionTexto); ?>
+                                            </span>
+                                            <span class="br-terminal-meta-item">
+                                                <i class="fas fa-hourglass-half"></i>
+                                                <?php echo sucursalesH((string) $expiracionTexto); ?>
+                                            </span>
+                                        </div>
+
+                                        <?php if (trim((string) ($terminal['validacion_mensaje'] ?? '')) !== ''): ?>
+                                            <p class="br-terminal-validation-message">
+                                                <i class="fas fa-circle-info"></i>
+                                                <span>
+                                                    <?php echo sucursalesH((string) $terminal['validacion_mensaje']); ?>
+                                                </span>
+                                            </p>
+                                        <?php endif; ?>
                                     </div>
                                 </div>
 
@@ -880,6 +955,16 @@ $sucursalActivaSesion = (int) ($_SESSION['sucursal_id'] ?? 0);
                                             ? 'Activa'
                                             : 'Inactiva'; ?>
                                     </span>
+
+                                    <button
+                                        type="button"
+                                        class="br-action-text br-test-terminal-button"
+                                        data-id="<?php echo (int) $terminal['id']; ?>"
+                                        data-name="<?php echo sucursalesH($terminal['nombre']); ?>"
+                                    >
+                                        <i class="fas fa-plug-circle-check"></i>
+                                        Probar
+                                    </button>
 
                                     <button
                                         type="button"
@@ -916,47 +1001,150 @@ $sucursalActivaSesion = (int) ($_SESSION['sucursal_id'] ?? 0);
 </div>
 
 <div class="br-modal" id="terminalModal" aria-hidden="true">
-    <div class="br-modal-card small" role="dialog" aria-modal="true" aria-labelledby="terminalModalTitle">
-        <form id="terminalForm">
+    <div class="br-modal-card br-terminal-modal" role="dialog" aria-modal="true" aria-labelledby="terminalModalTitle">
+        <form id="terminalForm" autocomplete="off">
             <input type="hidden" name="sucursal_id" value="<?php echo (int) $sucursalSeleccionada['id']; ?>">
             <input type="hidden" name="terminal_registro_id" id="terminalRegistryId" value="">
 
             <header class="br-modal-header">
                 <div>
-                    <h2 id="terminalModalTitle">Registrar terminal Point</h2>
-                    <p>Este identificador es técnico y debe coincidir exactamente con Mercado Pago.</p>
+                    <span class="br-modal-kicker br-modal-kicker-blue">
+                        Integración de pagos
+                    </span>
+                    <h2 id="terminalModalTitle">Vincular terminal Point</h2>
+                    <p>
+                        Guarda la credencial de la cuenta y verifica que el
+                        dispositivo pertenezca a ella antes de habilitar cobros.
+                    </p>
                 </div>
-                <button type="button" class="br-modal-close" data-close-modal="terminalModal"><i class="fas fa-xmark"></i></button>
+                <button type="button" class="br-modal-close" data-close-modal="terminalModal" aria-label="Cerrar">
+                    <i class="fas fa-xmark"></i>
+                </button>
             </header>
 
             <div class="br-modal-body">
-                <div class="br-form-grid">
-                    <div class="br-field full">
-                        <label for="terminalExternalId">Terminal ID *</label>
-                        <input class="br-control" type="text" id="terminalExternalId" name="terminal_id" maxlength="120" required placeholder="NEWLAND_N950__...">
-                    </div>
-                    <div class="br-field full">
-                        <label for="terminalName">Nombre para identificarla *</label>
-                        <input class="br-control" type="text" id="terminalName" name="nombre" maxlength="100" required placeholder="Terminal recepción">
-                    </div>
-                    <div class="br-field full">
-                        <div class="br-checks">
-                            <label class="br-check">
-                                <input type="checkbox" id="terminalDefault" name="predeterminada" value="1">
-                                <span><strong>Terminal predeterminada</strong><span>Se seleccionará automáticamente en los cobros de esta sede.</span></span>
-                            </label>
-                            <label class="br-check">
-                                <input type="checkbox" id="terminalActive" name="activo" value="1" checked>
-                                <span><strong>Terminal activa</strong><span>Permite utilizarla en nuevas operaciones.</span></span>
-                            </label>
+                <section class="br-terminal-section">
+                    <div class="br-terminal-section-heading">
+                        <i class="fas fa-mobile-screen-button"></i>
+                        <div>
+                            <strong>Identificación del dispositivo</strong>
+                            <small>Los dos valores ayudan a reconocer la terminal dentro de esta sucursal.</small>
                         </div>
                     </div>
+
+                    <div class="br-form-grid">
+                        <div class="br-field full">
+                            <label for="terminalExternalId">Terminal ID *</label>
+                            <input class="br-control" type="text" id="terminalExternalId" name="terminal_id" maxlength="120" required placeholder="NEWLAND_N950__..." spellcheck="false">
+                        </div>
+                        <div class="br-field full">
+                            <label for="terminalName">Nombre interno *</label>
+                            <input class="br-control" type="text" id="terminalName" name="nombre" maxlength="100" required placeholder="Ej. Terminal recepción">
+                        </div>
+                    </div>
+                </section>
+
+                <section class="br-terminal-section">
+                    <div class="br-terminal-section-heading">
+                        <i class="fas fa-key"></i>
+                        <div>
+                            <strong>Cuenta de Mercado Pago</strong>
+                            <small>La credencial se cifra antes de almacenarse y no volverá a mostrarse completa.</small>
+                        </div>
+                    </div>
+
+                    <div class="br-field full">
+                        <label for="terminalAccessToken">Access Token *</label>
+                        <div class="br-token-control">
+                            <input
+                                class="br-control"
+                                type="password"
+                                id="terminalAccessToken"
+                                name="access_token"
+                                maxlength="500"
+                                placeholder="APP_USR-..."
+                                autocomplete="new-password"
+                                spellcheck="false"
+                            >
+                            <button type="button" class="br-token-toggle" id="terminalTokenToggle" aria-label="Mostrar u ocultar Access Token">
+                                <i class="fas fa-eye"></i>
+                            </button>
+                        </div>
+                        <p class="br-terminal-help" id="terminalTokenHelp">
+                            <i class="fas fa-shield-halved"></i>
+                            <span>Al registrar una terminal nueva, pega el Access Token de la cuenta propietaria del dispositivo.</span>
+                        </p>
+                    </div>
+                </section>
+
+                <section class="br-terminal-section">
+                    <div class="br-terminal-section-heading">
+                        <i class="fas fa-sliders"></i>
+                        <div>
+                            <strong>Comportamiento del cobro</strong>
+                            <small>Estos valores se aplicarán cuando esta terminal reciba una nueva orden.</small>
+                        </div>
+                    </div>
+
+                    <div class="br-form-grid">
+                        <div class="br-field">
+                            <label for="terminalPrint">Impresión en terminal</label>
+                            <select class="br-control" id="terminalPrint" name="print_on_terminal">
+                                <option value="no_ticket">No imprimir ticket</option>
+                                <option value="seller_ticket">Imprimir ticket del vendedor</option>
+                            </select>
+                        </div>
+
+                        <div class="br-field">
+                            <label for="terminalExpiration">Tiempo para pagar</label>
+                            <select class="br-control" id="terminalExpiration" name="order_expiration">
+                                <option value="PT1M">1 minuto</option>
+                                <option value="PT2M">2 minutos</option>
+                                <option value="PT3M" selected>3 minutos</option>
+                                <option value="PT5M">5 minutos</option>
+                                <option value="PT10M">10 minutos</option>
+                            </select>
+                        </div>
+
+                        <div class="br-field full">
+                            <label for="terminalInstallmentsCost">Costo de mensualidades</label>
+                            <select class="br-control" id="terminalInstallmentsCost" name="installments_cost">
+                                <option value="terminal">Determinado por la terminal y la cuenta</option>
+                                <option value="seller">Asumido por el negocio</option>
+                                <option value="buyer">Asumido por el comprador</option>
+                            </select>
+                            <p class="br-terminal-help">
+                                <i class="fas fa-circle-info"></i>
+                                <span>Se conserva como referencia administrativa. Las mensualidades disponibles se seleccionan directamente en la terminal.</span>
+                            </p>
+                        </div>
+                    </div>
+                </section>
+
+                <div class="br-checks">
+                    <label class="br-check">
+                        <input type="checkbox" id="terminalDefault" name="predeterminada" value="1">
+                        <span>
+                            <strong>Terminal predeterminada</strong>
+                            <span>Se elegirá automáticamente para los cobros de esta sede.</span>
+                        </span>
+                    </label>
+                    <label class="br-check">
+                        <input type="checkbox" id="terminalActive" name="activo" value="1" checked>
+                        <span>
+                            <strong>Habilitar para cobros</strong>
+                            <span>Solo permanecerá activa si la prueba de conexión termina correctamente.</span>
+                        </span>
+                    </label>
                 </div>
             </div>
 
             <footer class="br-modal-footer">
                 <button type="button" class="br-secondary" data-close-modal="terminalModal">Cancelar</button>
-                <button type="submit" class="br-primary"><i class="fas fa-check"></i>Guardar terminal</button>
+                <button type="submit" class="br-primary" id="terminalSubmitButton">
+                    <i class="fas fa-plug-circle-check"></i>
+                    Guardar y probar conexión
+                </button>
             </footer>
         </form>
     </div>
@@ -1423,12 +1611,60 @@ $sucursalActivaSesion = (int) ($_SESSION['sucursal_id'] ?? 0);
 
             if (byId('terminalModalTitle')) {
                 byId('terminalModalTitle').textContent =
-                    'Registrar terminal Point';
+                    'Vincular terminal Point';
+            }
+
+            if (byId('terminalAccessToken')) {
+                byId('terminalAccessToken').type = 'password';
+                byId('terminalAccessToken').value = '';
+                byId('terminalAccessToken').required = true;
+                byId('terminalAccessToken').placeholder = 'APP_USR-...';
+            }
+
+            if (byId('terminalTokenToggle')) {
+                byId('terminalTokenToggle').innerHTML =
+                    '<i class="fas fa-eye"></i>';
+            }
+
+            if (byId('terminalTokenHelp')) {
+                byId('terminalTokenHelp').innerHTML =
+                    '<i class="fas fa-shield-halved"></i>' +
+                    '<span>Al registrar una terminal nueva, pega el Access Token de la cuenta propietaria del dispositivo.</span>';
+            }
+
+            if (byId('terminalPrint')) {
+                byId('terminalPrint').value = 'no_ticket';
+            }
+
+            if (byId('terminalExpiration')) {
+                byId('terminalExpiration').value = 'PT3M';
+            }
+
+            if (byId('terminalInstallmentsCost')) {
+                byId('terminalInstallmentsCost').value = 'terminal';
             }
 
             if (byId('terminalActive')) {
                 byId('terminalActive').checked = true;
             }
+        }
+
+        var terminalTokenToggle = byId('terminalTokenToggle');
+
+        if (terminalTokenToggle) {
+            terminalTokenToggle.addEventListener('click', function () {
+                var token = byId('terminalAccessToken');
+
+                if (!token) {
+                    return;
+                }
+
+                var mostrar = token.type === 'password';
+                token.type = mostrar ? 'text' : 'password';
+                terminalTokenToggle.innerHTML = mostrar
+                    ? '<i class="fas fa-eye-slash"></i>'
+                    : '<i class="fas fa-eye"></i>';
+            });
         }
 
         if (newTerminalButton) {
@@ -1455,7 +1691,7 @@ $sucursalActivaSesion = (int) ($_SESSION['sucursal_id'] ?? 0);
 
                 if (byId('terminalModalTitle')) {
                     byId('terminalModalTitle').textContent =
-                        'Editar terminal';
+                        'Editar terminal Point';
                 }
 
                 if (byId('terminalRegistryId')) {
@@ -1471,6 +1707,41 @@ $sucursalActivaSesion = (int) ($_SESSION['sucursal_id'] ?? 0);
                 if (byId('terminalName')) {
                     byId('terminalName').value =
                         terminal.nombre || '';
+                }
+
+                if (byId('terminalAccessToken')) {
+                    byId('terminalAccessToken').required =
+                        !Number(terminal.token_configurado);
+                    byId('terminalAccessToken').value = '';
+                    byId('terminalAccessToken').placeholder =
+                        terminal.token_configurado
+                            ? 'Dejar vacío para conservar ' + (terminal.token_mascara || 'la credencial guardada')
+                            : 'APP_USR-...';
+                }
+
+                if (byId('terminalTokenHelp')) {
+                    byId('terminalTokenHelp').innerHTML =
+                        '<i class="fas fa-shield-halved"></i>' +
+                        '<span>' + (
+                            terminal.token_configurado
+                                ? 'Credencial guardada: ' + (terminal.token_mascara || 'configurada') + '. Déjala vacía para conservarla o pega una nueva para reemplazarla.'
+                                : 'Esta terminal todavía no tiene una credencial guardada.'
+                        ) + '</span>';
+                }
+
+                if (byId('terminalPrint')) {
+                    byId('terminalPrint').value =
+                        terminal.print_on_terminal || 'no_ticket';
+                }
+
+                if (byId('terminalExpiration')) {
+                    byId('terminalExpiration').value =
+                        terminal.order_expiration || 'PT3M';
+                }
+
+                if (byId('terminalInstallmentsCost')) {
+                    byId('terminalInstallmentsCost').value =
+                        terminal.installments_cost || 'terminal';
                 }
 
                 if (byId('terminalDefault')) {
@@ -1508,6 +1779,18 @@ $sucursalActivaSesion = (int) ($_SESSION['sucursal_id'] ?? 0);
                     nombre: byId('terminalName')
                         ? byId('terminalName').value
                         : '',
+                    access_token: byId('terminalAccessToken')
+                        ? byId('terminalAccessToken').value
+                        : '',
+                    print_on_terminal: byId('terminalPrint')
+                        ? byId('terminalPrint').value
+                        : 'no_ticket',
+                    order_expiration: byId('terminalExpiration')
+                        ? byId('terminalExpiration').value
+                        : 'PT3M',
+                    installments_cost: byId('terminalInstallmentsCost')
+                        ? byId('terminalInstallmentsCost').value
+                        : 'terminal',
                     predeterminada:
                         byId('terminalDefault')
                         && byId('terminalDefault').checked
@@ -1529,11 +1812,15 @@ $sucursalActivaSesion = (int) ($_SESSION['sucursal_id'] ?? 0);
                     closeModal('terminalModal');
 
                     await showAlert({
-                        icon: 'success',
-                        title: 'Terminal guardada',
-                        text: payload.mensaje,
-                        timer: 1400,
-                        showConfirmButton: false
+                        icon: payload.validacion_ok ? 'success' : 'warning',
+                        title: payload.validacion_ok
+                            ? 'Terminal vinculada'
+                            : 'Terminal guardada sin activar',
+                        text: payload.validacion_ok
+                            ? payload.mensaje
+                            : payload.mensaje + ' ' + (payload.validacion_mensaje || ''),
+                        confirmButtonText: 'Entendido',
+                        confirmButtonColor: '#1e3a8a'
                     });
 
                     window.location.reload();
@@ -1549,6 +1836,53 @@ $sucursalActivaSesion = (int) ($_SESSION['sucursal_id'] ?? 0);
                 }
             });
         }
+
+        all('.br-test-terminal-button').forEach(function (button) {
+            button.addEventListener('click', async function () {
+                if (button.disabled) {
+                    return;
+                }
+
+                var original = button.innerHTML;
+                button.disabled = true;
+                button.classList.add('is-loading');
+                button.innerHTML =
+                    '<i class="fas fa-spinner"></i> Probando';
+
+                try {
+                    var payload = await postAction(
+                        'probar_terminal',
+                        {
+                            sucursal_id: selectedBranchId,
+                            terminal_registro_id:
+                                button.getAttribute('data-id')
+                        }
+                    );
+
+                    await showAlert({
+                        icon: 'success',
+                        title: 'Conexión correcta',
+                        text: payload.mensaje,
+                        confirmButtonColor: '#1e3a8a'
+                    });
+
+                    window.location.reload();
+                } catch (error) {
+                    await showAlert({
+                        icon: 'error',
+                        title: 'No se pudo validar',
+                        text: error.message,
+                        confirmButtonColor: '#1e3a8a'
+                    });
+
+                    window.location.reload();
+                } finally {
+                    button.disabled = false;
+                    button.classList.remove('is-loading');
+                    button.innerHTML = original;
+                }
+            });
+        });
 
         all('.toggle-terminal-button').forEach(function (button) {
             button.addEventListener('click', async function () {

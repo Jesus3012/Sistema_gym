@@ -1,11 +1,8 @@
 <?php
-declare(strict_types=1);
+// Archivo: api/mercadopago/_bootstrap_inscripciones.php
+// Bootstrap JSON para cobros Point de inscripciones y renovaciones.
 
-/*
- * Bootstrap JSON para los endpoints Point de inscripciones.
- * No permite que warnings, HTML, espacios o errores de archivos incluidos
- * contaminen la respuesta que consume fetch().
- */
+declare(strict_types=1);
 
 if (ob_get_level() === 0) {
     ob_start();
@@ -27,7 +24,6 @@ function mp_api_clean_buffer(): void
 function mp_api_json(array $payload, int $status = 200): void
 {
     $GLOBALS['mp_api_response_sent'] = true;
-
     mp_api_clean_buffer();
 
     if (!headers_sent()) {
@@ -39,29 +35,20 @@ function mp_api_json(array $payload, int $status = 200): void
 
     $json = json_encode(
         $payload,
-        JSON_UNESCAPED_UNICODE |
-        JSON_UNESCAPED_SLASHES |
-        JSON_INVALID_UTF8_SUBSTITUTE
+        JSON_UNESCAPED_UNICODE
+        | JSON_UNESCAPED_SLASHES
+        | JSON_INVALID_UTF8_SUBSTITUTE
     );
 
-    if ($json === false) {
-        $json = json_encode([
-            'success' => false,
-            'message' => 'No se pudo generar la respuesta JSON.',
-            'code' => 'json_encode_failed',
-        ]);
-    }
-
-    echo $json;
+    echo $json === false
+        ? '{"success":false,"message":"No se pudo generar la respuesta JSON."}'
+        : $json;
     exit;
 }
 
 function mp_api_ok(array $payload = []): void
 {
-    mp_api_json(
-        array_merge(['success' => true], $payload),
-        200
-    );
+    mp_api_json(array_merge(['success' => true], $payload));
 }
 
 function mp_api_error(
@@ -93,7 +80,7 @@ function mp_api_input(): array
 
     if (!is_array($decoded)) {
         mp_api_error(
-            'El cuerpo enviado al endpoint no contiene JSON válido.',
+            'El cuerpo enviado no contiene JSON válido.',
             400,
             ['code' => 'invalid_request_json']
         );
@@ -105,20 +92,20 @@ function mp_api_input(): array
 function mp_api_exception(Throwable $error): void
 {
     error_log(
-        '[Point inscripciones] ' .
-        get_class($error) .
-        ': ' .
-        $error->getMessage() .
-        ' en ' .
-        $error->getFile() .
-        ':' .
-        $error->getLine()
+        '[Point inscripciones] '
+        . get_class($error)
+        . ': '
+        . $error->getMessage()
+        . ' en '
+        . $error->getFile()
+        . ':'
+        . $error->getLine()
     );
 
     $properties = get_object_vars($error);
     $httpCode = (int) ($properties['mp_http_code'] ?? 0);
-    $mpResponse = isset($properties['mp_response']) &&
-        is_array($properties['mp_response'])
+    $mpResponse = isset($properties['mp_response'])
+        && is_array($properties['mp_response'])
             ? $properties['mp_response']
             : [];
 
@@ -126,20 +113,19 @@ function mp_api_exception(Throwable $error): void
     $firstCode = '';
 
     if (
-        is_array($errors) &&
-        isset($errors[0]) &&
-        is_array($errors[0])
+        is_array($errors)
+        && isset($errors[0])
+        && is_array($errors[0])
     ) {
         $firstCode = trim((string) ($errors[0]['code'] ?? ''));
     }
 
     if (
-        $httpCode === 409 &&
-        $firstCode === 'already_queued_order_on_terminal'
+        $httpCode === 409
+        && $firstCode === 'already_queued_order_on_terminal'
     ) {
         mp_api_error(
-            'La terminal ya tiene un cobro pendiente. ' .
-            'Termínalo o cancélalo directamente en la Point.',
+            'La terminal ya tiene un cobro pendiente. Termínalo o cancélalo directamente en la Point.',
             409,
             [
                 'code' => $firstCode,
@@ -165,10 +151,6 @@ function mp_api_exception(Throwable $error): void
     );
 }
 
-/*
- * Convierte warnings y notices en excepciones capturables.
- * Los errores suprimidos con @ se respetan.
- */
 set_error_handler(
     static function (
         int $severity,
@@ -197,11 +179,6 @@ register_shutdown_function(
         }
 
         $last = error_get_last();
-
-        if (!is_array($last)) {
-            return;
-        }
-
         $fatalTypes = [
             E_ERROR,
             E_PARSE,
@@ -210,14 +187,12 @@ register_shutdown_function(
             E_USER_ERROR,
         ];
 
-        if (!in_array((int) ($last['type'] ?? 0), $fatalTypes, true)) {
+        if (
+            !is_array($last)
+            || !in_array((int) ($last['type'] ?? 0), $fatalTypes, true)
+        ) {
             return;
         }
-
-        error_log(
-            '[Point inscripciones][fatal] ' .
-            (string) ($last['message'] ?? 'Error fatal')
-        );
 
         mp_api_clean_buffer();
 
@@ -226,66 +201,40 @@ register_shutdown_function(
         }
 
         http_response_code(500);
-
         echo json_encode(
             [
                 'success' => false,
-                'message' =>
-                    'Ocurrió un error fatal de PHP en el endpoint Point.',
+                'message' => 'Ocurrió un error fatal en el endpoint Point.',
                 'code' => 'php_fatal_error',
-                'file' => basename((string) ($last['file'] ?? '')),
-                'line' => (int) ($last['line'] ?? 0),
             ],
-            JSON_UNESCAPED_UNICODE |
-            JSON_UNESCAPED_SLASHES |
-            JSON_INVALID_UTF8_SUBSTITUTE
+            JSON_UNESCAPED_UNICODE
+            | JSON_UNESCAPED_SLASHES
         );
     }
 );
+
+/** @var mysqli|null $conn */
+$conn = null;
+/** @var int $usuarioId */
+$usuarioId = 0;
+/** @var int $sucursalId */
+$sucursalId = 0;
+/** @var string $terminalId */
+$terminalId = '';
+/** @var array<string,mixed> $terminalConfig */
+$terminalConfig = [];
 
 try {
     if (session_status() !== PHP_SESSION_ACTIVE) {
         session_start();
     }
 
-    mysqli_report(
-        MYSQLI_REPORT_ERROR |
-        MYSQLI_REPORT_STRICT
-    );
+    mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 
-    $databaseFile =
-        __DIR__ . '/../../config/database.php';
-    $clientFile =
-        __DIR__ . '/../../includes/mercadopago_client.php';
-    $serviceFile =
-        __DIR__ . '/../../includes/mercadopago_service.php';
-    $helperFile =
-        __DIR__ . '/../../includes/mercadopago_inscripciones.php';
-
-    foreach (
-        [
-            $databaseFile,
-            $clientFile,
-            $serviceFile,
-            $helperFile,
-        ] as $requiredFile
-    ) {
-        if (!is_file($requiredFile)) {
-            throw new RuntimeException(
-                'No se encontró el archivo requerido: ' .
-                str_replace(
-                    dirname(__DIR__, 2) . DIRECTORY_SEPARATOR,
-                    '',
-                    $requiredFile
-                )
-            );
-        }
-    }
-
-    require_once $databaseFile;
-    require_once $clientFile;
-    require_once $serviceFile;
-    require_once $helperFile;
+    require_once __DIR__ . '/../../config/database.php';
+    require_once __DIR__ . '/../../includes/mercadopago_client.php';
+    require_once __DIR__ . '/../../includes/mercadopago_service.php';
+    require_once __DIR__ . '/../../includes/mercadopago_inscripciones.php';
 
     if (empty($_SESSION['user_id'])) {
         mp_api_error(
@@ -293,6 +242,16 @@ try {
             401,
             ['code' => 'session_expired']
         );
+    }
+
+    $rol = strtolower(trim((string) ($_SESSION['user_rol'] ?? '')));
+
+    if (!in_array(
+        $rol,
+        ['super_administrador', 'admin', 'administrador', 'recepcionista'],
+        true
+    )) {
+        mp_api_error('No tienes permiso para realizar cobros.', 403);
     }
 
     $usuarioId = (int) $_SESSION['user_id'];
@@ -306,22 +265,17 @@ try {
         );
     }
 
-    if (!class_exists('Database')) {
-        throw new RuntimeException(
-            'La clase Database no se encuentra disponible.'
-        );
-    }
-
     $database = new Database();
     $conn = $database->getConnection();
 
     if (!$conn instanceof mysqli) {
         throw new RuntimeException(
-            'No se pudo crear una conexión mysqli.'
+            'No fue posible conectar con la base de datos.'
         );
     }
 
     $conn->set_charset('utf8mb4');
+    mp_set_runtime_database($conn);
 
     $stmtSucursal = $conn->prepare(
         "SELECT id, nombre, estado
@@ -331,16 +285,12 @@ try {
     );
     $stmtSucursal->bind_param('i', $sucursalId);
     $stmtSucursal->execute();
-
-    $sucursalApi = $stmtSucursal
-        ->get_result()
-        ->fetch_assoc();
-
+    $sucursalApi = $stmtSucursal->get_result()->fetch_assoc();
     $stmtSucursal->close();
 
     if (
-        !is_array($sucursalApi) ||
-        ($sucursalApi['estado'] ?? '') !== 'activa'
+        !is_array($sucursalApi)
+        || (string) ($sucursalApi['estado'] ?? '') !== 'activa'
     ) {
         mp_api_error(
             'La sucursal seleccionada está inactiva.',
@@ -349,30 +299,19 @@ try {
         );
     }
 
-    /*
-     * La fuente de la terminal y del token es:
-     * config/mercadopago_config.php
-     */
-    $terminalId = defined('MP_TERMINAL_ID')
-        ? trim((string) MP_TERMINAL_ID)
-        : '';
+    $terminalConfig = mp_terminal_configurar_sucursal(
+        $conn,
+        $sucursalId
+    );
+    $terminalId = trim((string) (
+        $terminalConfig['terminal_id'] ?? ''
+    ));
 
     if ($terminalId === '') {
         mp_api_error(
-            'MP_TERMINAL_ID no está configurado.',
-            500,
+            'La sucursal no tiene una terminal Point validada y activa.',
+            409,
             ['code' => 'terminal_not_configured']
-        );
-    }
-
-    if (
-        !defined('MP_ACCESS_TOKEN') ||
-        trim((string) MP_ACCESS_TOKEN) === ''
-    ) {
-        mp_api_error(
-            'MP_ACCESS_TOKEN no está configurado.',
-            500,
-            ['code' => 'access_token_not_configured']
         );
     }
 } catch (Throwable $error) {

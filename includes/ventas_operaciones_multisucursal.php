@@ -15,16 +15,26 @@ function ventas_multi_rol_base(): string
         ?? ''
     )));
 
-    return $rol === 'administrador' ? 'admin' : $rol;
+    $rol = str_replace([' ', '-'], '_', $rol);
+
+    return in_array(
+        $rol,
+        [
+            'admin',
+            'administrador',
+            'super_administrador',
+            'superadministrador',
+            'super_admin',
+        ],
+        true
+    )
+        ? 'admin'
+        : $rol;
 }
 
 function ventas_multi_es_admin(): bool
 {
-    return in_array(
-        ventas_multi_rol_base(),
-        ['admin', 'administrador'],
-        true
-    );
+    return ventas_multi_rol_base() === 'admin';
 }
 
 function ventas_multi_vista_global(): bool

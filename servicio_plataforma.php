@@ -31,6 +31,19 @@ if (empty($_SESSION['servicio_plataforma_csrf'])) {
 }
 
 $csrf = (string) $_SESSION['servicio_plataforma_csrf'];
+
+/*
+ * Token de un solo uso para impedir que una renovación se registre dos veces.
+ * Se conserva en sesión hasta que el formulario se confirma correctamente.
+ */
+if (empty($_SESSION['servicio_plataforma_renovacion_token'])) {
+    $_SESSION['servicio_plataforma_renovacion_token'] =
+        bin2hex(random_bytes(32));
+}
+
+$renovacionToken = (string) (
+    $_SESSION['servicio_plataforma_renovacion_token'] ?? ''
+);
 $userId = (int) ($_SESSION['user_id'] ?? 0);
 $userName = trim((string) ($_SESSION['user_name'] ?? 'Superadministrador'));
 
@@ -94,7 +107,127 @@ function servicioPlataformaFechaMayor(
     return $primera >= $segunda ? $primera : $segunda;
 }
 
+function servicioPlataformaColumnaExiste(
+    mysqli $db,
+    string $tabla,
+    string $columna
+): bool {
+    if (
+        !preg_match('/^[a-zA-Z0-9_]+$/', $tabla)
+        || !preg_match('/^[a-zA-Z0-9_]+$/', $columna)
+    ) {
+        return false;
+    }
+
+    $tablaEscapada = $db->real_escape_string($tabla);
+    $columnaEscapada = $db->real_escape_string($columna);
+    $resultado = $db->query(
+        "SHOW COLUMNS FROM `{$tablaEscapada}` LIKE '{$columnaEscapada}'"
+    );
+
+    return $resultado instanceof mysqli_result
+        && $resultado->num_rows > 0;
+}
+
+function servicioPlataformaAbrirComprobante(
+    mysqli $db,
+    int $movimientoId,
+    bool $columnaDisponible
+): void {
+    if ($movimientoId <= 0 || !$columnaDisponible) {
+        http_response_code(404);
+        exit('El comprobante solicitado no está disponible.');
+    }
+
+    $stmt = $db->prepare(
+        "SELECT comprobante_pdf
+         FROM servicio_plataforma_historial
+         WHERE id = ?
+           AND tipo = 'renovacion'
+         LIMIT 1"
+    );
+
+    if (!$stmt) {
+        http_response_code(500);
+        exit('No fue posible consultar el comprobante.');
+    }
+
+    $stmt->bind_param('i', $movimientoId);
+    $stmt->execute();
+    $fila = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    $rutaRelativa = trim((string) ($fila['comprobante_pdf'] ?? ''));
+
+    if ($rutaRelativa === '') {
+        http_response_code(404);
+        exit('Este movimiento no tiene un comprobante almacenado.');
+    }
+
+    $directorioPermitido = realpath(
+        __DIR__ . '/uploads/renovaciones_servicio'
+    );
+    $archivo = realpath(
+        __DIR__ . '/' . ltrim(str_replace('\\', '/', $rutaRelativa), '/')
+    );
+
+    if ($directorioPermitido === false || $archivo === false) {
+        http_response_code(404);
+        exit('El archivo del comprobante ya no existe.');
+    }
+
+    $directorioNormalizado = strtolower(
+        rtrim(str_replace('\\', '/', $directorioPermitido), '/') . '/'
+    );
+    $archivoNormalizado = strtolower(
+        str_replace('\\', '/', $archivo)
+    );
+
+    if (
+        strpos($archivoNormalizado, $directorioNormalizado) !== 0
+        || !is_file($archivo)
+        || !is_readable($archivo)
+        || strtolower(pathinfo($archivo, PATHINFO_EXTENSION)) !== 'pdf'
+    ) {
+        http_response_code(403);
+        exit('La ruta del comprobante no es válida.');
+    }
+
+    while (ob_get_level() > 0) {
+        ob_end_clean();
+    }
+
+    header('Content-Type: application/pdf');
+    header(
+        'Content-Disposition: inline; filename="'
+        . basename($archivo)
+        . '"'
+    );
+    header('Content-Length: ' . (string) filesize($archivo));
+    header('X-Content-Type-Options: nosniff');
+    header('Cache-Control: private, max-age=0, must-revalidate');
+    readfile($archivo);
+    exit();
+}
+
 $instalado = servicio_plataforma_instalado($db);
+$columnaComprobanteDisponible = $instalado
+    && servicioPlataformaColumnaExiste(
+        $db,
+        'servicio_plataforma_historial',
+        'comprobante_pdf'
+    );
+
+if (
+    isset($_GET['accion'])
+    && (string) $_GET['accion'] === 'ver_comprobante'
+) {
+    servicioPlataformaAbrirComprobante(
+        $db,
+        (int) ($_GET['id'] ?? 0),
+        $columnaComprobanteDisponible
+    );
+}
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$instalado) {
@@ -359,6 +492,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         if ($accion === 'renovar') {
+            /*
+             * La renovación usa un token de un solo uso. PHP mantiene
+             * bloqueada la sesión mientras procesa la petición, por lo que
+             * un segundo clic queda en espera y después encuentra el token
+             * consumido, evitando una segunda inserción.
+             */
+            $tokenRenovacionRecibido = servicioPlataformaPost(
+                'renovacion_token'
+            );
+            $tokenRenovacionSesion = (string) (
+                $_SESSION['servicio_plataforma_renovacion_token'] ?? ''
+            );
+
+            if (
+                $tokenRenovacionRecibido === ''
+                || $tokenRenovacionSesion === ''
+                || !hash_equals(
+                    $tokenRenovacionSesion,
+                    $tokenRenovacionRecibido
+                )
+            ) {
+                throw new RuntimeException(
+                    'Esta renovación ya fue procesada o el formulario expiró. Actualiza la página antes de volver a intentarlo.'
+                );
+            }
+
+            /* Consumirlo antes de modificar la base de datos. */
+            unset($_SESSION['servicio_plataforma_renovacion_token']);
+
             $configuracion = servicio_plataforma_obtener($db);
 
             if (!$configuracion) {
@@ -464,6 +626,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             );
             $importe = round($precioMensual * $meses, 2);
             $fechaAnterior = $fechaVencimientoActual;
+            $historialRenovacionId = 0;
 
             $db->begin_transaction();
 
@@ -478,7 +641,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                          activo = 1,
                          actualizado_por = ?,
                          updated_at = NOW()
-                     WHERE id = 1"
+                     WHERE id = 1
+                       AND fecha_vencimiento = ?"
                 );
 
                 if (!$stmt) {
@@ -489,19 +653,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
 
                 $stmt->bind_param(
-                    'ssdidi',
+                    'ssdidis',
                     $fechaInicioRenovacion,
                     $fechaNueva,
                     $precioMensual,
                     $meses,
                     $importe,
-                    $userId
+                    $userId,
+                    $fechaAnterior
                 );
 
                 if (!$stmt->execute()) {
                     throw new RuntimeException(
                         'No fue posible aplicar la renovación: '
                         . $stmt->error
+                    );
+                }
+
+                if ($stmt->affected_rows !== 1) {
+                    throw new RuntimeException(
+                        'La vigencia cambió mientras se procesaba la renovación. No se registró un movimiento duplicado; actualiza la página para consultar el periodo vigente.'
                     );
                 }
 
@@ -547,6 +718,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     );
                 }
 
+                $historialRenovacionId = (int) $stmtHistorial->insert_id;
                 $stmtHistorial->close();
                 $db->commit();
             } catch (Throwable $error) {
@@ -573,6 +745,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'fecha_registro' => date('d/m/Y H:i'),
                 ]
             );
+
+            $rutaComprobante = trim((string) (
+                $resultadoCorreo['ruta_pdf'] ?? ''
+            ));
+
+            if (
+                $rutaComprobante !== ''
+                && $historialRenovacionId > 0
+                && $columnaComprobanteDisponible
+            ) {
+                $stmtComprobante = $db->prepare(
+                    "UPDATE servicio_plataforma_historial
+                     SET comprobante_pdf = ?
+                     WHERE id = ?"
+                );
+
+                if ($stmtComprobante) {
+                    $stmtComprobante->bind_param(
+                        'si',
+                        $rutaComprobante,
+                        $historialRenovacionId
+                    );
+
+                    if (!$stmtComprobante->execute()) {
+                        error_log(
+                            '[Servicio plataforma comprobante] '
+                            . $stmtComprobante->error
+                        );
+                    }
+
+                    $stmtComprobante->close();
+                }
+            }
 
             $correoEnviados = (int) (
                 $resultadoCorreo['enviados'] ?? 0
@@ -657,6 +862,10 @@ $tienePeriodo = is_array($configuracion);
 $historial = [];
 
 if ($instalado) {
+    $campoComprobanteHistorial = $columnaComprobanteDisponible
+        ? 'h.comprobante_pdf'
+        : 'NULL AS comprobante_pdf';
+
     $resultadoHistorial = $db->query(
         "SELECT
             h.id,
@@ -669,6 +878,7 @@ if ($instalado) {
             h.importe_total,
             h.referencia_pago,
             h.notas,
+            {$campoComprobanteHistorial},
             h.created_at,
             u.nombre AS usuario_nombre
          FROM servicio_plataforma_historial h
@@ -781,7 +991,7 @@ $iconoEstado = in_array(
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
     <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/es.js"></script>
-    <link rel="stylesheet" href="css/servicio_plataforma.css?v=2">
+    <link rel="stylesheet" href="css/servicio_plataforma.css?v=6">
 </head>
 <body>
     <?php include __DIR__ . '/includes/sidebar.php'; ?>
@@ -789,9 +999,13 @@ $iconoEstado = in_array(
     <main class="main-content service-page">
         <header class="service-heading">
             <div>
-                <h1>Servicio de plataforma</h1>
+                <span class="service-eyebrow">
+                    <i class="fas fa-shield-halved"></i>
+                    Configuración global
+                </span>
+                <h1>Vigencia del sistema</h1>
                 <p>
-                    Administra el periodo contratado, registra renovaciones y controla los avisos de vencimiento.
+                    Define hasta cuándo puede utilizarse EGO, registra renovaciones y consulta los movimientos del servicio.
                 </p>
             </div>
         </header>
@@ -829,6 +1043,17 @@ $iconoEstado = in_array(
                 </div>
             </section>
         <?php else: ?>
+            <?php if (!$columnaComprobanteDisponible): ?>
+                <div class="service-storage-warning">
+                    <i class="fas fa-database"></i>
+                    <div>
+                        <strong>Falta habilitar el almacenamiento de comprobantes</strong>
+                        Ejecuta <code>database/agregar_comprobante_pdf_historial.sql</code>
+                        para guardar y consultar los PDF desde el historial.
+                    </div>
+                </div>
+            <?php endif; ?>
+
             <?php if ($tienePeriodo): ?>
             <section class="service-summary">
                 <article>
@@ -876,7 +1101,7 @@ $iconoEstado = in_array(
                     data-service-tab="periodo"
                 >
                     <i class="fas fa-pen-to-square"></i>
-                    <span><?php echo $tienePeriodo ? 'Periodo actual' : 'Primer periodo'; ?></span>
+                    <span><?php echo $tienePeriodo ? 'Datos del periodo' : 'Registrar periodo'; ?></span>
                 </button>
                 <button
                     type="button"
@@ -885,7 +1110,7 @@ $iconoEstado = in_array(
                     <?php echo !$tienePeriodo ? 'disabled' : ''; ?>
                 >
                     <i class="fas fa-rotate"></i>
-                    <span>Renovar</span>
+                    <span>Renovar servicio</span>
                     <?php if ($tienePeriodo && !$renovacionDisponible): ?>
                         <i class="fas fa-lock service-tab-lock"></i>
                     <?php endif; ?>
@@ -896,7 +1121,7 @@ $iconoEstado = in_array(
                     data-service-tab="historial"
                 >
                     <i class="fas fa-clock-rotate-left"></i>
-                    <span>Historial</span>
+                    <span>Movimientos</span>
                     <em><?php echo count($historial); ?></em>
                 </button>
             </nav>
@@ -917,13 +1142,13 @@ $iconoEstado = in_array(
                             <div>
                                 <h2>
                                     <?php echo $tienePeriodo
-                                        ? 'Editar periodo actual'
+                                        ? 'Periodo contratado'
                                         : 'Registrar el primer periodo'; ?>
                                 </h2>
                                 <p>
                                     <?php echo $tienePeriodo
-                                        ? 'Modifica únicamente los datos que necesites corregir. Esto no registra una renovación.'
-                                        : 'Define desde qué fecha comienza el uso del sistema y cuántos meses fueron contratados.'; ?>
+                                        ? 'Aquí puedes corregir la fecha, los meses o el precio. Para extender la vigencia utiliza Renovar servicio.'
+                                        : 'Indica la fecha de inicio, los meses contratados y el precio mensual.'; ?>
                                 </p>
                             </div>
                         </div>
@@ -933,8 +1158,8 @@ $iconoEstado = in_array(
                             <div class="service-step-content">
                                 <div class="service-step-title">
                                     <div>
-                                        <h3>Datos del periodo</h3>
-                                        <p>La fecha final y el importe se calculan automáticamente.</p>
+                                        <h3>Fechas y precio</h3>
+                                        <p>El vencimiento y el total se calculan automáticamente.</p>
                                     </div>
                                 </div>
 
@@ -1012,9 +1237,9 @@ $iconoEstado = in_array(
                             <summary>
                                 <span>
                                     <i class="fas fa-sliders"></i>
-                                    Contacto y reglas del servicio
+                                    Proveedor, avisos y acceso
                                 </span>
-                                <small>Proveedor, avisos y bloqueo</small>
+                                <small>Datos adicionales</small>
                                 <i class="fas fa-chevron-down"></i>
                             </summary>
 
@@ -1152,8 +1377,8 @@ $iconoEstado = in_array(
                                 <i class="fas fa-rotate"></i>
                             </span>
                             <div>
-                                <h2>Registrar renovación</h2>
-                                <p>Extiende la vigencia y envía automáticamente el comprobante PDF a los administradores activos.</p>
+                                <h2>Renovar servicio</h2>
+                                <p>Agrega uno o varios meses al servicio y envía el comprobante PDF a los administradores activos.</p>
                             </div>
                         </div>
 
@@ -1188,6 +1413,11 @@ $iconoEstado = in_array(
                         <form method="post" class="service-form" id="renewForm">
                             <input type="hidden" name="csrf" value="<?php echo servicioPlataformaEscapar($csrf); ?>">
                             <input type="hidden" name="accion" value="renovar">
+                            <input
+                                type="hidden"
+                                name="renovacion_token"
+                                value="<?php echo servicioPlataformaEscapar($renovacionToken); ?>"
+                            >
 
                             <div class="service-renew-current">
                                 <div>
@@ -1382,8 +1612,8 @@ $iconoEstado = in_array(
                             <i class="fas fa-clock-rotate-left"></i>
                         </span>
                         <div>
-                            <h2>Historial de movimientos</h2>
-                            <p>Consulta altas, correcciones y renovaciones registradas.</p>
+                            <h2>Movimientos del servicio</h2>
+                            <p>Revisa los periodos registrados, las correcciones y las renovaciones.</p>
                         </div>
                         <span class="service-history-count"><?php echo count($historial); ?> movimientos</span>
                     </div>
@@ -1433,6 +1663,31 @@ $iconoEstado = in_array(
                                         <small>Total</small>
                                         <strong>$<?php echo number_format((float) $movimiento['importe_total'], 2); ?></strong>
                                         <span>$<?php echo number_format((float) $movimiento['precio_mensual'], 2); ?> / mes</span>
+
+                                        <?php
+                                        $rutaPdfMovimiento = trim((string) (
+                                            $movimiento['comprobante_pdf'] ?? ''
+                                        ));
+                                        ?>
+
+                                        <?php if ($tipoMovimiento === 'renovacion' && $rutaPdfMovimiento !== ''): ?>
+                                            <a
+                                                href="servicio_plataforma.php?accion=ver_comprobante&id=<?php echo (int) $movimiento['id']; ?>"
+                                                target="_blank"
+                                                rel="noopener"
+                                                class="service-history-pdf"
+                                                title="Abrir comprobante PDF"
+                                            >
+                                                <i class="fas fa-file-pdf"></i>
+                                                <span>Ver comprobante</span>
+                                                <i class="fas fa-arrow-up-right-from-square"></i>
+                                            </a>
+                                        <?php elseif ($tipoMovimiento === 'renovacion'): ?>
+                                            <span class="service-history-pdf service-history-pdf--empty">
+                                                <i class="fas fa-file-circle-xmark"></i>
+                                                <span>Sin comprobante</span>
+                                            </span>
+                                        <?php endif; ?>
                                     </div>
                                 </article>
                             <?php endforeach; ?>
@@ -1684,8 +1939,28 @@ $iconoEstado = in_array(
         const renewForm = document.getElementById('renewForm');
 
         if (renewForm) {
+            const renewButton = renewForm.querySelector(
+                '.service-renew-button'
+            );
+
+            function lockRenewalSubmit() {
+                renewForm.dataset.processing = '1';
+
+                if (!renewButton) {
+                    return;
+                }
+
+                renewButton.disabled = true;
+                renewButton.setAttribute('aria-busy', 'true');
+                renewButton.innerHTML =
+                    '<i class="fas fa-spinner fa-spin"></i>'
+                    + '<span>Procesando renovación...</span>';
+            }
+
             renewForm.addEventListener('submit', function (event) {
-                if (renewForm.dataset.confirmed === '1') {
+                /* Bloquea nuevos intentos mientras se procesa el primero. */
+                if (renewForm.dataset.processing === '1') {
+                    event.preventDefault();
                     return;
                 }
 
@@ -1698,12 +1973,21 @@ $iconoEstado = in_array(
                     showCancelButton: true,
                     confirmButtonText: 'Sí, renovar',
                     cancelButtonText: 'Cancelar',
-                    confirmButtonColor: '#059669'
+                    confirmButtonColor: '#059669',
+                    allowOutsideClick: false
                 }).then(function (result) {
-                    if (result.isConfirmed) {
-                        renewForm.dataset.confirmed = '1';
-                        renewForm.submit();
+                    if (!result.isConfirmed) {
+                        return;
                     }
+
+                    lockRenewalSubmit();
+
+                    /*
+                     * submit() nativo evita disparar otra vez este listener.
+                     * Los campos permanecen habilitados para que sus valores
+                     * sí sean enviados al servidor.
+                     */
+                    HTMLFormElement.prototype.submit.call(renewForm);
                 });
             });
         }

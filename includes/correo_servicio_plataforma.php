@@ -509,12 +509,20 @@ if (!function_exists('servicio_correo_generar_comprobante')) {
             true
         );
 
+        try {
+            $sufijoArchivo = bin2hex(random_bytes(4));
+        } catch (Throwable $errorAleatorio) {
+            $sufijoArchivo = substr(sha1(uniqid('', true)), 0, 8);
+        }
+
         $nombre = 'comprobante_renovacion_'
             . servicio_correo_nombre_archivo(
                 (string) ($datos['gimnasio'] ?? 'ego')
             )
             . '_'
             . date('Ymd_His')
+            . '_'
+            . $sufijoArchivo
             . '.pdf';
 
         return [
@@ -525,27 +533,98 @@ if (!function_exists('servicio_correo_generar_comprobante')) {
     }
 }
 
+if (!function_exists('servicio_correo_directorio_comprobantes')) {
+    function servicio_correo_directorio_comprobantes(): array
+    {
+        $raizProyecto = dirname(__DIR__);
+        $rutaRelativa = 'uploads/renovaciones_servicio';
+        $rutaAbsoluta = $raizProyecto
+            . DIRECTORY_SEPARATOR
+            . 'uploads'
+            . DIRECTORY_SEPARATOR
+            . 'renovaciones_servicio';
+
+        if (!is_dir($rutaAbsoluta)) {
+            if (!mkdir($rutaAbsoluta, 0775, true) && !is_dir($rutaAbsoluta)) {
+                throw new RuntimeException(
+                    'No fue posible crear la carpeta uploads/renovaciones_servicio.'
+                );
+            }
+        }
+
+        if (!is_writable($rutaAbsoluta)) {
+            throw new RuntimeException(
+                'La carpeta uploads/renovaciones_servicio no tiene permisos de escritura.'
+            );
+        }
+
+        return [
+            'relativa' => $rutaRelativa,
+            'absoluta' => $rutaAbsoluta,
+        ];
+    }
+}
+
+if (!function_exists('servicio_correo_guardar_comprobante')) {
+    function servicio_correo_guardar_comprobante(array $comprobante): array
+    {
+        $nombre = basename(trim((string) ($comprobante['nombre'] ?? '')));
+        $contenido = (string) ($comprobante['contenido'] ?? '');
+
+        if ($nombre === '' || strtolower(pathinfo($nombre, PATHINFO_EXTENSION)) !== 'pdf') {
+            throw new RuntimeException(
+                'El nombre del comprobante PDF no es válido.'
+            );
+        }
+
+        if ($contenido === '') {
+            throw new RuntimeException(
+                'El comprobante PDF se generó sin contenido.'
+            );
+        }
+
+        $directorio = servicio_correo_directorio_comprobantes();
+        $rutaAbsoluta = rtrim(
+            (string) $directorio['absoluta'],
+            DIRECTORY_SEPARATOR
+        ) . DIRECTORY_SEPARATOR . $nombre;
+
+        $bytes = file_put_contents(
+            $rutaAbsoluta,
+            $contenido,
+            LOCK_EX
+        );
+
+        if ($bytes === false || $bytes <= 0 || !is_file($rutaAbsoluta)) {
+            throw new RuntimeException(
+                'No fue posible guardar el comprobante dentro de uploads/renovaciones_servicio.'
+            );
+        }
+
+        @chmod($rutaAbsoluta, 0644);
+
+        return [
+            'nombre' => $nombre,
+            'ruta_relativa' => rtrim(
+                (string) $directorio['relativa'],
+                '/'
+            ) . '/' . $nombre,
+            'ruta_absoluta' => $rutaAbsoluta,
+            'mime' => 'application/pdf',
+        ];
+    }
+}
+
 if (!function_exists('servicio_correo_enviar_renovacion')) {
     function servicio_correo_enviar_renovacion(
         mysqli $db,
         array $datos
     ): array {
-        $administradores = servicio_correo_obtener_administradores($db);
-
-        if ($administradores === []) {
-            return [
-                'ok' => false,
-                'parcial' => false,
-                'enviados' => 0,
-                'total' => 0,
-                'errores' => [],
-                'mensaje' =>
-                    'No hay administradores activos con un correo válido.',
-            ];
-        }
-
         try {
-            $comprobante = servicio_correo_generar_comprobante($datos);
+            $comprobanteGenerado = servicio_correo_generar_comprobante($datos);
+            $comprobante = servicio_correo_guardar_comprobante(
+                $comprobanteGenerado
+            );
         } catch (Throwable $error) {
             error_log(
                 '[Correo servicio comprobante] ' . $error->getMessage()
@@ -555,10 +634,42 @@ if (!function_exists('servicio_correo_enviar_renovacion')) {
                 'ok' => false,
                 'parcial' => false,
                 'enviados' => 0,
-                'total' => count($administradores),
+                'total' => 0,
                 'errores' => [$error->getMessage()],
                 'mensaje' =>
-                    'La renovación se guardó, pero no se pudo generar el comprobante PDF.',
+                    'La renovación se guardó, pero no se pudo generar o almacenar el comprobante PDF.',
+                'ruta_pdf' => '',
+                'nombre_pdf' => '',
+            ];
+        }
+
+        try {
+            $administradores = servicio_correo_obtener_administradores($db);
+        } catch (Throwable $errorAdministradores) {
+            return [
+                'ok' => false,
+                'parcial' => false,
+                'enviados' => 0,
+                'total' => 0,
+                'errores' => [$errorAdministradores->getMessage()],
+                'mensaje' =>
+                    'El comprobante se guardó, pero no fue posible consultar a los administradores.',
+                'ruta_pdf' => (string) $comprobante['ruta_relativa'],
+                'nombre_pdf' => (string) $comprobante['nombre'],
+            ];
+        }
+
+        if ($administradores === []) {
+            return [
+                'ok' => false,
+                'parcial' => false,
+                'enviados' => 0,
+                'total' => 0,
+                'errores' => [],
+                'mensaje' =>
+                    'El comprobante quedó guardado, pero no hay administradores activos con un correo válido.',
+                'ruta_pdf' => (string) $comprobante['ruta_relativa'],
+                'nombre_pdf' => (string) $comprobante['nombre'],
             ];
         }
 
@@ -567,6 +678,8 @@ if (!function_exists('servicio_correo_enviar_renovacion')) {
         $errores = [];
 
         foreach ($administradores as $administrador) {
+            $mail = null;
+
             try {
                 $mail = servicio_correo_crear_mailer($db);
                 $mail->addAddress(
@@ -645,8 +758,8 @@ if (!function_exists('servicio_correo_enviar_renovacion')) {
                     . " MXN\nReferencia: "
                     . ($referencia !== '' ? $referencia : 'Sin referencia');
 
-                $mail->addStringAttachment(
-                    (string) $comprobante['contenido'],
+                $mail->addAttachment(
+                    (string) $comprobante['ruta_absoluta'],
                     (string) $comprobante['nombre'],
                     'base64',
                     (string) $comprobante['mime']
@@ -657,8 +770,7 @@ if (!function_exists('servicio_correo_enviar_renovacion')) {
                 $detalle = $error->getMessage();
 
                 if (
-                    isset($mail)
-                    && $mail instanceof \PHPMailer\PHPMailer\PHPMailer
+                    $mail instanceof \PHPMailer\PHPMailer\PHPMailer
                     && trim((string) $mail->ErrorInfo) !== ''
                 ) {
                     $detalle = (string) $mail->ErrorInfo;
@@ -685,10 +797,12 @@ if (!function_exists('servicio_correo_enviar_renovacion')) {
             'total' => $total,
             'errores' => $errores,
             'mensaje' => $enviados === $total
-                ? 'El comprobante se envió a todos los administradores.'
+                ? 'El comprobante se guardó y se envió a todos los administradores.'
                 : ($enviados > 0
-                    ? 'El comprobante se envió solo a algunos administradores.'
-                    : 'No fue posible enviar el comprobante por correo.'),
+                    ? 'El comprobante se guardó y se envió solo a algunos administradores.'
+                    : 'El comprobante se guardó, pero no fue posible enviarlo por correo.'),
+            'ruta_pdf' => (string) $comprobante['ruta_relativa'],
+            'nombre_pdf' => (string) $comprobante['nombre'],
         ];
     }
 }

@@ -5,6 +5,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/super_admin_helper.php';
+require_once __DIR__ . '/mercadopago_terminal_config.php';
 
 function sucursales_actor_es_super(): bool
 {
@@ -31,6 +32,61 @@ function sucursales_tabla_existe(mysqli $db, string $tabla): bool
 
     return $resultado instanceof mysqli_result
         && $resultado->num_rows > 0;
+}
+
+function sucursales_columna_existe(
+    mysqli $db,
+    string $tabla,
+    string $columna
+): bool {
+    if ($tabla !== 'mercadopago_terminales') {
+        return false;
+    }
+
+    $stmt = $db->prepare(
+        "SELECT 1
+         FROM information_schema.COLUMNS
+         WHERE TABLE_SCHEMA = DATABASE()
+           AND TABLE_NAME = ?
+           AND COLUMN_NAME = ?
+         LIMIT 1"
+    );
+
+    if (!$stmt) {
+        return false;
+    }
+
+    $stmt->bind_param('ss', $tabla, $columna);
+    $stmt->execute();
+    $existe = $stmt->get_result()->fetch_assoc() !== null;
+    $stmt->close();
+
+    return $existe;
+}
+
+function sucursales_terminales_configuracion_instalada(mysqli $db): bool
+{
+    foreach ([
+        'access_token_cifrado',
+        'access_token_ultimos4',
+        'print_on_terminal',
+        'order_expiration',
+        'installments_cost',
+        'validacion_estado',
+        'validacion_mensaje',
+        'validada_at',
+        'actualizado_por',
+    ] as $columna) {
+        if (!sucursales_columna_existe(
+            $db,
+            'mercadopago_terminales',
+            $columna
+        )) {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 function sucursales_modulo_instalado(mysqli $db): bool
@@ -181,6 +237,7 @@ function sucursales_listar(mysqli $db): array
                 FROM mercadopago_terminales mt
                 WHERE mt.sucursal_id = s.id
                   AND mt.activo = 1
+                  AND mt.validacion_estado = 'valida'
             ) AS terminales_activas
         FROM sucursales s
         ORDER BY s.es_matriz DESC, s.estado = 'activa' DESC, s.nombre ASC
@@ -379,7 +436,27 @@ function sucursales_planes(mysqli $db, int $sucursalId): array
 function sucursales_terminales(mysqli $db, int $sucursalId): array
 {
     $stmt = $db->prepare(
-        "SELECT id, sucursal_id, terminal_id, nombre, predeterminada, activo, created_at, updated_at
+        "SELECT
+            id,
+            sucursal_id,
+            terminal_id,
+            nombre,
+            access_token_ultimos4,
+            print_on_terminal,
+            order_expiration,
+            installments_cost,
+            validacion_estado,
+            validacion_mensaje,
+            validada_at,
+            predeterminada,
+            activo,
+            created_at,
+            updated_at,
+            CASE
+                WHEN access_token_cifrado IS NOT NULL
+                 AND access_token_cifrado <> ''
+                THEN 1 ELSE 0
+            END AS token_configurado
          FROM mercadopago_terminales
          WHERE sucursal_id = ?
          ORDER BY predeterminada DESC, activo DESC, nombre ASC"
@@ -399,6 +476,11 @@ function sucursales_terminales(mysqli $db, int $sucursalId): array
         $fila['sucursal_id'] = (int) $fila['sucursal_id'];
         $fila['predeterminada'] = (int) $fila['predeterminada'];
         $fila['activo'] = (int) $fila['activo'];
+        $fila['token_configurado'] = (int) $fila['token_configurado'];
+        $ultimos4 = trim((string) ($fila['access_token_ultimos4'] ?? ''));
+        $fila['token_mascara'] = $ultimos4 !== ''
+            ? '•••• ' . $ultimos4
+            : 'Sin credencial';
         $terminales[] = $fila;
     }
 
@@ -1043,6 +1125,37 @@ function sucursales_sincronizar_catalogos(mysqli $db, int $sucursalId): array
     }
 }
 
+function sucursales_terminal_obtener_privada(
+    mysqli $db,
+    int $sucursalId,
+    int $terminalRegistroId
+): ?array {
+    if ($sucursalId <= 0 || $terminalRegistroId <= 0) {
+        return null;
+    }
+
+    $stmt = $db->prepare(
+        "SELECT *
+         FROM mercadopago_terminales
+         WHERE id = ? AND sucursal_id = ?
+         LIMIT 1"
+    );
+
+    if (!$stmt) {
+        throw new RuntimeException(
+            'No fue posible consultar la configuración privada de la terminal.'
+        );
+    }
+
+    $stmt->bind_param('ii', $terminalRegistroId, $sucursalId);
+    $stmt->execute();
+    $resultado = $stmt->get_result();
+    $fila = $resultado ? ($resultado->fetch_assoc() ?: null) : null;
+    $stmt->close();
+
+    return $fila;
+}
+
 function sucursales_guardar_terminal(
     mysqli $db,
     int $sucursalId,
@@ -1050,17 +1163,71 @@ function sucursales_guardar_terminal(
     string $terminalId,
     string $nombre,
     bool $predeterminada,
-    bool $activa
+    bool $activa,
+    string $accessToken = '',
+    string $printOnTerminal = 'no_ticket',
+    string $orderExpiration = 'PT3M',
+    string $installmentsCost = 'terminal',
+    int $actualizadoPor = 0
 ): int {
-    $terminalId = trim($terminalId);
-    $nombre = trim($nombre);
-
-    if ($terminalId === '' || mb_strlen($terminalId) > 120) {
-        throw new InvalidArgumentException('El identificador de la terminal no es válido.');
+    if (sucursales_obtener($db, $sucursalId) === null) {
+        throw new InvalidArgumentException('La sucursal seleccionada no existe.');
     }
 
+    $terminalId = mp_terminal_validar_id($terminalId);
+    $nombre = trim($nombre);
+    $printOnTerminal = mp_terminal_validar_impresion($printOnTerminal);
+    $orderExpiration = mp_terminal_validar_expiracion($orderExpiration);
+    $installmentsCost = mp_terminal_validar_costo_cuotas($installmentsCost);
+    $accessToken = trim($accessToken);
+
     if ($nombre === '' || mb_strlen($nombre) > 100) {
-        throw new InvalidArgumentException('El nombre de la terminal no es válido.');
+        throw new InvalidArgumentException(
+            'El nombre de la terminal no es válido.'
+        );
+    }
+
+    if ($predeterminada && !$activa) {
+        throw new InvalidArgumentException(
+            'Una terminal predeterminada también debe estar activa.'
+        );
+    }
+
+    $existente = $terminalRegistroId > 0
+        ? sucursales_terminal_obtener_privada(
+            $db,
+            $sucursalId,
+            $terminalRegistroId
+        )
+        : null;
+
+    if ($terminalRegistroId > 0 && $existente === null) {
+        throw new RuntimeException('La terminal que intentas editar no existe.');
+    }
+
+    $tokenCifrado = trim((string) (
+        $existente['access_token_cifrado'] ?? ''
+    ));
+    $tokenUltimos4 = trim((string) (
+        $existente['access_token_ultimos4'] ?? ''
+    ));
+
+    if ($accessToken !== '') {
+        $accessToken = mp_terminal_validar_token_formato($accessToken);
+        $tokenCifrado = mp_terminal_cifrar_token($accessToken);
+        $tokenUltimos4 = substr($accessToken, -4);
+    } elseif ($tokenCifrado === '') {
+        $respaldo = mp_terminal_token_respaldo();
+
+        if ($respaldo === '') {
+            throw new InvalidArgumentException(
+                'Ingresa el Access Token de la cuenta de Mercado Pago.'
+            );
+        }
+
+        $respaldo = mp_terminal_validar_token_formato($respaldo);
+        $tokenCifrado = mp_terminal_cifrar_token($respaldo);
+        $tokenUltimos4 = substr($respaldo, -4);
     }
 
     $db->begin_transaction();
@@ -1072,9 +1239,13 @@ function sucursales_guardar_terminal(
                  SET predeterminada = 0
                  WHERE sucursal_id = ?"
             );
+
             if (!$stmtReset) {
-                throw new RuntimeException('No fue posible actualizar la terminal predeterminada.');
+                throw new RuntimeException(
+                    'No fue posible actualizar la terminal predeterminada.'
+                );
             }
+
             $stmtReset->bind_param('i', $sucursalId);
             $stmtReset->execute();
             $stmtReset->close();
@@ -1082,48 +1253,87 @@ function sucursales_guardar_terminal(
 
         $valorPredeterminada = $predeterminada ? 1 : 0;
         $valorActiva = $activa ? 1 : 0;
+        $estadoValidacion = 'pendiente';
 
         if ($terminalRegistroId > 0) {
             $stmt = $db->prepare(
                 "UPDATE mercadopago_terminales
-                 SET terminal_id = ?, nombre = ?, predeterminada = ?, activo = ?
+                 SET terminal_id = ?,
+                     nombre = ?,
+                     access_token_cifrado = ?,
+                     access_token_ultimos4 = ?,
+                     print_on_terminal = ?,
+                     order_expiration = ?,
+                     installments_cost = ?,
+                     validacion_estado = ?,
+                     validacion_mensaje = NULL,
+                     validada_at = NULL,
+                     predeterminada = ?,
+                     activo = ?,
+                     actualizado_por = ?
                  WHERE id = ? AND sucursal_id = ?"
             );
+
             if (!$stmt) {
-                throw new RuntimeException('No fue posible preparar la terminal.');
+                throw new RuntimeException(
+                    'No fue posible preparar la actualización de la terminal.'
+                );
             }
+
             $stmt->bind_param(
-                'ssiiii',
+                'ssssssssiiiii',
                 $terminalId,
                 $nombre,
+                $tokenCifrado,
+                $tokenUltimos4,
+                $printOnTerminal,
+                $orderExpiration,
+                $installmentsCost,
+                $estadoValidacion,
                 $valorPredeterminada,
                 $valorActiva,
+                $actualizadoPor,
                 $terminalRegistroId,
                 $sucursalId
             );
         } else {
             $stmt = $db->prepare(
                 "INSERT INTO mercadopago_terminales
-                    (sucursal_id, terminal_id, nombre, predeterminada, activo)
-                 VALUES (?, ?, ?, ?, ?)"
+                    (sucursal_id, terminal_id, nombre,
+                     access_token_cifrado, access_token_ultimos4,
+                     print_on_terminal, order_expiration,
+                     installments_cost, validacion_estado,
+                     predeterminada, activo, actualizado_por)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
             );
+
             if (!$stmt) {
-                throw new RuntimeException('No fue posible preparar la terminal.');
+                throw new RuntimeException(
+                    'No fue posible preparar la nueva terminal.'
+                );
             }
+
             $stmt->bind_param(
-                'issii',
+                'issssssssiii',
                 $sucursalId,
                 $terminalId,
                 $nombre,
+                $tokenCifrado,
+                $tokenUltimos4,
+                $printOnTerminal,
+                $orderExpiration,
+                $installmentsCost,
+                $estadoValidacion,
                 $valorPredeterminada,
-                $valorActiva
+                $valorActiva,
+                $actualizadoPor
             );
         }
 
         if (!$stmt->execute()) {
             if ((int) $stmt->errno === 1062) {
                 throw new RuntimeException(
-                    'Esa terminal ya está registrada en otra sucursal.'
+                    'Ese Terminal ID ya está registrado en el sistema.'
                 );
             }
 
@@ -1145,30 +1355,36 @@ function sucursales_guardar_terminal(
                    AND activo = 1
                    AND predeterminada = 1"
             );
-            if ($stmtExiste) {
-                $stmtExiste->bind_param('i', $sucursalId);
-                $stmtExiste->execute();
-                $resultadoPredeterminadas = $stmtExiste->get_result();
-                $filaPredeterminadas = $resultadoPredeterminadas
-                    ? $resultadoPredeterminadas->fetch_assoc()
-                    : null;
-                $totalPredeterminadas = (int) (
-                    $filaPredeterminadas['total'] ?? 0
-                );
-                $stmtExiste->close();
 
-                if ($totalPredeterminadas === 0) {
-                    $stmtDefault = $db->prepare(
-                        "UPDATE mercadopago_terminales
-                         SET predeterminada = 1
-                         WHERE id = ? AND sucursal_id = ?"
+            if (!$stmtExiste) {
+                throw new RuntimeException(
+                    'No fue posible revisar la terminal predeterminada.'
+                );
+            }
+
+            $stmtExiste->bind_param('i', $sucursalId);
+            $stmtExiste->execute();
+            $filaPredeterminadas = $stmtExiste
+                ->get_result()
+                ->fetch_assoc();
+            $stmtExiste->close();
+
+            if ((int) ($filaPredeterminadas['total'] ?? 0) === 0) {
+                $stmtDefault = $db->prepare(
+                    "UPDATE mercadopago_terminales
+                     SET predeterminada = 1
+                     WHERE id = ? AND sucursal_id = ?"
+                );
+
+                if (!$stmtDefault) {
+                    throw new RuntimeException(
+                        'No fue posible establecer la terminal predeterminada.'
                     );
-                    if ($stmtDefault) {
-                        $stmtDefault->bind_param('ii', $id, $sucursalId);
-                        $stmtDefault->execute();
-                        $stmtDefault->close();
-                    }
                 }
+
+                $stmtDefault->bind_param('ii', $id, $sucursalId);
+                $stmtDefault->execute();
+                $stmtDefault->close();
             }
         }
 
@@ -1181,27 +1397,226 @@ function sucursales_guardar_terminal(
     }
 }
 
+/**
+ * @return array<string,mixed>
+ */
+function sucursales_probar_terminal_guardada(
+    mysqli $db,
+    int $sucursalId,
+    int $terminalRegistroId,
+    bool $desactivarSiFalla = true
+): array {
+    $terminal = sucursales_terminal_obtener_privada(
+        $db,
+        $sucursalId,
+        $terminalRegistroId
+    );
+
+    if (!is_array($terminal)) {
+        throw new RuntimeException('La terminal no existe.');
+    }
+
+    $tokenCifrado = trim((string) (
+        $terminal['access_token_cifrado'] ?? ''
+    ));
+
+    if ($tokenCifrado === '') {
+        throw new RuntimeException(
+            'La terminal no tiene un Access Token guardado.'
+        );
+    }
+
+    try {
+        $resultado = mp_terminal_probar_credenciales(
+            mp_terminal_descifrar_token($tokenCifrado),
+            (string) $terminal['terminal_id']
+        );
+
+        $estado = 'valida';
+        $mensaje = substr((string) $resultado['mensaje'], 0, 255);
+        $stmt = $db->prepare(
+            "UPDATE mercadopago_terminales
+             SET validacion_estado = ?,
+                 validacion_mensaje = ?,
+                 validada_at = NOW()
+             WHERE id = ? AND sucursal_id = ?"
+        );
+
+        if (!$stmt) {
+            throw new RuntimeException(
+                'No fue posible guardar el resultado de validación.'
+            );
+        }
+
+        $stmt->bind_param(
+            'ssii',
+            $estado,
+            $mensaje,
+            $terminalRegistroId,
+            $sucursalId
+        );
+        $stmt->execute();
+        $stmt->close();
+
+        return $resultado;
+    } catch (Throwable $error) {
+        $estado = 'error';
+        $mensaje = substr($error->getMessage(), 0, 255);
+        $activo = $desactivarSiFalla ? 0 : (int) ($terminal['activo'] ?? 0);
+        $predeterminada = $desactivarSiFalla
+            ? 0
+            : (int) ($terminal['predeterminada'] ?? 0);
+
+        $stmt = $db->prepare(
+            "UPDATE mercadopago_terminales
+             SET validacion_estado = ?,
+                 validacion_mensaje = ?,
+                 validada_at = NOW(),
+                 activo = ?,
+                 predeterminada = ?
+             WHERE id = ? AND sucursal_id = ?"
+        );
+
+        if ($stmt) {
+            $stmt->bind_param(
+                'ssiiii',
+                $estado,
+                $mensaje,
+                $activo,
+                $predeterminada,
+                $terminalRegistroId,
+                $sucursalId
+            );
+            $stmt->execute();
+            $stmt->close();
+        }
+
+        if ($desactivarSiFalla) {
+            $stmtPromover = $db->prepare(
+                "UPDATE mercadopago_terminales
+                 SET predeterminada = 1
+                 WHERE sucursal_id = ?
+                   AND activo = 1
+                   AND validacion_estado = 'valida'
+                 ORDER BY id ASC
+                 LIMIT 1"
+            );
+
+            if ($stmtPromover) {
+                $stmtPromover->bind_param('i', $sucursalId);
+                $stmtPromover->execute();
+                $stmtPromover->close();
+            }
+        }
+
+        throw $error;
+    }
+}
+
 function sucursales_cambiar_estado_terminal(
     mysqli $db,
     int $sucursalId,
     int $terminalId,
     bool $activa
 ): void {
-    $valor = $activa ? 1 : 0;
-
-    $stmt = $db->prepare(
-        "UPDATE mercadopago_terminales
-         SET activo = ?,
-             predeterminada = CASE WHEN ? = 0 THEN 0 ELSE predeterminada END
-         WHERE id = ? AND sucursal_id = ?"
+    $terminal = sucursales_terminal_obtener_privada(
+        $db,
+        $sucursalId,
+        $terminalId
     );
-    if (!$stmt) {
-        throw new RuntimeException('No fue posible preparar la terminal.');
+
+    if (!is_array($terminal)) {
+        throw new RuntimeException('La terminal no existe.');
     }
 
-    $stmt->bind_param('iiii', $valor, $valor, $terminalId, $sucursalId);
-    if (!$stmt->execute() || $stmt->affected_rows === 0) {
-        throw new RuntimeException('No fue posible cambiar el estado de la terminal.');
+    if ($activa) {
+        if (
+            trim((string) ($terminal['access_token_cifrado'] ?? '')) === ''
+        ) {
+            throw new RuntimeException(
+                'Configura el Access Token antes de activar la terminal.'
+            );
+        }
+
+        if ((string) ($terminal['validacion_estado'] ?? '') !== 'valida') {
+            throw new RuntimeException(
+                'Prueba la conexión correctamente antes de activar la terminal.'
+            );
+        }
     }
-    $stmt->close();
+
+    $db->begin_transaction();
+
+    try {
+        $valor = $activa ? 1 : 0;
+        $predeterminada = $activa
+            ? (int) ($terminal['predeterminada'] ?? 0)
+            : 0;
+
+        $stmt = $db->prepare(
+            "UPDATE mercadopago_terminales
+             SET activo = ?, predeterminada = ?
+             WHERE id = ? AND sucursal_id = ?"
+        );
+
+        if (!$stmt) {
+            throw new RuntimeException(
+                'No fue posible preparar el cambio de estado.'
+            );
+        }
+
+        $stmt->bind_param(
+            'iiii',
+            $valor,
+            $predeterminada,
+            $terminalId,
+            $sucursalId
+        );
+        $stmt->execute();
+        $stmt->close();
+
+        $stmtDefault = $db->prepare(
+            "SELECT id
+             FROM mercadopago_terminales
+             WHERE sucursal_id = ?
+               AND activo = 1
+               AND predeterminada = 1
+             LIMIT 1"
+        );
+
+        if (!$stmtDefault) {
+            throw new RuntimeException(
+                'No fue posible revisar la terminal predeterminada.'
+            );
+        }
+
+        $stmtDefault->bind_param('i', $sucursalId);
+        $stmtDefault->execute();
+        $hayDefault = $stmtDefault->get_result()->fetch_assoc();
+        $stmtDefault->close();
+
+        if (!is_array($hayDefault)) {
+            $stmtPromover = $db->prepare(
+                "UPDATE mercadopago_terminales
+                 SET predeterminada = 1
+                 WHERE sucursal_id = ?
+                   AND activo = 1
+                   AND validacion_estado = 'valida'
+                 ORDER BY id ASC
+                 LIMIT 1"
+            );
+
+            if ($stmtPromover) {
+                $stmtPromover->bind_param('i', $sucursalId);
+                $stmtPromover->execute();
+                $stmtPromover->close();
+            }
+        }
+
+        $db->commit();
+    } catch (Throwable $error) {
+        $db->rollback();
+        throw $error;
+    }
 }
+

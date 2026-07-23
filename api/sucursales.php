@@ -29,6 +29,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 }
 
 $usuarioId = (int) ($_SESSION['user_id'] ?? 0);
+
 if ($usuarioId <= 0) {
     sucursalesApiResponder(401, [
         'ok' => false,
@@ -63,8 +64,22 @@ try {
     ]);
 }
 
-$rolActual = strtolower(trim((string) ($_SESSION['user_rol'] ?? '')));
-if (!in_array($rolActual, ['admin', 'administrador'], true)) {
+$rolActual = rol_normalizar_sistema(
+    (string) ($_SESSION['user_rol'] ?? '')
+);
+$rolBase = function_exists('rol_base_real_sesion')
+    ? rol_base_real_sesion()
+    : $rolActual;
+
+if (!in_array(
+    $rolActual,
+    ['super_administrador', 'admin', 'administrador'],
+    true
+) && !in_array(
+    $rolBase,
+    ['super_administrador', 'admin', 'administrador'],
+    true
+)) {
     sucursalesApiResponder(403, [
         'ok' => false,
         'mensaje' => 'Solo un administrador puede modificar sucursales.',
@@ -75,6 +90,14 @@ if (!sucursales_modulo_instalado($db)) {
     sucursalesApiResponder(409, [
         'ok' => false,
         'mensaje' => 'Primero ejecuta la migración de multisucursalidad.',
+    ]);
+}
+
+if (!sucursales_terminales_configuracion_instalada($db)) {
+    sucursalesApiResponder(409, [
+        'ok' => false,
+        'mensaje' =>
+            'Ejecuta sql/005_mercadopago_terminales_configuracion.sql.',
     ]);
 }
 
@@ -197,12 +220,18 @@ try {
         case 'guardar_plan':
             $sucursalId = (int) ($_POST['sucursal_id'] ?? 0);
             $planId = (int) ($_POST['plan_id'] ?? 0);
-            $precioTexto = str_replace(',', '', (string) ($_POST['precio'] ?? ''));
+            $precioTexto = str_replace(
+                ',',
+                '',
+                (string) ($_POST['precio'] ?? '')
+            );
             $precio = filter_var($precioTexto, FILTER_VALIDATE_FLOAT);
             $estado = trim((string) ($_POST['estado'] ?? 'activo'));
 
             if ($precio === false) {
-                throw new InvalidArgumentException('Ingresa un precio válido.');
+                throw new InvalidArgumentException(
+                    'Ingresa un precio válido.'
+                );
             }
 
             sucursales_guardar_plan(
@@ -220,7 +249,10 @@ try {
 
         case 'sincronizar_catalogos':
             $sucursalId = (int) ($_POST['sucursal_id'] ?? 0);
-            $resultado = sucursales_sincronizar_catalogos($db, $sucursalId);
+            $resultado = sucursales_sincronizar_catalogos(
+                $db,
+                $sucursalId
+            );
 
             sucursalesApiResponder(200, [
                 'ok' => true,
@@ -234,10 +266,24 @@ try {
 
         case 'guardar_terminal':
             $sucursalId = (int) ($_POST['sucursal_id'] ?? 0);
-            $terminalRegistroId = (int) ($_POST['terminal_registro_id'] ?? 0);
+            $terminalRegistroId = (int) (
+                $_POST['terminal_registro_id'] ?? 0
+            );
             $terminalId = (string) ($_POST['terminal_id'] ?? '');
             $nombre = (string) ($_POST['nombre'] ?? '');
-            $predeterminada = (int) ($_POST['predeterminada'] ?? 0) === 1;
+            $accessToken = (string) ($_POST['access_token'] ?? '');
+            $printOnTerminal = (string) (
+                $_POST['print_on_terminal'] ?? 'no_ticket'
+            );
+            $orderExpiration = (string) (
+                $_POST['order_expiration'] ?? 'PT3M'
+            );
+            $installmentsCost = (string) (
+                $_POST['installments_cost'] ?? 'terminal'
+            );
+            $predeterminada = (int) (
+                $_POST['predeterminada'] ?? 0
+            ) === 1;
             $activa = (int) ($_POST['activo'] ?? 0) === 1;
 
             $idGuardado = sucursales_guardar_terminal(
@@ -247,18 +293,71 @@ try {
                 $terminalId,
                 $nombre,
                 $predeterminada,
-                $activa
+                $activa,
+                $accessToken,
+                $printOnTerminal,
+                $orderExpiration,
+                $installmentsCost,
+                $usuarioId
+            );
+
+            $validacionOk = false;
+            $mensajeValidacion = '';
+
+            try {
+                $resultadoValidacion =
+                    sucursales_probar_terminal_guardada(
+                        $db,
+                        $sucursalId,
+                        $idGuardado,
+                        $activa
+                    );
+                $validacionOk = true;
+                $mensajeValidacion = (string) (
+                    $resultadoValidacion['mensaje']
+                    ?? 'Conexión validada correctamente.'
+                );
+            } catch (Throwable $errorValidacion) {
+                $mensajeValidacion = $errorValidacion->getMessage();
+            }
+
+            sucursalesApiResponder(200, [
+                'ok' => true,
+                'mensaje' => $validacionOk
+                    ? 'Terminal guardada y vinculada correctamente.'
+                    : 'La terminal se guardó, pero la conexión no pudo validarse. Quedó inactiva para evitar cobros fallidos.',
+                'terminal_id' => $idGuardado,
+                'validacion_ok' => $validacionOk,
+                'validacion_mensaje' => $mensajeValidacion,
+            ]);
+
+        case 'probar_terminal':
+            $sucursalId = (int) ($_POST['sucursal_id'] ?? 0);
+            $terminalRegistroId = (int) (
+                $_POST['terminal_registro_id'] ?? 0
+            );
+
+            $resultado = sucursales_probar_terminal_guardada(
+                $db,
+                $sucursalId,
+                $terminalRegistroId,
+                true
             );
 
             sucursalesApiResponder(200, [
                 'ok' => true,
-                'mensaje' => 'Terminal guardada correctamente.',
-                'terminal_id' => $idGuardado,
+                'mensaje' => (string) (
+                    $resultado['mensaje']
+                    ?? 'Conexión validada correctamente.'
+                ),
+                'terminal' => $resultado['terminal'] ?? [],
             ]);
 
         case 'cambiar_estado_terminal':
             $sucursalId = (int) ($_POST['sucursal_id'] ?? 0);
-            $terminalId = (int) ($_POST['terminal_registro_id'] ?? 0);
+            $terminalId = (int) (
+                $_POST['terminal_registro_id'] ?? 0
+            );
             $activa = (int) ($_POST['activo'] ?? 0) === 1;
 
             sucursales_cambiar_estado_terminal(

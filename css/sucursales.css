@@ -2246,3 +2246,224 @@ body.br-modal-open {
         grid-column: 1;
     }
 }
+/* Configuración Point: ajustes locales para mantener el módulo compacto. */
+.br-terminal-row {
+    align-items: stretch;
+    gap: 16px;
+}
+
+.br-terminal-details {
+    display: grid;
+    gap: 9px;
+    min-width: 0;
+    flex: 1;
+}
+
+.br-terminal-title-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.br-terminal-title-line > strong {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.br-terminal-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+}
+
+.br-terminal-meta-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 30px;
+    padding: 5px 9px;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    background: #f8fafc;
+    color: #64748b;
+    font-size: .72rem;
+    font-weight: 700;
+}
+
+.br-terminal-meta-item i {
+    color: #1e3a8a;
+}
+
+.br-validation-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    min-height: 25px;
+    padding: 4px 8px;
+    border-radius: 999px;
+    font-size: .68rem;
+    font-weight: 850;
+}
+
+.br-validation-badge.valid {
+    background: #ecfdf5;
+    color: #047857;
+}
+
+.br-validation-badge.pending {
+    background: #fff7ed;
+    color: #c2410c;
+}
+
+.br-validation-badge.error {
+    background: #fef2f2;
+    color: #b91c1c;
+}
+
+.br-terminal-validation-message {
+    display: flex;
+    align-items: flex-start;
+    gap: 7px;
+    margin: 0;
+    color: #64748b;
+    font-size: .72rem;
+    line-height: 1.45;
+}
+
+.br-terminal-validation-message i {
+    margin-top: 2px;
+    color: #94a3b8;
+}
+
+.br-terminal-modal {
+    width: min(760px, calc(100vw - 28px));
+    max-width: 760px;
+}
+
+.br-terminal-section {
+    display: grid;
+    gap: 13px;
+    padding: 15px;
+    border: 1px solid #e2e8f0;
+    border-radius: 13px;
+    background: #ffffff;
+}
+
+.br-terminal-section + .br-terminal-section {
+    margin-top: 13px;
+}
+
+.br-terminal-section-heading {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+}
+
+.br-terminal-section-heading > i {
+    display: grid;
+    place-items: center;
+    flex: 0 0 auto;
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+    background: #eff6ff;
+    color: #1e3a8a;
+}
+
+.br-terminal-section-heading strong,
+.br-terminal-section-heading small {
+    display: block;
+}
+
+.br-terminal-section-heading strong {
+    color: #1f2937;
+    font-size: .88rem;
+}
+
+.br-terminal-section-heading small {
+    margin-top: 2px;
+    color: #64748b;
+    font-size: .73rem;
+    line-height: 1.4;
+}
+
+.br-token-control {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 42px;
+    overflow: hidden;
+    border: 1px solid #cbd5e1;
+    border-radius: 10px;
+    background: #fff;
+}
+
+.br-token-control:focus-within {
+    border-color: #60a5fa;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, .12);
+}
+
+.br-token-control .br-control {
+    border: 0;
+    border-radius: 0;
+    box-shadow: none !important;
+}
+
+.br-token-toggle {
+    border: 0;
+    border-left: 1px solid #e2e8f0;
+    background: #f8fafc;
+    color: #475569;
+    cursor: pointer;
+}
+
+.br-token-toggle:hover {
+    background: #eff6ff;
+    color: #1e3a8a;
+}
+
+.br-terminal-help {
+    display: flex;
+    align-items: flex-start;
+    gap: 7px;
+    margin: 0;
+    color: #64748b;
+    font-size: .72rem;
+    line-height: 1.45;
+}
+
+.br-terminal-help i {
+    margin-top: 2px;
+    color: #1e3a8a;
+}
+
+.br-test-terminal-button.is-loading i {
+    animation: brPointSpin .75s linear infinite;
+}
+
+@keyframes brPointSpin {
+    to { transform: rotate(360deg); }
+}
+
+@media (max-width: 760px) {
+    .br-terminal-row,
+    .br-terminal-main {
+        align-items: flex-start;
+    }
+
+    .br-terminal-row {
+        flex-direction: column;
+    }
+
+    .br-row-actions {
+        width: 100%;
+        justify-content: flex-start;
+    }
+
+    .br-terminal-modal .br-form-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .br-terminal-modal .br-field {
+        grid-column: 1 / -1;
+    }
+}

@@ -47,7 +47,8 @@ function mp_normalize_order(array $order): array
         'payment_status' => (string) ($payment['status'] ?? ''),
         'payment_status_detail' => (string) ($payment['status_detail'] ?? ''),
         'terminal_id' => (string) (
-            $order['config']['point']['terminal_id'] ?? MP_TERMINAL_ID
+            $order['config']['point']['terminal_id']
+            ?? mp_runtime_terminal_id()
         ),
         'raw_order_json' => mp_json($order),
     ];
@@ -292,6 +293,12 @@ function mp_validate_paid_order_for_sale(
         );
     }
 
+    mp_terminal_configurar_operacion(
+        $conn,
+        (int) $local['sucursal_id'],
+        (string) $local['terminal_id']
+    );
+
     $order = mp_get_order($orderId);
     $data = mp_update_order_safe($conn, $order);
 
@@ -383,6 +390,7 @@ function mp_refund_sale_if_needed(
                 m.sucursal_id AS mp_sucursal_id,
                 m.order_id,
                 m.payment_id,
+                m.terminal_id,
                 m.amount,
                 m.refunded_amount
             FROM ventas v
@@ -423,6 +431,12 @@ function mp_refund_sale_if_needed(
             'La venta es de tarjeta, pero no tiene order_id/payment_id de Mercado Pago.'
         );
     }
+
+    mp_terminal_configurar_operacion(
+        $conn,
+        (int) $row['mp_sucursal_id'],
+        (string) $row['terminal_id']
+    );
 
     $available = round(
         (float) $row['amount'] - (float) $row['refunded_amount'],
