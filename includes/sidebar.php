@@ -6,6 +6,8 @@ if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
+require_once __DIR__ . '/super_admin_helper.php';
+
 // auth_guard.php debe ejecutarse antes. Este retorno evita imprimir el sidebar
 // si por error se incluye sin una sesión válida.
 if (empty($_SESSION['user_id'])) {
@@ -134,14 +136,10 @@ $sidebar_sucursal_clave = trim((string) (
 $sidebar_sucursal_csrf = '';
 
 
-$sidebar_user_rol_base = strtolower(trim((string) (
-    $_SESSION['user_rol_base'] ?? $user_rol
-)));
+$sidebar_user_rol_base = rol_base_real_sesion();
 
-$sidebar_puede_vista_global = in_array(
-    $sidebar_user_rol_base,
-    ['admin', 'administrador'],
-    true
+$sidebar_puede_vista_global = rol_es_administrativo(
+    $sidebar_user_rol_base
 );
 
 /*
@@ -150,7 +148,9 @@ $sidebar_puede_vista_global = in_array(
  */
 $sidebar_paginas_globales = [
     'dashboard.php',
+    'socios.php',
     'inscripciones.php',
+    'planes.php',
     'asistencias.php',
     'ventas.php',
     'historial_ventas.php',
@@ -272,8 +272,12 @@ $sidebar_perfil_url = 'mi_perfil.php?tab='
 $sidebar_global_urls = [
     'dashboard.php' =>
         'dashboard.php?vista=global',
+    'socios.php' =>
+        'socios.php?vista=global',
     'inscripciones.php' =>
         'inscripciones.php?vista=global',
+    'planes.php' =>
+        'planes.php?vista=global',
     'asistencias.php' =>
         'asistencias.php?vista=global',
     'ventas.php' =>
@@ -313,8 +317,12 @@ $sidebar_global_urls = [
 $sidebar_sucursal_urls = [
     'dashboard.php' =>
         'dashboard.php?vista=sucursal',
+    'socios.php' =>
+        'socios.php?vista=sucursal',
     'inscripciones.php' =>
         'inscripciones.php?vista=sucursal',
+    'planes.php' =>
+        'planes.php?vista=sucursal',
     'asistencias.php' =>
         'asistencias.php?vista=sucursal',
     'ventas.php' =>
@@ -357,8 +365,12 @@ $sidebar_sucursal_urls = [
 
 $sidebar_contexto_titulos = [
     'dashboard.php' => 'Vista del panel',
+    'socios.php' =>
+        'Vista de socios',
     'inscripciones.php' =>
         'Vista de inscripciones',
+    'planes.php' =>
+        'Vista de planes',
     'asistencias.php' =>
         'Vista de asistencias',
     'ventas.php' =>
@@ -453,72 +465,50 @@ $sidebar_contexto_nombre = $sidebar_vista_global
         ? $sidebar_sucursal_nombre
         : 'Sucursal');
 
+$sidebar_contexto_detalles_globales = [
+    'socios.php' =>
+        'Socios de todas las sucursales · ' . $sidebar_total_sedes_texto,
+    'inscripciones.php' =>
+        'Inscripciones globales · ' . $sidebar_total_sedes_texto,
+    'planes.php' =>
+        'Catálogo y precios de ' . $sidebar_total_sedes_texto,
+    'asistencias.php' =>
+        'Asistencias globales · ' . $sidebar_total_sedes_texto,
+    'ventas.php' =>
+        'Elige una sede para vender',
+    'historial_ventas.php' =>
+        'Ventas de todas las sucursales · ' . $sidebar_total_sedes_texto,
+    'corte_caja.php' =>
+        'Cortes consolidados · ' . $sidebar_total_sedes_texto,
+    'corte_caja_detalle.php' =>
+        'Cortes consolidados · ' . $sidebar_total_sedes_texto,
+    'productos.php' =>
+        'Inventario consolidado · ' . $sidebar_total_sedes_texto,
+    'inventario.php' =>
+        'Existencias consolidadas · ' . $sidebar_total_sedes_texto,
+    'historial_stock.php' =>
+        'Movimientos consolidados · ' . $sidebar_total_sedes_texto,
+    'clases.php' =>
+        'Clases consolidadas · ' . $sidebar_total_sedes_texto,
+    'inscripciones_clases.php' =>
+        'Inscripciones a clases · ' . $sidebar_total_sedes_texto,
+    'solicitudes_usuarios.php' =>
+        'Asignación de personal · ' . $sidebar_total_sedes_texto,
+    'reportes.php' =>
+        'Reportes consolidados · ' . $sidebar_total_sedes_texto,
+    'notificaciones.php' =>
+        'Notificaciones consolidadas · ' . $sidebar_total_sedes_texto,
+    'sucursales.php' =>
+        'Administración de ' . $sidebar_total_sedes_texto,
+    'configuracion.php' =>
+        'Configuración corporativa · ' . $sidebar_total_sedes_texto,
+    'permisos_roles.php' =>
+        'Accesos de todas las sedes · ' . $sidebar_total_sedes_texto,
+];
+
 $sidebar_contexto_detalle = $sidebar_vista_global
-    ? (
-        $current_page === 'inscripciones.php'
-            ? 'Inscripciones globales · ' . $sidebar_total_sedes_texto
-            : (
-                $current_page === 'asistencias.php'
-                    ? 'Asistencias globales · ' . $sidebar_total_sedes_texto
-                    : (
-                        $current_page === 'ventas.php'
-                            ? 'Elige una sede para vender'
-                            : (
-                                $current_page === 'historial_ventas.php'
-                                    ? 'Ventas de todas las sucursales · ' . $sidebar_total_sedes_texto
-                                    : (
-                                        in_array($current_page, ['corte_caja.php', 'corte_caja_detalle.php'], true)
-                                            ? 'Cortes consolidados · ' . $sidebar_total_sedes_texto
-                                            : (
-                                                $current_page === 'productos.php'
-                                                    ? 'Inventario consolidado · ' . $sidebar_total_sedes_texto
-                                                    : (
-                                                        $current_page === 'inventario.php'
-                                                            ? 'Existencias consolidadas · ' . $sidebar_total_sedes_texto
-                                                            : (
-                                                                $current_page === 'historial_stock.php'
-                                                                    ? 'Movimientos consolidados · ' . $sidebar_total_sedes_texto
-                                                                    : (
-                                                                        $current_page === 'clases.php'
-                                                                            ? 'Clases consolidadas · ' . $sidebar_total_sedes_texto
-                                                                            : (
-                                                                                $current_page === 'inscripciones_clases.php'
-                                                                                    ? 'Inscripciones a clases · ' . $sidebar_total_sedes_texto
-                                                                                    : (
-                                                                                        $current_page === 'solicitudes_usuarios.php'
-                                                                                            ? 'Asignación de personal · ' . $sidebar_total_sedes_texto
-                                                                                            : (
-                                                                                                $current_page === 'reportes.php'
-                                                                                                    ? 'Reportes consolidados · ' . $sidebar_total_sedes_texto
-                                                                                                    : (
-                                                                                                        $current_page === 'notificaciones.php'
-                                                                                                            ? 'Notificaciones consolidadas · ' . $sidebar_total_sedes_texto
-                                                                                                            : (
-                                                                                                                $current_page === 'sucursales.php'
-                                                                                                                    ? 'Administración de ' . $sidebar_total_sedes_texto
-                                                                                                                    : (
-                                                                                                                        $current_page === 'configuracion.php'
-                                                                                                                            ? 'Configuración corporativa · ' . $sidebar_total_sedes_texto
-                                                                                                                            : (
-                                                                                                                                $current_page === 'permisos_roles.php'
-                                                                                                                                    ? 'Accesos de todas las sedes · ' . $sidebar_total_sedes_texto
-                                                                                                                                    : 'Estadísticas globales · ' . $sidebar_total_sedes_texto
-                                                                                                                            )
-                                                                                                                    )
-                                                                                                            )
-                                                                                                    )
-                                                                                            )
-                                                                                    )
-                                                                            )
-                                                                    )
-                                                            )
-                                                    )
-                                            )
-                                    )
-                            )
-                    )
-            )
-    )
+    ? ($sidebar_contexto_detalles_globales[$current_page]
+        ?? 'Estadísticas globales · ' . $sidebar_total_sedes_texto)
     : (
         ($sidebar_sucursal_clave !== ''
             ? $sidebar_sucursal_clave
@@ -535,10 +525,11 @@ $sidebar_contexto_valor = $sidebar_vista_global
 $gym_nombre = 'Gimnasio';
 $gym_logo = '';
 $gym_logo_url = '';
+$gym_favicon_version = '1';
 
 if ($conn) {
     $query = "
-        SELECT nombre, logo
+        SELECT nombre, logo, updated_at
         FROM configuracion_gimnasio
         WHERE id = 1
         LIMIT 1
@@ -547,8 +538,29 @@ if ($conn) {
     $result = $conn->query($query);
 
     if ($result && $row = $result->fetch_assoc()) {
-        $nombreConfigurado = trim((string) ($row['nombre'] ?? ''));
-        $logoConfigurado = trim((string) ($row['logo'] ?? ''));
+        $nombreConfigurado = trim(
+            (string) ($row['nombre'] ?? '')
+        );
+
+        $logoConfigurado = trim(
+            (string) ($row['logo'] ?? '')
+        );
+
+        $fechaActualizacion = trim(
+            (string) ($row['updated_at'] ?? '')
+        );
+
+        if ($fechaActualizacion !== '') {
+            $gym_favicon_version = preg_replace(
+                '/[^0-9]/',
+                '',
+                $fechaActualizacion
+            );
+
+            if ($gym_favicon_version === '') {
+                $gym_favicon_version = '1';
+            }
+        }
 
         if ($nombreConfigurado !== '') {
             $gym_nombre = $nombreConfigurado;
@@ -623,8 +635,12 @@ if ($sidebar_legal_activo) {
     $active_module = 'historial';
 } elseif ($current_page === 'historial_ventas.php') {
     $active_module = 'historial_ventas';
+} elseif ($current_page === 'socios.php') {
+    $active_module = 'members';
 } elseif ($current_page === 'inscripciones.php') {
     $active_module = 'inscriptions';
+} elseif ($current_page === 'planes.php') {
+    $active_module = 'plans';
 } elseif ($current_page === 'asistencias.php') {
     $active_module = 'assistance';
 } elseif ($current_page === 'clases.php') {
@@ -657,27 +673,28 @@ if ($sidebar_legal_activo) {
 // Obtener datos del usuario desde la sesión
 $user_name = isset($_SESSION['user_name']) ? $_SESSION['user_name'] : 'Usuario';
 $user_email = isset($_SESSION['user_email']) ? $_SESSION['user_email'] : 'usuario@email.com';
-$user_rol = strtolower(trim((string) ($_SESSION['user_rol'] ?? 'recepcionista')));
+$user_rol = rol_normalizar_sistema((string) (
+    $_SESSION['user_rol'] ?? 'recepcionista'
+));
+$user_rol_visual = rol_base_real_sesion();
 
-// Mostrar rol en español
+// Mostrar el rol real; el rol operativo puede seguir siendo admin.
 $rol_spanish = [
+    'super_administrador' => 'Super administrador',
     'admin' => 'Administrador',
     'administrador' => 'Administrador',
     'recepcionista' => 'Recepcionista',
     'entrenador' => 'Entrenador'
 ];
-$user_rol_display = isset($rol_spanish[$user_rol]) ? $rol_spanish[$user_rol] : ucfirst($user_rol);
+$user_rol_display = $rol_spanish[$user_rol_visual]
+    ?? ucfirst(str_replace('_', ' ', $user_rol_visual));
 
 // Contador visible únicamente para administradores.
 $solicitudes_pendientes = 0;
 
 if (
     $conn
-    && in_array(
-        $user_rol,
-        ['admin', 'administrador'],
-        true
-    )
+    && rol_es_administrativo($sidebar_user_rol_base)
 ) {
     $query_solicitudes = "
         SELECT COUNT(*) AS total
@@ -715,7 +732,33 @@ $sidebar_navbar_version = is_file($sidebar_navbar_css)
     href="css/navbar.css?v=<?php echo htmlspecialchars($sidebar_navbar_version, ENT_QUOTES, 'UTF-8'); ?>"
 >
 
+<script>
+(function () {
+    const faviconUrl =
+        'favicon.php?v=<?php echo rawurlencode(
+            $gym_favicon_version
+        ); ?>';
 
+    let favicon = document.querySelector(
+        'link[data-app-favicon="true"]'
+    );
+
+    if (!favicon) {
+        favicon = document.querySelector(
+            'link[rel="icon"], link[rel="shortcut icon"]'
+        );
+    }
+
+    if (!favicon) {
+        favicon = document.createElement('link');
+        document.head.appendChild(favicon);
+    }
+
+    favicon.setAttribute('rel', 'icon');
+    favicon.setAttribute('data-app-favicon', 'true');
+    favicon.setAttribute('href', faviconUrl);
+})();
+</script>
 
 <!-- Botón Hamburguesa para móvil (solo visible en móvil) -->
 <button class="hamburger-mobile" id="hamburgerMobile" type="button" aria-label="Abrir menú lateral" aria-controls="sidebar" aria-expanded="false">
@@ -907,8 +950,12 @@ $sidebar_navbar_version = is_file($sidebar_navbar_css)
                             <strong>Todas las sucursales</strong>
                             <small>
                                 <?php
-                                if ($current_page === 'inscripciones.php') {
+                                if ($current_page === 'socios.php') {
+                                    echo 'Directorio de socios de todas las sucursales';
+                                } elseif ($current_page === 'inscripciones.php') {
                                     echo 'Inscripciones de todas las sucursales';
+                                } elseif ($current_page === 'planes.php') {
+                                    echo 'Catálogo, precios y disponibilidad de todas las sucursales';
                                 } elseif ($current_page === 'asistencias.php') {
                                     echo 'Actividad de todas las sucursales';
                                 } elseif ($current_page === 'ventas.php') {
@@ -1006,8 +1053,12 @@ $sidebar_navbar_version = is_file($sidebar_navbar_css)
                 <?php if ($sidebar_vista_global): ?>
                     <i class="fas fa-chart-column"></i>
                     <?php
-                    if ($current_page === 'inscripciones.php') {
+                    if ($current_page === 'socios.php') {
+                        echo 'Directorio consolidado de';
+                    } elseif ($current_page === 'inscripciones.php') {
                         echo 'Listado consolidado de';
+                    } elseif ($current_page === 'planes.php') {
+                        echo 'Catálogo disponible para';
                     } elseif ($current_page === 'asistencias.php') {
                         echo 'Actividad consolidada de';
                     } elseif ($current_page === 'ventas.php') {
@@ -1065,7 +1116,11 @@ $sidebar_navbar_version = is_file($sidebar_navbar_css)
             <div class="sidebar-branch-loading" aria-live="polite">
                 <i class="fas fa-spinner fa-spin"></i>
                 <?php
-                if ($current_page === 'asistencias.php') {
+                if ($current_page === 'socios.php') {
+                    echo 'Actualizando socios...';
+                } elseif ($current_page === 'planes.php') {
+                    echo 'Actualizando planes...';
+                } elseif ($current_page === 'asistencias.php') {
                     echo 'Actualizando asistencias...';
                 } elseif ($current_page === 'ventas.php') {
                     echo 'Cambiando sucursal de venta...';
@@ -1109,16 +1164,14 @@ $sidebar_navbar_version = is_file($sidebar_navbar_css)
 
     <?php
     $puede_dashboard = $sidebar_puede('dashboard');
+    $puede_socios = $sidebar_puede('socios');
     $puede_inscripciones = $sidebar_puede('inscripciones');
+    $puede_planes = $sidebar_puede('planes');
     $puede_asistencias = $sidebar_puede('asistencias');
     $puede_ventas = $sidebar_puede('ventas');
     $puede_historial_ventas = $sidebar_puede('historial_ventas');
     $puede_corte_caja = $sidebar_puede('corte_caja');
-    $puede_inventario_resumen = in_array(
-        $user_rol,
-        ['admin', 'administrador'],
-        true
-    );
+    $puede_inventario_resumen = rol_es_administrativo($sidebar_user_rol_base);
     $puede_productos = $sidebar_puede('productos');
     $puede_historial_stock = $sidebar_puede('historial_stock');
     $puede_clases = $sidebar_puede('clases');
@@ -1127,11 +1180,7 @@ $sidebar_navbar_version = is_file($sidebar_navbar_css)
     $puede_notificaciones = $sidebar_puede('notificaciones');
     $puede_solicitudes = $sidebar_puede('solicitudes_usuarios');
     $puede_configuracion = $sidebar_puede('configuracion');
-    $puede_sucursales = in_array(
-        $user_rol,
-        ['admin', 'administrador'],
-        true
-    );
+    $puede_sucursales = rol_es_administrativo($sidebar_user_rol_base);
     $puede_permisos_roles = $sidebar_puede('permisos_roles');
     $puede_panel_entrenador = $user_rol === 'entrenador';
 
@@ -1141,7 +1190,9 @@ $sidebar_navbar_version = is_file($sidebar_navbar_css)
      */
     if ($puede_panel_entrenador) {
         $puede_dashboard = false;
+        $puede_socios = false;
         $puede_inscripciones = false;
+        $puede_planes = false;
         $puede_asistencias = false;
         $puede_ventas = false;
         $puede_historial_ventas = false;
@@ -1159,7 +1210,7 @@ $sidebar_navbar_version = is_file($sidebar_navbar_css)
         $puede_permisos_roles = false;
     }
 
-    $mostrar_grupo_socios = $puede_inscripciones || $puede_asistencias;
+    $mostrar_grupo_socios = $puede_socios || $puede_inscripciones || $puede_planes || $puede_asistencias;
     $mostrar_grupo_ventas = $puede_ventas || $puede_historial_ventas || $puede_corte_caja;
     $mostrar_grupo_inventario = $puede_inventario_resumen
         || $puede_productos
@@ -1177,7 +1228,7 @@ $sidebar_navbar_version = is_file($sidebar_navbar_css)
         true
     );
     $grupo_ventas_activo = in_array($active_module, ['ventas', 'historial_ventas', 'corte_caja'], true);
-    $grupo_socios_activo = in_array($active_module, ['inscriptions', 'assistance'], true);
+    $grupo_socios_activo = in_array($active_module, ['members', 'inscriptions', 'plans', 'assistance'], true);
     $grupo_clases_activo = in_array($active_module, ['classes', 'clases_inscriptions'], true);
     $grupo_admin_activo = in_array(
         $active_module,
@@ -1218,11 +1269,27 @@ $sidebar_navbar_version = is_file($sidebar_navbar_css)
                         <i class="fas fa-chevron-down group-chevron"></i>
                     </button>
                     <ul class="nav-submenu">
+                        <?php if ($puede_socios): ?>
+                            <li>
+                                <a href="socios.php" class="nav-link <?php echo $active_module === 'members' ? 'active' : ''; ?>">
+                                    <i class="fas fa-user-group"></i>
+                                    <span class="nav-text">Socios</span>
+                                </a>
+                            </li>
+                        <?php endif; ?>
                         <?php if ($puede_inscripciones): ?>
                             <li>
                                 <a href="inscripciones.php" class="nav-link <?php echo $active_module === 'inscriptions' ? 'active' : ''; ?>">
                                     <i class="fas fa-id-card"></i>
                                     <span class="nav-text">Inscripciones</span>
+                                </a>
+                            </li>
+                        <?php endif; ?>
+                        <?php if ($puede_planes): ?>
+                            <li>
+                                <a href="planes.php" class="nav-link <?php echo $active_module === 'plans' ? 'active' : ''; ?>">
+                                    <i class="fas fa-layer-group"></i>
+                                    <span class="nav-text">Planes</span>
                                 </a>
                             </li>
                         <?php endif; ?>
@@ -2516,11 +2583,7 @@ $sidebar_navbar_version = is_file($sidebar_navbar_css)
                     No fue posible preparar el registro de aceptación.
 
                     <?php if (
-                        in_array(
-                            $user_rol,
-                            ['admin', 'administrador'],
-                            true
-                        )
+                        rol_es_administrativo($sidebar_user_rol_base)
                     ): ?>
                         <br>
                         Detalle:

@@ -4,9 +4,11 @@
 
 declare(strict_types=1);
 
+require_once __DIR__ . '/super_admin_helper.php';
+
 /**
- * Devuelve las sucursales activas asignadas al usuario.
- * El rol efectivo puede variar por sucursal.
+ * Devuelve las sucursales activas disponibles para el usuario.
+ * El superadministrador accede automáticamente a todas las sedes activas.
  */
 function sucursal_obtener_asignadas(mysqli $db, int $usuarioId): array
 {
@@ -22,19 +24,32 @@ function sucursal_obtener_asignadas(mysqli $db, int $usuarioId): array
             s.logo,
             s.zona_horaria,
             s.es_matriz,
-            us.es_principal,
-            us.puede_operar_caja,
-            COALESCE(us.rol_sucursal, u.rol) AS rol_efectivo
-        FROM usuarios_sucursales us
+            COALESCE(us.es_principal, s.es_matriz, 0) AS es_principal,
+            CASE
+                WHEN u.rol = 'super_administrador' THEN 1
+                ELSE COALESCE(us.puede_operar_caja, 0)
+            END AS puede_operar_caja,
+            CASE
+                WHEN u.rol = 'super_administrador' THEN 'admin'
+                ELSE COALESCE(us.rol_sucursal, u.rol)
+            END AS rol_efectivo,
+            u.rol AS rol_base
+        FROM usuarios u
         INNER JOIN sucursales s
-            ON s.id = us.sucursal_id
-        INNER JOIN usuarios u
-            ON u.id = us.usuario_id
-        WHERE us.usuario_id = ?
-          AND us.estado = 'activo'
-          AND s.estado = 'activa'
+            ON s.estado = 'activa'
+        LEFT JOIN usuarios_sucursales us
+            ON us.usuario_id = u.id
+           AND us.sucursal_id = s.id
+        WHERE u.id = ?
           AND u.estado = 'activo'
-        ORDER BY us.es_principal DESC, s.es_matriz DESC, s.nombre ASC
+          AND (
+                u.rol = 'super_administrador'
+                OR us.estado = 'activo'
+          )
+        ORDER BY
+            CASE WHEN u.rol = 'super_administrador' THEN s.es_matriz ELSE COALESCE(us.es_principal, 0) END DESC,
+            s.es_matriz DESC,
+            s.nombre ASC
     ";
 
     $stmt = $db->prepare($sql);
@@ -61,9 +76,7 @@ function sucursal_obtener_asignadas(mysqli $db, int $usuarioId): array
     return $sucursales;
 }
 
-/**
- * Busca una sucursal concreta dentro de las asignaciones del usuario.
- */
+/** Busca una sucursal concreta dentro de las sedes permitidas. */
 function sucursal_buscar_asignada(
     mysqli $db,
     int $usuarioId,
@@ -81,19 +94,29 @@ function sucursal_buscar_asignada(
             s.logo,
             s.zona_horaria,
             s.es_matriz,
-            us.es_principal,
-            us.puede_operar_caja,
-            COALESCE(us.rol_sucursal, u.rol) AS rol_efectivo
-        FROM usuarios_sucursales us
+            COALESCE(us.es_principal, s.es_matriz, 0) AS es_principal,
+            CASE
+                WHEN u.rol = 'super_administrador' THEN 1
+                ELSE COALESCE(us.puede_operar_caja, 0)
+            END AS puede_operar_caja,
+            CASE
+                WHEN u.rol = 'super_administrador' THEN 'admin'
+                ELSE COALESCE(us.rol_sucursal, u.rol)
+            END AS rol_efectivo,
+            u.rol AS rol_base
+        FROM usuarios u
         INNER JOIN sucursales s
-            ON s.id = us.sucursal_id
-        INNER JOIN usuarios u
-            ON u.id = us.usuario_id
-        WHERE us.usuario_id = ?
-          AND us.sucursal_id = ?
-          AND us.estado = 'activo'
-          AND s.estado = 'activa'
+            ON s.id = ?
+           AND s.estado = 'activa'
+        LEFT JOIN usuarios_sucursales us
+            ON us.usuario_id = u.id
+           AND us.sucursal_id = s.id
+        WHERE u.id = ?
           AND u.estado = 'activo'
+          AND (
+                u.rol = 'super_administrador'
+                OR us.estado = 'activo'
+          )
         LIMIT 1
     ";
 
@@ -104,7 +127,7 @@ function sucursal_buscar_asignada(
         );
     }
 
-    $stmt->bind_param('ii', $usuarioId, $sucursalId);
+    $stmt->bind_param('ii', $sucursalId, $usuarioId);
     $stmt->execute();
     $result = $stmt->get_result();
     $row = $result->fetch_assoc() ?: null;
@@ -119,46 +142,42 @@ function sucursal_buscar_asignada(
     return $row;
 }
 
-/**
- * Guarda únicamente datos confiables obtenidos desde la BD.
- */
+/** Guarda únicamente datos confiables obtenidos desde la BD. */
 function sucursal_guardar_en_sesion(array $sucursal): void
 {
-    /*
-     * Conserva el rol general para validar funciones administrativas que
-     * no dependen del rol efectivo de una sede concreta.
-     */
-    if (empty($_SESSION['user_rol_base'])) {
-        $_SESSION['user_rol_base'] = (string) (
-            $_SESSION['user_rol']
-            ?? $sucursal['rol_efectivo']
-            ?? 'recepcionista'
-        );
-    }
+    $rolBaseBd = rol_normalizar_sistema((string) (
+        $sucursal['rol_base']
+        ?? $_SESSION['user_rol_base']
+        ?? $_SESSION['user_rol']
+        ?? 'recepcionista'
+    ));
 
+    $_SESSION['user_rol_base'] = $rolBaseBd;
     $_SESSION['sucursal_id'] = (int) $sucursal['id'];
     $_SESSION['sucursal_clave'] = (string) $sucursal['clave'];
     $_SESSION['sucursal_nombre'] = (string) $sucursal['nombre'];
     $_SESSION['sucursal_zona_horaria'] = (string) (
         $sucursal['zona_horaria'] ?? 'America/Mexico_City'
     );
-    $_SESSION['sucursal_puede_operar_caja'] = (int) (
-        $sucursal['puede_operar_caja'] ?? 0
+    $_SESSION['sucursal_puede_operar_caja'] = rol_es_super_administrador($rolBaseBd)
+        ? 1
+        : (int) ($sucursal['puede_operar_caja'] ?? 0);
+
+    $rolEfectivo = (string) (
+        $sucursal['rol_efectivo']
+        ?? $rolBaseBd
     );
 
-    // Los permisos por módulo siguen usando user_rol, pero ahora el valor
-    // representa el rol efectivo en la sucursal activa.
-    $_SESSION['user_rol'] = (string) $sucursal['rol_efectivo'];
+    $_SESSION['user_rol'] = rol_es_super_administrador($rolBaseBd)
+        ? 'admin'
+        : rol_operativo_desde_base($rolEfectivo);
 
     date_default_timezone_set(
         $_SESSION['sucursal_zona_horaria']
     );
 }
 
-/**
- * Inicializa o revalida la sucursal activa después del login y en cada
- * petición protegida. Nunca confía solo en el valor guardado en sesión.
- */
+/** Inicializa o revalida la sucursal activa en cada petición protegida. */
 function sucursal_inicializar_sesion(mysqli $db): array
 {
     if (session_status() !== PHP_SESSION_ACTIVE) {
@@ -200,9 +219,7 @@ function sucursal_inicializar_sesion(mysqli $db): array
     return $principal;
 }
 
-/**
- * Comprueba el rol general del usuario directamente desde la base de datos.
- */
+/** Comprueba el rol general directamente desde la base de datos. */
 function sucursal_usuario_es_administrador(
     mysqli $db,
     int $usuarioId
@@ -229,18 +246,10 @@ function sucursal_usuario_es_administrador(
     $fila = $resultado ? $resultado->fetch_assoc() : null;
     $stmt->close();
 
-    $rol = strtolower(trim((string) ($fila['rol'] ?? '')));
-
-    return in_array(
-        $rol,
-        ['admin', 'administrador'],
-        true
-    );
+    return rol_es_administrativo((string) ($fila['rol'] ?? ''));
 }
 
-/**
- * Activa el resumen global del dashboard sin cambiar la sucursal operativa.
- */
+/** Activa el resumen global sin cambiar la sucursal operativa. */
 function sucursal_activar_vista_global(
     mysqli $db,
     int $usuarioId
@@ -258,22 +267,18 @@ function sucursal_activar_vista_global(
     $_SESSION['dashboard_vista_global'] = 1;
 }
 
-/** Desactiva el resumen global y vuelve al contexto de la sede operativa. */
 function sucursal_desactivar_vista_global(): void
 {
     unset($_SESSION['dashboard_vista_global']);
 }
 
-/** Indica si el dashboard está mostrando el consolidado de todas las sedes. */
 function sucursal_dashboard_vista_global(): bool
 {
     return isset($_SESSION['dashboard_vista_global'])
         && (int) $_SESSION['dashboard_vista_global'] === 1;
 }
 
-/**
- * Cambia la sede activa validando la relación usuario-sucursal.
- */
+/** Cambia la sede activa validando el acceso. */
 function sucursal_cambiar_activa(
     mysqli $db,
     int $usuarioId,
@@ -298,7 +303,6 @@ function sucursal_cambiar_activa(
     sucursal_guardar_en_sesion($sucursal);
     sucursal_desactivar_vista_global();
 
-    // Evita reutilizar filtros, carritos o datos temporales de otra sede.
     unset(
         $_SESSION['venta_carrito'],
         $_SESSION['inscripcion_borrador'],

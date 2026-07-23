@@ -1,36 +1,91 @@
 <?php
 session_start();
+header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+header('Pragma: no-cache');
 require_once 'config/database.php';
+require_once 'includes/super_admin_helper.php';
 require_once 'includes/sucursal_context.php';
 
 $error = trim((string) ($_GET['error'] ?? ''));
 $email_value = '';
 $tiempo_maximo = 12 * 3600; // 12 horas
 
-// Verificar si la sesión actual sigue siendo válida.
-if (isset($_SESSION['user_id'], $_SESSION['login_time'])) {
-    $tiempo_sesion = time() - (int) $_SESSION['login_time'];
-    $tiempo_inactividad = isset($_SESSION['last_activity'])
-        ? time() - (int) $_SESSION['last_activity']
-        : $tiempo_maximo;
-
-    if ($tiempo_sesion < $tiempo_maximo && $tiempo_inactividad < $tiempo_maximo) {
-        header('Location: dashboard.php');
-        exit();
-    }
-
-    // Sesión expirada.
-    session_unset();
-    session_destroy();
-    session_start();
-    $error = 'sesion_expirada';
-}
-
 $database = new Database();
 $db = $database->getConnection();
 
 if ($db instanceof mysqli) {
     $db->set_charset('utf8mb4');
+}
+
+function login_limpiar_sesion(): void
+{
+    $_SESSION = [];
+
+    if (ini_get('session.use_cookies')) {
+        $params = session_get_cookie_params();
+
+        setcookie(
+            session_name(),
+            '',
+            time() - 42000,
+            $params['path'],
+            $params['domain'],
+            (bool) $params['secure'],
+            (bool) $params['httponly']
+        );
+    }
+
+    session_destroy();
+    session_start();
+}
+
+function login_destino_segun_rol(): string
+{
+    $rolEfectivo = rol_normalizar_sistema((string) (
+        $_SESSION['user_rol'] ?? ''
+    ));
+
+    return $rolEfectivo === 'entrenador'
+        ? 'panel_entrenador.php'
+        : 'dashboard.php';
+}
+
+/*
+ * Una sesión existente se revalida contra la base de datos antes de
+ * redirigir. Esto evita ciclos login → dashboard cuando el rol cambió.
+ */
+if (isset($_SESSION['user_id'], $_SESSION['login_time'])) {
+    $tiempoSesion = time() - (int) $_SESSION['login_time'];
+    $tiempoInactividad = isset($_SESSION['last_activity'])
+        ? time() - (int) $_SESSION['last_activity']
+        : $tiempo_maximo;
+
+    if (
+        $tiempoSesion >= $tiempo_maximo
+        || $tiempoInactividad >= $tiempo_maximo
+    ) {
+        login_limpiar_sesion();
+        $error = 'sesion_expirada';
+    } elseif ($db instanceof mysqli) {
+        try {
+            sucursal_inicializar_sesion($db);
+            $_SESSION['last_activity'] = time();
+
+            header('Location: ' . login_destino_segun_rol());
+            exit();
+        } catch (Throwable $sesionException) {
+            error_log(
+                '[Login revalidación] '
+                . $sesionException->getMessage()
+            );
+
+            login_limpiar_sesion();
+            $error = 'sesion_revalidacion';
+        }
+    } else {
+        login_limpiar_sesion();
+        $error = 'error_sistema';
+    }
 }
 
 function getGymLogo($conn): string
@@ -124,7 +179,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                          */
                         sucursal_inicializar_sesion($db);
 
-                        header('Location: dashboard.php');
+                        header('Location: ' . login_destino_segun_rol());
                         exit();
                     } catch (Throwable $sucursalException) {
                         error_log(
@@ -238,6 +293,12 @@ $errores = [
         'icon' => 'error',
         'timer' => 6500,
     ],
+    'sesion_revalidacion' => [
+        'title' => 'Sesión actualizada',
+        'message' => 'El rol o la sucursal de tu cuenta cambió. Inicia sesión nuevamente.',
+        'icon' => 'info',
+        'timer' => 5500,
+    ],
     'sesion_expirada' => [
         'title' => 'Sesión finalizada',
         'message' => 'Tu sesión expiró después de 12 horas. Inicia sesión nuevamente.',
@@ -267,6 +328,7 @@ $alerta = $errores[$error] ?? null;
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css">
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <link rel="icon" href="favicon.php">
 
     <style>
         :root {

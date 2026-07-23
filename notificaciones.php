@@ -1,18 +1,15 @@
 <?php
 declare(strict_types=1);
 
+// Toda página protegida debe pasar primero por el guard central.
+require_once __DIR__ . '/includes/auth_guard.php';
+
 date_default_timezone_set('America/Mexico_City');
 
-session_start();
-
 require_once __DIR__ . '/config/database.php';
+require_once __DIR__ . '/includes/super_admin_helper.php';
 require_once __DIR__ . '/includes/notificaciones_context.php';
 require_once __DIR__ . '/includes/notificaciones_mailer.php';
-
-if (empty($_SESSION['user_id'])) {
-    header('Location: login.php');
-    exit;
-}
 
 $database = new Database();
 $db = $database->getConnection();
@@ -23,11 +20,29 @@ if (!$db instanceof mysqli) {
 
 $db->set_charset('utf8mb4');
 
-$userId = (int) $_SESSION['user_id'];
-$role = notif_role();
+$userId = (int) ($_SESSION['user_id'] ?? 0);
+$role = rol_normalizar_sistema(notif_role());
+$baseRole = rol_base_real_sesion();
 
-if (!in_array($role, ['admin', 'recepcionista'], true)) {
-    header('Location: dashboard.php');
+/*
+ * El rol general super_administrador conserva acceso total aunque el rol
+ * operativo de una sucursal sea admin. Recepción continúa entrando cuando
+ * tenga disponible el módulo de Notificaciones.
+ */
+$canAccessNotifications =
+    rol_es_administrativo($baseRole)
+    || rol_es_administrativo($role)
+    || $role === 'recepcionista';
+
+if (!$canAccessNotifications) {
+    $_SESSION['alerta_acceso_denegado'] = [
+        'titulo' => 'Acceso restringido',
+        'mensaje' => 'Tu perfil no tiene permiso para administrar notificaciones.',
+        'rol' => $baseRole !== '' ? $baseRole : $role,
+        'modulo' => 'Notificaciones',
+    ];
+
+    header('Location: dashboard.php?error=acceso_denegado');
     exit;
 }
 

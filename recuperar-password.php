@@ -248,7 +248,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <title>Recuperar contraseña - <?php echo eRecuperar($nombre_gimnasio); ?></title>
 
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
-
+    <link rel="icon" href="favicon.php">
+    
     <style>
         :root {
             --azul: #1e3a8a;

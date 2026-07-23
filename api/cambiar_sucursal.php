@@ -41,6 +41,7 @@ if ($usuarioId <= 0) {
 }
 
 require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/../includes/super_admin_helper.php';
 require_once __DIR__ . '/../includes/sucursal_context.php';
 
 $database = new Database();
@@ -80,11 +81,6 @@ if ($sucursalId === null || $sucursalId === false) {
 
 try {
     if ((int) $sucursalId === 0) {
-        /*
-         * La vista global modifica únicamente las estadísticas del
-         * dashboard. La sucursal operativa se conserva para ventas,
-         * caja, inventario, asistencias e inscripciones.
-         */
         sucursal_activar_vista_global($db, $usuarioId);
 
         responderSucursal(200, [

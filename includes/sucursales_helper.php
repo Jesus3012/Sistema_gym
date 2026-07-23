@@ -4,6 +4,13 @@
 
 declare(strict_types=1);
 
+require_once __DIR__ . '/super_admin_helper.php';
+
+function sucursales_actor_es_super(): bool
+{
+    return rol_es_super_administrador();
+}
+
 function sucursales_tabla_existe(mysqli $db, string $tabla): bool
 {
     $permitidas = [
@@ -235,6 +242,10 @@ function sucursales_obtener(mysqli $db, int $sucursalId): ?array
 
 function sucursales_personal(mysqli $db, int $sucursalId): array
 {
+    $filtroSuper = sucursales_actor_es_super()
+        ? ''
+        : " AND u.rol <> 'super_administrador'";
+
     $stmt = $db->prepare(
         "SELECT
             us.usuario_id,
@@ -251,9 +262,9 @@ function sucursales_personal(mysqli $db, int $sucursalId): array
             COALESCE(us.rol_sucursal, u.rol) AS rol_efectivo
          FROM usuarios_sucursales us
          INNER JOIN usuarios u ON u.id = us.usuario_id
-         WHERE us.sucursal_id = ?
+         WHERE us.sucursal_id = ?{$filtroSuper}
          ORDER BY us.estado = 'activo' DESC,
-                  FIELD(COALESCE(us.rol_sucursal, u.rol), 'admin', 'recepcionista', 'entrenador'),
+                  FIELD(u.rol, 'super_administrador', 'admin', 'recepcionista', 'entrenador'),
                   u.nombre ASC"
     );
 
@@ -281,6 +292,10 @@ function sucursales_personal(mysqli $db, int $sucursalId): array
 
 function sucursales_usuarios_disponibles(mysqli $db, int $sucursalId): array
 {
+    $filtroSuper = sucursales_actor_es_super()
+        ? ''
+        : " AND u.rol <> 'super_administrador'";
+
     $stmt = $db->prepare(
         "SELECT
             u.id,
@@ -296,7 +311,7 @@ function sucursales_usuarios_disponibles(mysqli $db, int $sucursalId): array
          LEFT JOIN usuarios_sucursales us
            ON us.usuario_id = u.id
           AND us.sucursal_id = ?
-         WHERE u.estado = 'activo'
+         WHERE u.estado = 'activo'{$filtroSuper}
          ORDER BY u.nombre ASC"
     );
 
@@ -730,7 +745,10 @@ function sucursales_guardar_asignacion(
     }
 
     $stmtUsuario = $db->prepare(
-        "SELECT id FROM usuarios WHERE id = ? AND estado = 'activo' LIMIT 1"
+        "SELECT id, rol
+         FROM usuarios
+         WHERE id = ? AND estado = 'activo'
+         LIMIT 1"
     );
     if (!$stmtUsuario) {
         throw new RuntimeException('No fue posible validar el usuario.');
@@ -738,13 +756,35 @@ function sucursales_guardar_asignacion(
     $stmtUsuario->bind_param('i', $usuarioId);
     $stmtUsuario->execute();
     $resultadoUsuario = $stmtUsuario->get_result();
-    $existeUsuario = $resultadoUsuario
-        ? (bool) $resultadoUsuario->fetch_assoc()
-        : false;
+    $usuarioObjetivo = $resultadoUsuario
+        ? $resultadoUsuario->fetch_assoc()
+        : null;
     $stmtUsuario->close();
 
-    if (!$existeUsuario) {
+    if (!$usuarioObjetivo) {
         throw new RuntimeException('El usuario no está activo.');
+    }
+
+    $rolGlobalObjetivo = rol_normalizar_sistema(
+        (string) ($usuarioObjetivo['rol'] ?? '')
+    );
+
+    if ($rolGlobalObjetivo === 'super_administrador') {
+        if (!sucursales_actor_es_super()) {
+            throw new RuntimeException(
+                'No tienes permiso para consultar o modificar esa cuenta.'
+            );
+        }
+
+        if (
+            $usuarioId !== $administradorActualId
+            || $rol !== 'admin'
+            || $estado !== 'activo'
+        ) {
+            throw new RuntimeException(
+                'La cuenta superadministradora debe conservar acceso administrativo activo.'
+            );
+        }
     }
 
     if (
@@ -830,6 +870,26 @@ function sucursales_desactivar_asignacion(
     ) {
         throw new RuntimeException(
             'No puedes retirar tu propio acceso de la sucursal activa.'
+        );
+    }
+
+    $stmtRolGlobal = $db->prepare(
+        "SELECT rol FROM usuarios WHERE id = ? LIMIT 1"
+    );
+    if (!$stmtRolGlobal) {
+        throw new RuntimeException('No fue posible validar la cuenta.');
+    }
+    $stmtRolGlobal->bind_param('i', $usuarioId);
+    $stmtRolGlobal->execute();
+    $filaRolGlobal = $stmtRolGlobal->get_result()->fetch_assoc();
+    $stmtRolGlobal->close();
+
+    if (
+        rol_normalizar_sistema((string) ($filaRolGlobal['rol'] ?? ''))
+        === 'super_administrador'
+    ) {
+        throw new RuntimeException(
+            'El acceso del superadministrador no puede retirarse.'
         );
     }
 

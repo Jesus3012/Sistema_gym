@@ -1,33 +1,70 @@
 <?php
-// includes/inscripcion_detalle.php
-session_start();
-require_once '../config/database.php';
+declare(strict_types=1);
 
-if (!isset($_POST['id'])) {
-    echo '<div class="alert alert-danger">ID no proporcionado</div>';
+// includes/inscripcion_detalle.php
+require_once __DIR__ . '/auth_guard.php';
+require_once dirname(__DIR__) . '/config/database.php';
+
+mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+
+$id = filter_input(INPUT_POST, 'id', FILTER_VALIDATE_INT);
+if (!$id || $id <= 0) {
+    http_response_code(400);
+    echo '<div class="alert alert-danger">ID no proporcionado o no válido.</div>';
     exit;
 }
-
-$id = $_POST['id'];
 
 $database = new Database();
 $conn = $database->getConnection();
 
-// Obtener datos de la inscripción
+$sucursalId = (int) ($_SESSION['sucursal_id'] ?? 0);
+$rolBase = strtolower(trim((string) (
+    $_SESSION['user_rol_base'] ?? $_SESSION['user_rol'] ?? ''
+)));
+$adminFlag = in_array($rolBase, ['admin', 'administrador'], true) ? 1 : 0;
+
+// Obtener datos de la inscripción y el documento vigente más reciente.
 $stmt = $conn->prepare("
-    SELECT i.*, c.nombre as cliente_nombre, c.apellido as cliente_apellido, c.telefono, c.email,
-           p.nombre as plan_nombre, p.duracion_dias
+    SELECT
+        i.*,
+        c.nombre AS cliente_nombre,
+        c.apellido AS cliente_apellido,
+        c.telefono,
+        c.email,
+        c.contacto_emergencia_nombre,
+        c.contacto_emergencia_telefono,
+        p.nombre AS plan_nombre,
+        p.duracion_dias,
+        (
+            SELECT hp.id
+            FROM historial_pagos hp
+            WHERE hp.inscripcion_id = i.id
+              AND hp.monto > 0
+            ORDER BY hp.id DESC
+            LIMIT 1
+        ) AS ultimo_historial_id
     FROM inscripciones i
     INNER JOIN clientes c ON i.cliente_id = c.id
     INNER JOIN planes p ON i.plan_id = p.id
+    LEFT JOIN inscripciones_sucursales acceso
+        ON acceso.inscripcion_id = i.id
+       AND acceso.sucursal_id = ?
     WHERE i.id = ?
+      AND (
+            i.sucursal_id = ?
+            OR acceso.sucursal_id IS NOT NULL
+            OR ? = 1
+      )
+    LIMIT 1
 ");
-$stmt->bind_param("i", $id);
+$stmt->bind_param("iiii", $sucursalId, $id, $sucursalId, $adminFlag);
 $stmt->execute();
 $inscripcion = $stmt->get_result()->fetch_assoc();
+$stmt->close();
 
 if (!$inscripcion) {
-    echo '<div class="alert alert-danger">Inscripción no encontrada</div>';
+    http_response_code(404);
+    echo '<div class="alert alert-danger">Inscripción no encontrada o sin acceso desde la sucursal activa.</div>';
     exit;
 }
 
@@ -44,6 +81,8 @@ if($inscripcion['estado'] == 'activa') {
     $estado_class = 'bg-secondary';
     $estado_texto = 'Cancelada';
 }
+
+$ultimo_historial_id = (int) ($inscripcion['ultimo_historial_id'] ?? 0);
 ?>
 
 <style>
@@ -111,6 +150,24 @@ if($inscripcion['estado'] == 'activa') {
     .info-value {
         flex: 1;
         color: #333;
+        min-width: 0;
+        overflow-wrap: anywhere;
+    }
+
+    .emergency-detail-block {
+        margin-top: 15px;
+        padding-top: 15px;
+        border-top: 1px solid #e8edf4;
+    }
+
+    .emergency-detail-title {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        margin-bottom: 10px;
+        color: #b45309;
+        font-size: 13px;
+        font-weight: 700;
     }
     
     .historial-modern {
@@ -328,7 +385,43 @@ if($inscripcion['estado'] == 'activa') {
         border-radius: 20px;
         font-size: 12px;
         font-weight: 500;
-        color: white;  /* Esto asegura que el texto sea blanco */
+        color: white;
+    }
+
+    .plan-documento-value,
+    .plan-historial-documento {
+        display: inline-flex;
+        align-items: center;
+        gap: 9px;
+    }
+
+    .btn-documento-pdf {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex: 0 0 auto;
+        width: 34px;
+        height: 34px;
+        border: 1px solid #fecaca;
+        border-radius: 9px;
+        background: #fff1f2;
+        color: #dc2626;
+        text-decoration: none;
+        transition: transform .18s ease, background-color .18s ease, border-color .18s ease;
+    }
+
+    .btn-documento-pdf:hover {
+        transform: translateY(-1px);
+        border-color: #f87171;
+        background: #ffe4e6;
+        color: #b91c1c;
+    }
+
+    .btn-documento-pdf.is-small {
+        width: 30px;
+        height: 30px;
+        border-radius: 8px;
+        font-size: 13px;
     }
 </style>
 
@@ -352,6 +445,37 @@ if($inscripcion['estado'] == 'activa') {
                     <div class="info-label">Email:</div>
                     <div class="info-value"><?php echo htmlspecialchars($inscripcion['email'] ?: 'No registrado'); ?></div>
                 </div>
+
+                <div class="emergency-detail-block">
+                    <div class="emergency-detail-title">
+                        <i class="fas fa-phone-volume"></i>
+                        Contacto de emergencia
+                    </div>
+                    <div class="info-row">
+                        <div class="info-label">Nombre:</div>
+                        <div class="info-value">
+                            <?php echo htmlspecialchars(
+                                trim((string) ($inscripcion['contacto_emergencia_nombre'] ?? '')) !== ''
+                                    ? (string) $inscripcion['contacto_emergencia_nombre']
+                                    : 'No registrado',
+                                ENT_QUOTES,
+                                'UTF-8'
+                            ); ?>
+                        </div>
+                    </div>
+                    <div class="info-row">
+                        <div class="info-label">Teléfono:</div>
+                        <div class="info-value">
+                            <?php echo htmlspecialchars(
+                                trim((string) ($inscripcion['contacto_emergencia_telefono'] ?? '')) !== ''
+                                    ? (string) $inscripcion['contacto_emergencia_telefono']
+                                    : 'No registrado',
+                                ENT_QUOTES,
+                                'UTF-8'
+                            ); ?>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
         <div class="col-md-6">
@@ -362,7 +486,21 @@ if($inscripcion['estado'] == 'activa') {
                 </div>
                 <div class="info-row">
                     <div class="info-label">Plan:</div>
-                    <div class="info-value"><strong><?php echo htmlspecialchars($inscripcion['plan_nombre']); ?></strong></div>
+                    <div class="info-value plan-documento-value">
+                        <?php if ($ultimo_historial_id > 0): ?>
+                            <a
+                                class="btn-documento-pdf"
+                                href="includes/ver_documento_inscripcion.php?id=<?php echo $ultimo_historial_id; ?>"
+                                target="_blank"
+                                rel="noopener"
+                                title="Abrir documento PDF de la membresía"
+                                aria-label="Abrir documento PDF de la membresía"
+                            >
+                                <i class="fas fa-file-pdf"></i>
+                            </a>
+                        <?php endif; ?>
+                        <strong><?php echo htmlspecialchars($inscripcion['plan_nombre'], ENT_QUOTES, 'UTF-8'); ?></strong>
+                    </div>
                 </div>
                 <div class="info-row">
                     <div class="info-label">Fecha Inicio:</div>

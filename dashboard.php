@@ -9,6 +9,11 @@
 require_once __DIR__ . '/includes/auth_guard.php';
 require_once __DIR__ . '/config/database.php';
 
+/* Permite limpiar cualquier salida previa antes de generar reportes PDF. */
+if (ob_get_level() === 0) {
+    ob_start();
+}
+
 date_default_timezone_set(
     (string) (
         $_SESSION['sucursal_zona_horaria']
@@ -198,6 +203,7 @@ $todos_productos = [];
 $productos_bajo_stock = [];
 $todas_inscripciones = [];
 $vencimientos_proximos = 0;
+$inscripciones_por_vencer = [];
 $todas_clases = [];
 $proximas_clases = [];
 $alumnos_entrenador = [];
@@ -353,6 +359,35 @@ try {
                AND fecha_fin BETWEEN CURDATE()
                    AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)",
             'total'
+        );
+
+        $inscripciones_por_vencer = dashboardConsultarFilas(
+            $db,
+            "SELECT
+                i.id,
+                c.nombre AS cliente_nombre,
+                c.apellido AS cliente_apellido,
+                c.telefono,
+                c.email,
+                p.nombre AS plan_nombre,
+                i.fecha_inicio,
+                i.fecha_fin,
+                i.precio_pagado,
+                DATEDIFF(i.fecha_fin, CURDATE()) AS dias_restantes,
+                suc.nombre AS sucursal_nombre
+             FROM inscripciones i
+             INNER JOIN clientes c
+                ON c.id = i.cliente_id
+             INNER JOIN planes p
+                ON p.id = i.plan_id
+             LEFT JOIN sucursales suc
+                ON suc.id = i.sucursal_id
+             WHERE i.estado = 'activa'
+               AND i.fecha_fin BETWEEN CURDATE()
+                   AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)
+             ORDER BY i.fecha_fin ASC,
+                      c.nombre ASC,
+                      c.apellido ASC"
         );
 
         $asistencias_hoy = (int) dashboardConsultarValor(
@@ -519,6 +554,38 @@ try {
                AND i.fecha_fin BETWEEN CURDATE()
                    AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)",
             'total',
+            'i',
+            [$sucursal_id]
+        );
+
+        $inscripciones_por_vencer = dashboardConsultarFilas(
+            $db,
+            "SELECT
+                i.id,
+                c.nombre AS cliente_nombre,
+                c.apellido AS cliente_apellido,
+                c.telefono,
+                c.email,
+                p.nombre AS plan_nombre,
+                i.fecha_inicio,
+                i.fecha_fin,
+                i.precio_pagado,
+                DATEDIFF(i.fecha_fin, CURDATE()) AS dias_restantes,
+                suc.nombre AS sucursal_nombre
+             FROM inscripciones i
+             INNER JOIN clientes c
+                ON c.id = i.cliente_id
+             INNER JOIN planes p
+                ON p.id = i.plan_id
+             LEFT JOIN sucursales suc
+                ON suc.id = i.sucursal_id
+             WHERE i.sucursal_id = ?
+               AND i.estado = 'activa'
+               AND i.fecha_fin BETWEEN CURDATE()
+                   AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)
+             ORDER BY i.fecha_fin ASC,
+                      c.nombre ASC,
+                      c.apellido ASC",
             'i',
             [$sucursal_id]
         );
@@ -699,6 +766,374 @@ try {
         'No fue posible cargar los datos del dashboard. '
         . 'Verifica que la migración multisucursal esté completa.'
     );
+ }
+
+$vencimientos_hoy = 0;
+$vencimientos_tres_dias = 0;
+$monto_vencimientos = 0.0;
+
+foreach ($inscripciones_por_vencer as $inscripcionVencimiento) {
+    $diasVencimiento = (int) (
+        $inscripcionVencimiento['dias_restantes'] ?? 0
+    );
+
+    if ($diasVencimiento === 0) {
+        $vencimientos_hoy++;
+    }
+
+    if ($diasVencimiento >= 0 && $diasVencimiento <= 3) {
+        $vencimientos_tres_dias++;
+    }
+
+    $monto_vencimientos += (float) (
+        $inscripcionVencimiento['precio_pagado'] ?? 0
+    );
+}
+
+$pdf_vencimientos_url = 'dashboard.php?accion=pdf_vencimientos&vista=' . (
+    $vista_global_dashboard ? 'global' : 'sucursal'
+);
+
+/*
+ * El reporte se genera desde el mismo dashboard. Así hereda exactamente
+ * la sesión, el permiso y la sucursal activa sin agregar endpoints sueltos.
+ */
+if (
+    isset($_GET['accion'])
+    && (string) $_GET['accion'] === 'pdf_vencimientos'
+) {
+    if (!in_array($user_rol, ['admin', 'recepcionista'], true)) {
+        http_response_code(403);
+        exit('No tienes permiso para generar este reporte.');
+    }
+
+    require_once __DIR__ . '/includes/correo_inscripciones.php';
+
+    if (
+        !function_exists('cargarFpdfInscripciones')
+        || !cargarFpdfInscripciones()
+        || !class_exists('FPDF')
+    ) {
+        while (ob_get_level() > 0) {
+            ob_end_clean();
+        }
+
+        http_response_code(500);
+        exit('No se encontró la librería FPDF utilizada por el sistema.');
+    }
+
+    $configuracionGimnasio = dashboardConsultarFilas(
+        $db,
+        "SELECT nombre, logo
+         FROM configuracion_gimnasio
+         WHERE id = 1
+         LIMIT 1"
+    );
+
+    $nombreGimnasioPdf = trim((string) (
+        $configuracionGimnasio[0]['nombre']
+        ?? 'EGO'
+    ));
+
+    $logoGimnasioPdf = trim((string) (
+        $configuracionGimnasio[0]['logo']
+        ?? ''
+    ));
+
+    $rutaLogoGimnasioPdf = null;
+
+    if ($logoGimnasioPdf !== '') {
+        $logoNormalizado = str_replace('\\', '/', $logoGimnasioPdf);
+        $logoNormalizado = ltrim($logoNormalizado, '/');
+
+        $candidatosLogo = [
+            __DIR__ . '/' . $logoNormalizado,
+            __DIR__ . '/uploads/' . basename($logoNormalizado),
+            __DIR__ . '/img/' . basename($logoNormalizado),
+        ];
+
+        foreach ($candidatosLogo as $candidatoLogo) {
+            $rutaRealLogo = realpath($candidatoLogo);
+
+            if (
+                $rutaRealLogo !== false
+                && is_file($rutaRealLogo)
+                && is_readable($rutaRealLogo)
+            ) {
+                $extensionLogo = strtolower(
+                    (string) pathinfo($rutaRealLogo, PATHINFO_EXTENSION)
+                );
+
+                if (in_array($extensionLogo, ['jpg', 'jpeg', 'png'], true)) {
+                    $rutaLogoGimnasioPdf = $rutaRealLogo;
+                    break;
+                }
+            }
+        }
+    }
+
+    if (!class_exists('DashboardVencimientosPDF')) {
+        class DashboardVencimientosPDF extends FPDF
+        {
+            public function Footer()
+            {
+                $this->SetY(-12);
+                $this->SetFont('Arial', '', 7.5);
+                $this->SetTextColor(100, 116, 139);
+                $this->Cell(
+                    0,
+                    5,
+                    textoFpdfInscripciones(
+                        'Página ' . $this->PageNo()
+                    ),
+                    0,
+                    0,
+                    'C'
+                );
+            }
+        }
+    }
+
+    while (ob_get_level() > 0) {
+        ob_end_clean();
+    }
+
+    $pdf = new DashboardVencimientosPDF('L', 'mm', 'A4');
+    $pdf->SetMargins(12, 12, 12);
+    $pdf->SetAutoPageBreak(true, 17);
+    $pdf->AddPage();
+
+    $dibujarEncabezadoReporte = static function (
+        DashboardVencimientosPDF $documento,
+        string $gimnasio,
+        string $contexto,
+        int $total,
+        ?string $rutaLogo
+    ): void {
+        $documento->SetFillColor(30, 58, 138);
+        $documento->Rect(0, 0, 297, 31, 'F');
+
+        $tituloX = 12;
+        $tituloAncho = 190;
+
+        if ($rutaLogo !== null) {
+            try {
+                $documento->Image($rutaLogo, 12, 5.5, 19, 19);
+                $tituloX = 36;
+                $tituloAncho = 166;
+            } catch (Throwable $logoError) {
+                error_log(
+                    '[Dashboard PDF vencimientos logo] '
+                    . $logoError->getMessage()
+                );
+            }
+        }
+
+        $documento->SetXY($tituloX, 8);
+        $documento->SetTextColor(255, 255, 255);
+        $documento->SetFont('Arial', 'B', 16);
+        $documento->Cell(
+            $tituloAncho,
+            7,
+            textoFpdfInscripciones('Inscripciones por vencer'),
+            0,
+            0,
+            'L'
+        );
+
+        $documento->SetFont('Arial', 'B', 10);
+        $documento->Cell(
+            83,
+            7,
+            textoFpdfInscripciones($gimnasio),
+            0,
+            1,
+            'R'
+        );
+
+        $documento->SetX($tituloX);
+        $documento->SetFont('Arial', '', 8.5);
+        $documento->Cell(
+            $tituloAncho,
+            6,
+            textoFpdfInscripciones(
+                'Próximos 7 días · ' . $contexto
+            ),
+            0,
+            0,
+            'L'
+        );
+
+        $documento->Cell(
+            83,
+            6,
+            textoFpdfInscripciones(
+                $total . ($total === 1 ? ' inscripción' : ' inscripciones')
+            ),
+            0,
+            1,
+            'R'
+        );
+
+        $documento->SetY(37);
+        $documento->SetTextColor(71, 85, 105);
+        $documento->SetFont('Arial', '', 8);
+        $documento->Cell(
+            0,
+            5,
+            textoFpdfInscripciones(
+                'Generado el ' . date('d/m/Y H:i')
+            ),
+            0,
+            1,
+            'L'
+        );
+        $documento->Ln(2);
+    };
+
+    $dibujarCabeceraTabla = static function (
+        DashboardVencimientosPDF $documento
+    ): void {
+        $anchos = [9, 47, 33, 29, 26, 16, 46, 60];
+        $titulos = [
+            '#',
+            'Socio',
+            'Plan',
+            'Teléfono',
+            'Vence',
+            'Días',
+            'Sucursal',
+            'Correo',
+        ];
+
+        $documento->SetFillColor(226, 232, 240);
+        $documento->SetTextColor(30, 41, 59);
+        $documento->SetFont('Arial', 'B', 7.5);
+
+        foreach ($titulos as $indice => $titulo) {
+            $documento->Cell(
+                $anchos[$indice],
+                8,
+                textoFpdfInscripciones($titulo),
+                0,
+                0,
+                $indice === 0 || $indice === 5 ? 'C' : 'L',
+                true
+            );
+        }
+
+        $documento->Ln();
+    };
+
+    $dibujarEncabezadoReporte(
+        $pdf,
+        $nombreGimnasioPdf,
+        $dashboard_contexto_nombre,
+        count($inscripciones_por_vencer),
+        $rutaLogoGimnasioPdf
+    );
+    $dibujarCabeceraTabla($pdf);
+
+    if ($inscripciones_por_vencer === []) {
+        $pdf->SetFont('Arial', '', 10);
+        $pdf->SetTextColor(100, 116, 139);
+        $pdf->Cell(
+            266,
+            18,
+            textoFpdfInscripciones(
+                'No hay inscripciones por vencer en los próximos 7 días.'
+            ),
+            1,
+            1,
+            'C'
+        );
+    } else {
+        $anchos = [9, 47, 33, 29, 26, 16, 46, 60];
+
+        foreach ($inscripciones_por_vencer as $indice => $inscripcionPdf) {
+            if ($pdf->GetY() > 184) {
+                $pdf->AddPage();
+                $dibujarEncabezadoReporte(
+                    $pdf,
+                    $nombreGimnasioPdf,
+                    $dashboard_contexto_nombre,
+                    count($inscripciones_por_vencer),
+                    $rutaLogoGimnasioPdf
+                );
+                $dibujarCabeceraTabla($pdf);
+            }
+
+            $diasPdf = (int) ($inscripcionPdf['dias_restantes'] ?? 0);
+            $nombrePdf = trim(
+                (string) ($inscripcionPdf['cliente_nombre'] ?? '')
+                . ' '
+                . (string) ($inscripcionPdf['cliente_apellido'] ?? '')
+            );
+
+            $valores = [
+                (string) ($indice + 1),
+                recortarTextoFpdfInscripciones($nombrePdf, 31),
+                recortarTextoFpdfInscripciones(
+                    (string) ($inscripcionPdf['plan_nombre'] ?? ''),
+                    22
+                ),
+                recortarTextoFpdfInscripciones(
+                    (string) ($inscripcionPdf['telefono'] ?? 'No registrado'),
+                    18
+                ),
+                date(
+                    'd/m/Y',
+                    strtotime((string) $inscripcionPdf['fecha_fin'])
+                ),
+                (string) $diasPdf,
+                recortarTextoFpdfInscripciones(
+                    (string) ($inscripcionPdf['sucursal_nombre'] ?? $dashboard_contexto_nombre),
+                    29
+                ),
+                recortarTextoFpdfInscripciones(
+                    (string) ($inscripcionPdf['email'] ?? 'No registrado'),
+                    41
+                ),
+            ];
+
+            $pdf->SetFillColor(
+                $indice % 2 === 0 ? 248 : 255,
+                $indice % 2 === 0 ? 250 : 255,
+                $indice % 2 === 0 ? 252 : 255
+            );
+            $pdf->SetTextColor(31, 41, 55);
+            $pdf->SetFont('Arial', '', 7.3);
+
+            foreach ($valores as $columna => $valor) {
+                if ($columna === 5 && $diasPdf <= 1) {
+                    $pdf->SetTextColor(185, 28, 28);
+                    $pdf->SetFont('Arial', 'B', 7.3);
+                } else {
+                    $pdf->SetTextColor(31, 41, 55);
+                    $pdf->SetFont('Arial', '', 7.3);
+                }
+
+                $pdf->Cell(
+                    $anchos[$columna],
+                    8,
+                    textoFpdfInscripciones($valor),
+                    0,
+                    0,
+                    $columna === 0 || $columna === 5 ? 'C' : 'L',
+                    true
+                );
+            }
+
+            $pdf->Ln();
+        }
+    }
+
+    $nombreArchivoPdf = 'inscripciones_por_vencer_'
+        . date('Ymd_His')
+        . '.pdf';
+
+    $pdf->Output('I', $nombreArchivoPdf);
+    exit;
 }
 
 ?>
@@ -1473,20 +1908,42 @@ try {
 
         <!-- Alertas de Vencimientos (solo admin y recepcionista) -->
         <?php if (($user_rol == 'admin' || $user_rol == 'recepcionista') && $vencimientos_proximos > 0): ?>
-        <div class="row">
+        <div class="row expiry-alert-row">
             <div class="col-12">
-                <div class="card" style="border-left: 4px solid #ffc107;">
-                    <div class="card-header">
-                        <h3 class="card-title">
-                            <i class="fas fa-bell mr-2"></i>
-                            Inscripciones por Vencer
-                        </h3>
-                    </div>
-                    <div class="card-body">
-                        <p class="mb-0">
-                            <i class="fas fa-calendar-times"></i> 
-                            <strong><?php echo $vencimientos_proximos; ?> inscripciones</strong> están por vencer en los próximos 7 días.
+                <div
+                    class="expiry-alert-card"
+                    role="button"
+                    tabindex="0"
+                    onclick="verInscripcionesPorVencer()"
+                    onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); verInscripcionesPorVencer(); }"
+                    aria-label="Ver inscripciones por vencer"
+                >
+                    <span class="expiry-alert-icon" aria-hidden="true">
+                        <i class="fas fa-calendar-exclamation"></i>
+                    </span>
+
+                    <div class="expiry-alert-copy">
+                        <span class="expiry-alert-kicker">Próximos 7 días</span>
+                        <h3>Inscripciones por vencer</h3>
+                        <p>
+                            <strong>
+                                <?php echo number_format($vencimientos_proximos); ?>
+                                <?php echo $vencimientos_proximos === 1 ? 'inscripción' : 'inscripciones'; ?>
+                            </strong>
+                            requieren seguimiento antes de su fecha de vencimiento.
                         </p>
+                    </div>
+
+                    <div class="expiry-alert-meta">
+                        <span class="expiry-alert-count">
+                            <strong><?php echo number_format($vencimientos_proximos); ?></strong>
+                            <small>por vencer</small>
+                        </span>
+
+                        <span class="expiry-alert-action">
+                            Revisar reporte
+                            <i class="fas fa-arrow-right"></i>
+                        </span>
                     </div>
                 </div>
             </div>
@@ -1630,6 +2087,198 @@ try {
     </div>
 
     <!-- MODALES (Socios, Productos, Inscripciones, Clases) -->
+    <!-- Modal de inscripciones por vencer -->
+    <?php if ($user_rol == 'admin' || $user_rol == 'recepcionista'): ?>
+    <div class="modal fade" id="modalVencimientos" tabindex="-1" role="dialog" aria-hidden="true">
+        <div class="modal-dialog modal-xl" role="document">
+            <div class="modal-content expiry-modal-content">
+                <div class="modal-header expiry-modal-header">
+                    <div>
+                        <span class="expiry-modal-kicker">Próximos 7 días</span>
+                        <h5 class="modal-title">
+                            <i class="fas fa-calendar-days"></i>
+                            Inscripciones por Vencer
+                        </h5>
+                        <p><?php echo htmlspecialchars($dashboard_contexto_nombre, ENT_QUOTES, 'UTF-8'); ?></p>
+                    </div>
+
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Cerrar">
+                        <span>&times;</span>
+                    </button>
+                </div>
+
+                <div class="stats-bar expiry-stats-bar">
+                    <div class="stat-box">
+                        <div class="stat-number"><?php echo number_format($vencimientos_proximos); ?></div>
+                        <div class="stat-label">Por vencer</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-number"><?php echo number_format($vencimientos_hoy); ?></div>
+                        <div class="stat-label">Vencen hoy</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-number"><?php echo number_format($vencimientos_tres_dias); ?></div>
+                        <div class="stat-label">En 3 días o menos</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-number">$<?php echo number_format($monto_vencimientos, 2); ?></div>
+                        <div class="stat-label">Valor de membresías</div>
+                    </div>
+                </div>
+
+                <div class="expiry-modal-toolbar">
+                    <label class="expiry-search-wrap" for="searchVencimientos">
+                        <i class="fas fa-magnifying-glass"></i>
+                        <input
+                            type="search"
+                            id="searchVencimientos"
+                            class="form-control"
+                            placeholder="Buscar por socio, plan, teléfono o sucursal"
+                            autocomplete="off"
+                        >
+                    </label>
+
+                    <a
+                        href="<?php echo htmlspecialchars($pdf_vencimientos_url, ENT_QUOTES, 'UTF-8'); ?>"
+                        target="_blank"
+                        rel="noopener"
+                        class="expiry-pdf-button"
+                    >
+                        <i class="fas fa-file-pdf"></i>
+                        Generar PDF
+                    </a>
+                </div>
+
+                <div class="modal-body expiry-modal-body">
+                    <div class="expiry-grid" id="vencimientosGrid">
+                        <?php foreach ($inscripciones_por_vencer as $inscripcionVencer): ?>
+                            <?php
+                            $diasRestantesVencer = (int) ($inscripcionVencer['dias_restantes'] ?? 0);
+                            $nombreCompletoVencer = trim(
+                                (string) ($inscripcionVencer['cliente_nombre'] ?? '')
+                                . ' '
+                                . (string) ($inscripcionVencer['cliente_apellido'] ?? '')
+                            );
+                            $claseUrgenciaVencer = $diasRestantesVencer === 0
+                                ? 'expires-today'
+                                : ($diasRestantesVencer <= 3 ? 'expires-soon' : 'expires-week');
+                            ?>
+                            <article
+                                class="expiry-member-card <?php echo $claseUrgenciaVencer; ?>"
+                                data-expiry-card
+                                data-search="<?php echo htmlspecialchars(strtolower(
+                                    $nombreCompletoVencer . ' '
+                                    . (string) ($inscripcionVencer['plan_nombre'] ?? '') . ' '
+                                    . (string) ($inscripcionVencer['telefono'] ?? '') . ' '
+                                    . (string) ($inscripcionVencer['email'] ?? '') . ' '
+                                    . (string) ($inscripcionVencer['sucursal_nombre'] ?? '')
+                                ), ENT_QUOTES, 'UTF-8'); ?>"
+                            >
+                                <header class="expiry-member-header">
+                                    <div class="expiry-member-avatar">
+                                        <?php echo htmlspecialchars(strtoupper(
+                                            substr((string) ($inscripcionVencer['cliente_nombre'] ?? 'S'), 0, 1)
+                                            . substr((string) ($inscripcionVencer['cliente_apellido'] ?? 'O'), 0, 1)
+                                        ), ENT_QUOTES, 'UTF-8'); ?>
+                                    </div>
+
+                                    <div class="expiry-member-identity">
+                                        <h3><?php echo htmlspecialchars($nombreCompletoVencer, ENT_QUOTES, 'UTF-8'); ?></h3>
+                                        <span>
+                                            <i class="fas fa-id-card"></i>
+                                            <?php echo htmlspecialchars((string) ($inscripcionVencer['plan_nombre'] ?? 'Sin plan'), ENT_QUOTES, 'UTF-8'); ?>
+                                        </span>
+                                    </div>
+
+                                    <span class="expiry-days-badge">
+                                        <?php if ($diasRestantesVencer === 0): ?>
+                                            Vence hoy
+                                        <?php elseif ($diasRestantesVencer === 1): ?>
+                                            1 día
+                                        <?php else: ?>
+                                            <?php echo $diasRestantesVencer; ?> días
+                                        <?php endif; ?>
+                                    </span>
+                                </header>
+
+                                <div class="expiry-member-period">
+                                    <div>
+                                        <small>Inicio</small>
+                                        <strong><?php echo date('d/m/Y', strtotime((string) $inscripcionVencer['fecha_inicio'])); ?></strong>
+                                    </div>
+                                    <i class="fas fa-arrow-right"></i>
+                                    <div>
+                                        <small>Vencimiento</small>
+                                        <strong><?php echo date('d/m/Y', strtotime((string) $inscripcionVencer['fecha_fin'])); ?></strong>
+                                    </div>
+                                </div>
+
+                                <div class="expiry-member-contact">
+                                    <span>
+                                        <i class="fas fa-phone"></i>
+                                        <?php echo htmlspecialchars(
+                                            trim((string) ($inscripcionVencer['telefono'] ?? '')) !== ''
+                                                ? (string) $inscripcionVencer['telefono']
+                                                : 'No registrado',
+                                            ENT_QUOTES,
+                                            'UTF-8'
+                                        ); ?>
+                                    </span>
+                                    <span>
+                                        <i class="fas fa-envelope"></i>
+                                        <?php echo htmlspecialchars(
+                                            trim((string) ($inscripcionVencer['email'] ?? '')) !== ''
+                                                ? (string) $inscripcionVencer['email']
+                                                : 'No registrado',
+                                            ENT_QUOTES,
+                                            'UTF-8'
+                                        ); ?>
+                                    </span>
+                                    <span>
+                                        <i class="fas fa-building"></i>
+                                        <?php echo htmlspecialchars(
+                                            (string) ($inscripcionVencer['sucursal_nombre'] ?? $dashboard_contexto_nombre),
+                                            ENT_QUOTES,
+                                            'UTF-8'
+                                        ); ?>
+                                    </span>
+                                </div>
+                            </article>
+                        <?php endforeach; ?>
+                    </div>
+
+                    <div class="expiry-filter-empty" id="vencimientosFilterEmpty" hidden>
+                        <i class="fas fa-magnifying-glass"></i>
+                        <h3>No encontramos inscripciones</h3>
+                        <p>Prueba con otro nombre, plan, teléfono o sucursal.</p>
+                    </div>
+
+                    <?php if ($inscripciones_por_vencer === []): ?>
+                        <div class="expiry-filter-empty is-initial-empty">
+                            <i class="fas fa-circle-check"></i>
+                            <h3>No hay vencimientos próximos</h3>
+                            <p>No existen inscripciones activas que venzan durante los próximos 7 días.</p>
+                        </div>
+                    <?php endif; ?>
+                </div>
+
+                <div class="modal-footer expiry-modal-footer">
+                    <span>
+                        El reporte PDF utiliza la sucursal o vista global seleccionada.
+                    </span>
+
+                    <div>
+                        <button type="button" class="btn-close-modal" data-dismiss="modal">
+                            <i class="fas fa-times"></i>
+                            Cerrar
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <?php endif; ?>
+
     <!-- Modal de Socios -->
     <div class="modal fade" id="modalClientes" tabindex="-1" role="dialog">
         <div class="modal-dialog modal-xl" role="document">
@@ -2291,6 +2940,20 @@ try {
             filtrarInscripciones();
         }, 100);
     }
+
+    function verInscripcionesPorVencer() {
+        $('#modalVencimientos').modal('show');
+
+        window.setTimeout(function() {
+            const searchVencimientos = document.getElementById('searchVencimientos');
+
+            if (searchVencimientos) {
+                searchVencimientos.value = '';
+                filtrarVencimientos();
+                searchVencimientos.focus();
+            }
+        }, 120);
+    }
     
     function verTodasClases() {
         $('#modalClases').modal('show');
@@ -2350,6 +3013,38 @@ try {
         });
     }
     
+    function filtrarVencimientos() {
+        const input = document.getElementById('searchVencimientos');
+        const empty = document.getElementById('vencimientosFilterEmpty');
+        const cards = Array.from(
+            document.querySelectorAll('#vencimientosGrid [data-expiry-card]')
+        );
+        const term = (input ? input.value : '')
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .toLowerCase()
+            .trim();
+        let visible = 0;
+
+        cards.forEach(function(card) {
+            const hayCoincidencia = term === ''
+                || String(card.dataset.search || '')
+                    .normalize('NFD')
+                    .replace(/[\u0300-\u036f]/g, '')
+                    .includes(term);
+
+            card.hidden = !hayCoincidencia;
+
+            if (hayCoincidencia) {
+                visible++;
+            }
+        });
+
+        if (empty) {
+            empty.hidden = visible !== 0 || cards.length === 0;
+        }
+    }
+
     function filtrarClases() {
         const searchTerm = document.getElementById('searchClases').value.toLowerCase();
         const cards = document.querySelectorAll('#clasesGrid .clase-card');
@@ -2380,6 +3075,19 @@ try {
         
         const searchInscripciones = document.getElementById('searchInscripciones');
         if (searchInscripciones) searchInscripciones.addEventListener('keyup', filtrarInscripciones);
+
+        const searchVencimientos = document.getElementById('searchVencimientos');
+        let vencimientosSearchTimer = null;
+
+        if (searchVencimientos) {
+            searchVencimientos.addEventListener('input', function() {
+                window.clearTimeout(vencimientosSearchTimer);
+                vencimientosSearchTimer = window.setTimeout(
+                    filtrarVencimientos,
+                    450
+                );
+            });
+        }
         
         const searchClases = document.getElementById('searchClases');
         if (searchClases) searchClases.addEventListener('keyup', filtrarClases);

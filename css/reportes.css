@@ -1568,3 +1568,494 @@ span.flatpickr-weekday {
         margin-left: 0 !important;
     }
 }
+
+/* ==========================================================
+   INDICADORES DEL GIMNASIO · GRÁFICAS
+   ========================================================== */
+
+.report-type[data-type="indicadores"] .report-type-icon {
+    color: #6652a3;
+    background: #f1edfb;
+}
+
+.report-type[data-type="indicadores"].active .report-type-icon {
+    color: #6652a3;
+    background: #eee9fb;
+}
+
+.report-indicators-view[hidden],
+#reportDataView[hidden] {
+    display: none !important;
+}
+
+.report-indicators-view {
+    display: grid;
+    gap: 18px;
+}
+
+.report-indicators-view.is-loading .indicator-chart-card {
+    opacity: 0.58;
+    pointer-events: none;
+}
+
+.indicators-toolbar {
+    padding: 20px 22px;
+}
+
+.indicators-toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 18px 24px;
+    align-items: center;
+}
+
+.indicators-toolbar-copy {
+    min-width: 0;
+}
+
+.indicators-kicker {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    margin-bottom: 6px;
+    color: var(--report-blue);
+    font-size: .68rem;
+    font-weight: 900;
+    letter-spacing: .07em;
+    text-transform: uppercase;
+}
+
+.indicators-toolbar h2 {
+    margin: 0;
+    color: var(--report-primary);
+    font-size: 1.22rem;
+    letter-spacing: -.02em;
+}
+
+.indicators-toolbar p {
+    margin: 5px 0 0;
+    color: var(--report-muted);
+    font-size: .79rem;
+    line-height: 1.45;
+}
+
+.indicators-toolbar-controls {
+    display: flex;
+    align-items: end;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+.indicators-date-field {
+    display: grid;
+    gap: 6px;
+    min-width: 180px;
+    margin: 0;
+}
+
+.indicators-date-field span {
+    color: #526176;
+    font-size: .66rem;
+    font-weight: 900;
+    letter-spacing: .035em;
+    text-transform: uppercase;
+}
+
+.indicators-date-field input {
+    width: 100%;
+    height: 42px;
+    padding: 0 12px;
+    border: 1px solid #cfd9e5;
+    border-radius: 9px;
+    outline: 0;
+    background: #fff;
+    color: var(--report-text);
+    font: inherit;
+    font-size: .8rem;
+}
+
+.indicators-date-field input:focus {
+    border-color: #6b9bea;
+    box-shadow: 0 0 0 3px rgba(47, 102, 179, .10);
+}
+
+.indicators-clear-button,
+.indicators-refresh-button {
+    display: inline-flex;
+    min-height: 42px;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 9px 15px;
+    border-radius: 9px;
+    font: inherit;
+    font-size: .77rem;
+    font-weight: 850;
+    cursor: pointer;
+}
+
+.indicators-clear-button {
+    border: 1px solid #d4dde8;
+    background: #f7f9fc;
+    color: #526176;
+}
+
+.indicators-clear-button:hover {
+    border-color: #b7c6d8;
+    background: #eef3f8;
+    color: var(--report-primary);
+}
+
+.indicators-refresh-button {
+    border: 0;
+    background: var(--report-blue);
+    color: #fff;
+}
+
+.indicators-refresh-button:hover:not(:disabled) {
+    background: var(--report-blue-dark);
+}
+
+.indicators-refresh-button:disabled {
+    cursor: wait;
+    opacity: .62;
+}
+
+.indicators-presets {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    padding-top: 14px;
+    border-top: 1px solid #e5eaf0;
+}
+
+.indicators-presets > div {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.indicators-presets button {
+    min-height: 34px;
+    padding: 6px 12px;
+    border: 1px solid #d7e0ea;
+    border-radius: 8px;
+    background: #f7f9fb;
+    color: #536176;
+    font: inherit;
+    font-size: .7rem;
+    font-weight: 850;
+    cursor: pointer;
+}
+
+.indicators-presets button:hover,
+.indicators-presets button.active {
+    border-color: #afc5e5;
+    background: #edf3fb;
+    color: var(--report-blue);
+}
+
+.indicators-live-status {
+    display: inline-flex;
+    min-height: 32px;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border: 1px solid #dce3ea;
+    border-radius: 8px;
+    background: #f8fafc;
+    color: #667487;
+    font-size: .69rem;
+    font-weight: 750;
+    white-space: nowrap;
+}
+
+.indicators-live-status > span {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #4d8b6d;
+}
+
+.indicators-live-status.loading > span {
+    background: var(--report-blue);
+    animation: reportPulse .9s ease-in-out infinite;
+}
+
+.indicators-live-status.error > span {
+    background: var(--report-red);
+}
+
+.indicators-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 18px;
+}
+
+.indicator-chart-card {
+    min-width: 0;
+    overflow: hidden;
+    transition: opacity .18s ease;
+}
+
+.indicator-chart-card.wide {
+    grid-column: 1 / -1;
+}
+
+.indicator-chart-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 17px 19px 13px;
+    border-bottom: 1px solid #e8edf3;
+}
+
+.indicator-chart-head > div {
+    min-width: 0;
+}
+
+.indicator-chart-head span {
+    display: block;
+    margin-bottom: 4px;
+    color: #7a8798;
+    font-size: .63rem;
+    font-weight: 900;
+    letter-spacing: .055em;
+    text-transform: uppercase;
+}
+
+.indicator-chart-head h3 {
+    margin: 0;
+    color: var(--report-primary);
+    font-size: .98rem;
+}
+
+.indicator-chart-head p {
+    margin: 4px 0 0;
+    color: var(--report-muted);
+    font-size: .71rem;
+}
+
+.indicator-chart-head > i {
+    display: grid;
+    width: 36px;
+    height: 36px;
+    flex: 0 0 36px;
+    place-items: center;
+    border-radius: 9px;
+    background: var(--report-primary-soft);
+    color: var(--report-blue);
+    font-size: .85rem;
+}
+
+.indicator-chart-body {
+    position: relative;
+    height: 310px;
+    padding: 16px 18px 18px;
+}
+
+.indicator-chart-body.large {
+    height: 360px;
+}
+
+.indicator-chart-body canvas {
+    width: 100% !important;
+    height: 100% !important;
+}
+
+.indicator-chart-empty {
+    position: absolute;
+    inset: 16px 18px 18px;
+    display: grid;
+    place-items: center;
+    align-content: center;
+    gap: 5px;
+    border: 1px dashed #d7e0ea;
+    border-radius: 10px;
+    background: #fafbfd;
+    color: var(--report-muted);
+    text-align: center;
+}
+
+.indicator-chart-empty[hidden] {
+    display: none !important;
+}
+
+.indicator-chart-empty i {
+    margin-bottom: 5px;
+    color: #9aa7b8;
+    font-size: 1.8rem;
+}
+
+.indicator-chart-empty strong {
+    color: #46556a;
+    font-size: .8rem;
+}
+
+.indicator-chart-empty span {
+    max-width: 330px;
+    font-size: .69rem;
+    line-height: 1.4;
+}
+
+@media (max-width: 1050px) {
+    .indicators-toolbar {
+        grid-template-columns: 1fr;
+    }
+
+    .indicators-toolbar-controls {
+        justify-content: flex-start;
+    }
+}
+
+@media (max-width: 780px) {
+    .indicators-toolbar {
+        padding: 16px;
+    }
+
+    .indicators-toolbar-controls {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        width: 100%;
+    }
+
+    .indicators-date-field {
+        min-width: 0;
+    }
+
+    .indicators-clear-button,
+    .indicators-refresh-button {
+        width: 100%;
+    }
+
+    .indicators-presets {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .indicators-live-status {
+        width: 100%;
+        justify-content: center;
+    }
+
+    .indicators-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .indicator-chart-card.wide {
+        grid-column: auto;
+    }
+
+    .indicator-chart-body,
+    .indicator-chart-body.large {
+        height: 300px;
+    }
+}
+
+@media (max-width: 480px) {
+    .indicators-toolbar-controls {
+        grid-template-columns: 1fr;
+    }
+
+    .indicators-clear-button,
+    .indicators-refresh-button {
+        grid-column: auto;
+        width: 100%;
+    }
+
+    .indicators-presets > div {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        width: 100%;
+    }
+
+    .indicators-presets button {
+        width: 100%;
+    }
+
+    .indicator-chart-head {
+        padding: 15px;
+    }
+
+    .indicator-chart-body,
+    .indicator-chart-body.large {
+        height: 280px;
+        padding: 12px;
+    }
+}
+
+
+/* =========================================================
+   INDICADORES · FILTROS DE FECHA CORREGIDOS
+========================================================= */
+.indicators-date-field {
+    position: relative;
+}
+
+.indicators-date-field::after {
+    position: absolute;
+    right: 13px;
+    bottom: 13px;
+    color: #607087;
+    content: "\f073";
+    font-family: "Font Awesome 6 Free";
+    font-size: .83rem;
+    font-weight: 900;
+    pointer-events: none;
+}
+
+.indicators-date-field input,
+.indicators-date-field input.flatpickr-input,
+.indicators-date-field input.form-control.input {
+    height: 44px;
+    padding: 0 42px 0 13px;
+    cursor: pointer;
+    background: #fff;
+}
+
+.indicators-date-field input[readonly] {
+    opacity: 1;
+}
+
+.flatpickr-calendar.indicators-calendar {
+    width: 320px !important;
+    border: 1px solid #d8e1eb !important;
+    border-radius: 12px !important;
+    overflow: hidden;
+    box-shadow: 0 18px 42px rgba(15, 36, 58, .18) !important;
+}
+
+.flatpickr-calendar.indicators-calendar .flatpickr-months {
+    padding: 8px 7px 3px;
+    background: #1e3147;
+}
+
+.flatpickr-calendar.indicators-calendar .flatpickr-weekdays {
+    padding-top: 7px;
+    background: #f5f7fa;
+}
+
+.flatpickr-calendar.indicators-calendar .flatpickr-days {
+    padding: 7px 7px 10px;
+}
+
+.flatpickr-calendar.indicators-calendar .flatpickr-day.flatpickr-disabled,
+.flatpickr-calendar.indicators-calendar .flatpickr-day.prevMonthDay.flatpickr-disabled,
+.flatpickr-calendar.indicators-calendar .flatpickr-day.nextMonthDay.flatpickr-disabled {
+    color: #c3cad4 !important;
+    background: transparent !important;
+    cursor: not-allowed;
+}
+
+.indicators-live-status {
+    max-width: 100%;
+}
+
+@media (max-width: 480px) {
+    .flatpickr-calendar.indicators-calendar {
+        width: calc(100vw - 24px) !important;
+    }
+}

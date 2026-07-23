@@ -13,6 +13,7 @@ if (is_file($auth_guard)) {
 
 require_once __DIR__ . '/config/database.php';
 require_once __DIR__ . '/includes/sucursal_context.php';
+require_once __DIR__ . '/includes/super_admin_helper.php';
 
 if (empty($_SESSION['user_id'])) {
     header('Location: login.php');
@@ -27,17 +28,19 @@ $rol_actual = strtolower(trim((string) (
     ?? ''
 )));
 
-if (!in_array($rol_actual, ['administrador', 'admin'], true)) {
+$rol_actual = rol_base_real_sesion();
+
+if (!rol_es_administrativo($rol_actual)) {
     $_SESSION['alerta_acceso_denegado'] = [
         'titulo' => 'Acceso restringido',
         'mensaje' =>
-            'Solo un administrador puede revisar y autorizar solicitudes de usuarios.',
+            'Solo un perfil administrativo puede revisar y autorizar solicitudes de usuarios.',
         'rol' => ucfirst($rol_actual ?: 'Sin rol'),
         'modulo' => 'Solicitudes de usuarios',
     ];
 
     header('Location: dashboard.php');
-    exit;
+    exit();
 }
 
 $database = new Database();

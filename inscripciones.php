@@ -14,6 +14,7 @@ require_once __DIR__ . '/config/database.php';
 require_once __DIR__ . '/includes/sucursal_context.php';
 require_once __DIR__ . '/includes/qr_helper.php'; // Incluir el helper de QR
 require_once __DIR__ . '/includes/correo_inscripciones.php'; // Correos de bienvenida y renovación
+require_once __DIR__ . '/includes/documentos_inscripciones.php'; // PDF persistente por inscripción y renovación
 require_once __DIR__ . '/includes/mercadopago_inscripciones.php'; // Validación y vínculo de pagos Point
 
 
@@ -124,8 +125,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
         try {
             $nombre = trim($_POST['nombre']);
             $apellido = trim($_POST['apellido']);
-            $telefono = trim($_POST['telefono']);
-            $email = trim($_POST['email']);
+            $telefono = trim((string) ($_POST['telefono'] ?? ''));
+            $email = trim((string) ($_POST['email'] ?? ''));
+            $contacto_emergencia_nombre = trim((string) (
+                $_POST['contacto_emergencia_nombre'] ?? ''
+            ));
+            $contacto_emergencia_telefono = trim((string) (
+                $_POST['contacto_emergencia_telefono'] ?? ''
+            ));
             $plan_id = (int) $_POST['plan_id'];
             $fecha_inicio = trim((string) $_POST['fecha_inicio']);
             $precio_pagado = round((float) $_POST['precio_pagado'], 2);
@@ -137,8 +144,39 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
                 : null;
             $mp_pago_data = null;
             
-            if (empty($nombre) || empty($apellido) || empty($telefono) || empty($plan_id)) {
-                throw new Exception('Por favor complete todos los campos requeridos');
+            if (
+                $nombre === ''
+                || $apellido === ''
+                || $telefono === ''
+                || $plan_id <= 0
+            ) {
+                throw new Exception(
+                    'Completa todos los campos obligatorios.'
+                );
+            }
+
+            if (
+                $contacto_emergencia_nombre !== ''
+                && (
+                    strlen($contacto_emergencia_nombre) < 3
+                    || strlen($contacto_emergencia_nombre) > 150
+                )
+            ) {
+                throw new Exception(
+                    'El nombre del contacto de emergencia debe tener entre 3 y 150 caracteres.'
+                );
+            }
+
+            if (
+                $contacto_emergencia_telefono !== ''
+                && !preg_match(
+                    '/^[0-9+()\-\s]{7,25}$/',
+                    $contacto_emergencia_telefono
+                )
+            ) {
+                throw new Exception(
+                    'El teléfono de emergencia debe contener entre 7 y 25 caracteres válidos.'
+                );
             }
             
             // Validar que no exista cliente con mismo teléfono o email
@@ -251,17 +289,21 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
                     apellido,
                     telefono,
                     email,
+                    contacto_emergencia_nombre,
+                    contacto_emergencia_telefono,
                     codigo_qr,
                     estado
-                 ) VALUES (?, ?, ?, ?, ?, ?, 'activo')"
+                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'activo')"
             );
             $stmt->bind_param(
-                "isssss",
+                "isssssss",
                 $sucursal_id,
                 $nombre,
                 $apellido,
                 $telefono,
                 $email,
+                $contacto_emergencia_nombre,
+                $contacto_emergencia_telefono,
                 $codigo_qr
             );
             $stmt->execute();
@@ -361,6 +403,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
                 $usuario_id
             );
             $stmt->execute();
+            $historial_pago_id = (int) $conn->insert_id;
 
             if (is_array($mp_pago_data)) {
                 mp_vincular_pago_inscripcion(
@@ -373,6 +416,24 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
             }
             
             $conn->commit();
+
+// ========== GENERAR Y CONSERVAR DOCUMENTO PDF ==========
+$documento_membresia = asegurarDocumentoHistorialInscripcion(
+    $conn,
+    $historial_pago_id
+);
+
+if (!empty($documento_membresia['success'])) {
+    $_SESSION['abrir_documento_membresia_url'] =
+        (string) $documento_membresia['url'];
+} else {
+    $_SESSION['cerrar_ventana_documento_membresia'] = true;
+    error_log(
+        '[Inscripciones] No se pudo generar el PDF de inscripción: ' .
+        (string) ($documento_membresia['error'] ?? 'Error desconocido')
+    );
+}
+// ========== FIN DOCUMENTO PDF ==========
 
 // ========== ENVIAR CORREO DE BIENVENIDA CON QR ==========
 $envio_correo = false;
@@ -414,6 +475,19 @@ if (is_array($mp_pago_data)) {
         htmlspecialchars($metodo_pago_descripcion, ENT_QUOTES, 'UTF-8') . '</span>';
 }
 
+if (!empty($documento_membresia['success'])) {
+    $url_documento = htmlspecialchars(
+        (string) $documento_membresia['url'],
+        ENT_QUOTES,
+        'UTF-8'
+    );
+    $mensaje_exito .= '<br><a class="document-success-link" href="' .
+        $url_documento .
+        '" target="_blank" rel="noopener"><i class="fas fa-file-pdf"></i> Abrir documento de inscripción</a>';
+} else {
+    $mensaje_exito .= '<br><span class="text-warning">⚠ La inscripción se guardó, pero no fue posible generar el documento PDF.</span>';
+}
+
 // Agregar información del correo al mensaje
 if (!empty($email)) {
     if ($envio_correo) {
@@ -439,6 +513,7 @@ $_SESSION['mensaje_exito'] = $mensaje_exito;
                 } catch (Throwable $rollbackError) {
                 }
             }
+            $_SESSION['cerrar_ventana_documento_membresia'] = true;
             $_SESSION['error'] = $e->getMessage();
             header('Location: inscripciones.php');
             exit;
@@ -702,6 +777,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
             $usuario_id
         );
         $stmt->execute();
+        $historial_pago_id = (int) $conn->insert_id;
 
         if (is_array($mp_pago_data)) {
             mp_vincular_pago_inscripcion(
@@ -740,6 +816,23 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
             }
         }
 
+// Generar el documento aunque el socio no tenga email.
+$documento_membresia = asegurarDocumentoHistorialInscripcion(
+    $conn,
+    $historial_pago_id
+);
+
+if (!empty($documento_membresia['success'])) {
+    $_SESSION['abrir_documento_membresia_url'] =
+        (string) $documento_membresia['url'];
+} else {
+    $_SESSION['cerrar_ventana_documento_membresia'] = true;
+    error_log(
+        '[Inscripciones] No se pudo generar el PDF de renovación: ' .
+        (string) ($documento_membresia['error'] ?? 'Error desconocido')
+    );
+}
+
 // Enviar correo solo si el cliente proporcionó un email
 $envio_correo = false;
 if (!empty($email_cliente)) {
@@ -771,12 +864,27 @@ if (!empty($email_cliente)) {
 
         // Guardar mensaje en sesión
         if (!empty($email_cliente) && $envio_correo) {
-            $_SESSION['mensaje_exito'] = 'Inscripción renovada exitosamente con el plan ' . $plan['plan_nombre'] . '. Se ha enviado un ticket a su correo electrónico.';
+            $mensaje_renovacion = 'Inscripción renovada exitosamente con el plan ' . $plan['plan_nombre'] . '. Se ha enviado un ticket a su correo electrónico.';
         } elseif (!empty($email_cliente) && !$envio_correo) {
-            $_SESSION['mensaje_exito'] = 'Inscripción renovada exitosamente con el plan ' . $plan['plan_nombre'] . '. No se pudo enviar el correo electrónico.';
+            $mensaje_renovacion = 'Inscripción renovada exitosamente con el plan ' . $plan['plan_nombre'] . '. No se pudo enviar el correo electrónico.';
         } else {
-            $_SESSION['mensaje_exito'] = 'Inscripción renovada exitosamente con el plan ' . $plan['plan_nombre'] . '. No se envió correo porque el cliente no tiene email registrado.';
+            $mensaje_renovacion = 'Inscripción renovada exitosamente con el plan ' . $plan['plan_nombre'] . '. No se envió correo porque el cliente no tiene email registrado.';
         }
+
+        if (!empty($documento_membresia['success'])) {
+            $url_documento = htmlspecialchars(
+                (string) $documento_membresia['url'],
+                ENT_QUOTES,
+                'UTF-8'
+            );
+            $mensaje_renovacion .= '<br><a class="document-success-link" href="' .
+                $url_documento .
+                'documento de renovación</a>';
+        } else {
+            $mensaje_renovacion .= '<br><span class="text-warning">⚠ La renovación se guardó, pero no fue posible generar el documento PDF.</span>';
+        }
+
+        $_SESSION['mensaje_exito'] = $mensaje_renovacion;
 
         header('Location: inscripciones.php');
         exit;
@@ -791,6 +899,7 @@ if (!empty($email_cliente)) {
         if (isset($inscripcion_id)) {
             unset($_SESSION['last_renewal_' . $inscripcion_id]);
         }
+        $_SESSION['cerrar_ventana_documento_membresia'] = true;
         $_SESSION['error'] = $e->getMessage();
         header('Location: inscripciones.php');
         exit;
@@ -1023,6 +1132,17 @@ $terminal_point_disponible =
     defined('MP_ACCESS_TOKEN')
     && trim((string) MP_ACCESS_TOKEN) !== ''
     && $terminal_point_id !== '';
+
+$documento_membresia_auto_url = trim((string) (
+    $_SESSION['abrir_documento_membresia_url'] ?? ''
+));
+$cerrar_ventana_documento_membresia = !empty(
+    $_SESSION['cerrar_ventana_documento_membresia']
+);
+unset(
+    $_SESSION['abrir_documento_membresia_url'],
+    $_SESSION['cerrar_ventana_documento_membresia']
+);
 ?>
 
 <!DOCTYPE html>
@@ -1069,6 +1189,25 @@ $terminal_point_disponible =
         .point-status-live {
             color: #64748b;
             font-size: .82rem;
+        }
+
+        .document-success-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 10px;
+            padding: 8px 12px;
+            border: 1px solid #fecaca;
+            border-radius: 9px;
+            background: #fff1f2;
+            color: #b91c1c;
+            font-weight: 800;
+            text-decoration: none;
+        }
+
+        .document-success-link:hover {
+            background: #ffe4e6;
+            color: #991b1b;
         }
 
         /* Sucursal compacta en el listado global */
@@ -1618,14 +1757,74 @@ $terminal_point_disponible =
                         
                         <div class="row">
                             <div class="col-md-6 mb-3">
-                                <label class="form-label">Teléfono *</label>
-                                <input type="tel" class="form-control" name="telefono" required>
+                                <label class="form-label" for="telefono_nuevo">Teléfono *</label>
+                                <input
+                                    type="tel"
+                                    class="form-control"
+                                    name="telefono"
+                                    id="telefono_nuevo"
+                                    maxlength="20"
+                                    autocomplete="tel"
+                                    required
+                                >
                             </div>
                             <div class="col-md-6 mb-3">
-                                <label class="form-label">Email</label>
-                                <input type="email" class="form-control" name="email">
+                                <label class="form-label" for="email_nuevo">Email</label>
+                                <input
+                                    type="email"
+                                    class="form-control"
+                                    name="email"
+                                    id="email_nuevo"
+                                    maxlength="100"
+                                    autocomplete="email"
+                                >
                             </div>
                         </div>
+
+                        <section class="emergency-contact-section" aria-labelledby="tituloContactoEmergencia">
+                            <div class="emergency-contact-heading">
+                                <span class="emergency-contact-icon">
+                                    <i class="fas fa-phone-volume"></i>
+                                </span>
+                                <div>
+                                    <h6 id="tituloContactoEmergencia">Contacto de emergencia</h6>
+                                    <p>Datos opcionales para contactar a alguien en caso de una emergencia.</p>
+                                </div>
+                            </div>
+
+                            <div class="row">
+                                <div class="col-md-7 mb-3 mb-md-0">
+                                    <label class="form-label" for="contacto_emergencia_nombre">
+                                        Nombre del contacto <span class="text-muted fw-normal">(opcional)</span>
+                                    </label>
+                                    <input
+                                        type="text"
+                                        class="form-control"
+                                        name="contacto_emergencia_nombre"
+                                        id="contacto_emergencia_nombre"
+                                        minlength="3"
+                                        maxlength="150"
+                                        placeholder="Nombre completo"
+                                    >
+                                </div>
+                                <div class="col-md-5">
+                                    <label class="form-label" for="contacto_emergencia_telefono">
+                                        Teléfono de emergencia <span class="text-muted fw-normal">(opcional)</span>
+                                    </label>
+                                    <input
+                                        type="tel"
+                                        class="form-control"
+                                        name="contacto_emergencia_telefono"
+                                        id="contacto_emergencia_telefono"
+                                        minlength="7"
+                                        maxlength="25"
+                                        pattern="[0-9+()\- ]{7,25}"
+                                        title="Usa entre 7 y 25 caracteres: números, espacios, +, paréntesis o guiones."
+                                        placeholder="Ej. 222 123 4567"
+                                    >
+                                </div>
+                            </div>
+                        </section>
                         
                         <div class="row">
                             <div class="col-md-6 mb-3">
@@ -1840,6 +2039,55 @@ $terminal_point_disponible =
         });
 
         let formularioEnviando = false;
+        let ventanaDocumentoMembresia = null;
+
+        function prepararVentanaDocumentoMembresia() {
+            if (ventanaDocumentoMembresia && !ventanaDocumentoMembresia.closed) {
+                return ventanaDocumentoMembresia;
+            }
+
+            ventanaDocumentoMembresia = window.open(
+                '',
+                'documento_membresia_generado'
+            );
+
+            if (ventanaDocumentoMembresia) {
+                ventanaDocumentoMembresia.document.open();
+                ventanaDocumentoMembresia.document.write(`
+                    <!doctype html>
+                    <html lang="es">
+                    <head>
+                        <meta charset="utf-8">
+                        <title>Generando documento</title>
+                        <style>
+                            body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f4f6f9;font-family:Arial,sans-serif;color:#1f2937}
+                            .box{text-align:center;padding:32px}
+                            .icon{font-size:42px;color:#dc2626;margin-bottom:15px}
+                            h1{margin:0 0 8px;font-size:22px}
+                            p{margin:0;color:#6b7280}
+                        </style>
+                    </head>
+                    <body>
+                        <div class="box">
+                            <div class="icon">PDF</div>
+                            <h1>Generando documento de membresía</h1>
+                            <p>Esta ventana mostrará el comprobante al finalizar.</p>
+                        </div>
+                    </body>
+                    </html>
+                `);
+                ventanaDocumentoMembresia.document.close();
+            }
+
+            return ventanaDocumentoMembresia;
+        }
+
+        function cerrarVentanaDocumentoMembresia() {
+            if (ventanaDocumentoMembresia && !ventanaDocumentoMembresia.closed) {
+                ventanaDocumentoMembresia.close();
+            }
+            ventanaDocumentoMembresia = null;
+        }
 
         const modalQrElement = document.getElementById('modalQr');
         const qrModalImage = document.getElementById('qrModalImage');
@@ -2209,6 +2457,8 @@ $terminal_point_disponible =
                 return false;
             }
 
+            prepararVentanaDocumentoMembresia();
+
             formularioEnviando = true;
             button.disabled = true;
             button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + loadingText;
@@ -2238,6 +2488,7 @@ $terminal_point_disponible =
                     });
 
                     if (!confirmation.isConfirmed) {
+                        cerrarVentanaDocumentoMembresia();
                         formularioEnviando = false;
                         button.disabled = false;
                         button.innerHTML = normalText;
@@ -2255,6 +2506,7 @@ $terminal_point_disponible =
                     const payment = await esperarPagoPoint(order);
 
                     if (!payment) {
+                        cerrarVentanaDocumentoMembresia();
                         formularioEnviando = false;
                         button.disabled = false;
                         button.innerHTML = normalText;
@@ -2281,6 +2533,7 @@ $terminal_point_disponible =
                 HTMLFormElement.prototype.submit.call(form);
                 return true;
             } catch (error) {
+                cerrarVentanaDocumentoMembresia();
                 formularioEnviando = false;
                 button.disabled = false;
                 button.innerHTML = normalText;
@@ -2387,8 +2640,13 @@ $terminal_point_disponible =
                     $('#detalleContenido').html(response);
                     inicializarEventosHistorial(id);
                 },
-                error: function() {
-                    $('#detalleContenido').html('<div class="alert alert-danger">Error al cargar los detalles</div>');
+                error: function(xhr) {
+                    const respuesta = String(xhr.responseText || '').trim();
+                    const mensaje = respuesta !== ''
+                        ? respuesta
+                        : '<div class="alert alert-danger">Error al cargar los detalles.</div>';
+
+                    $('#detalleContenido').html(mensaje);
                 }
             });
         }
@@ -2424,8 +2682,26 @@ $terminal_point_disponible =
                         $('#paginacionHistorial').html(response.pagination);
                         $('#totalPagadoSpan').html('$' + response.total_pagado);
                     },
-                    error: function() {
-                        $('#tablaHistorialBody').html('<tr><td colspan="6" class="text-center text-danger">Error al cargar los datos</td></tr>');
+                    error: function(xhr) {
+                        let mensaje = 'Error al cargar los datos.';
+
+                        try {
+                            const respuesta = JSON.parse(xhr.responseText || '{}');
+                            if (respuesta.error) {
+                                mensaje = respuesta.error;
+                            }
+                        } catch (error) {
+                            const texto = String(xhr.responseText || '').trim();
+                            if (texto !== '') {
+                                mensaje = texto.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+                            }
+                        }
+
+                        $('#tablaHistorialBody').html(
+                            '<tr><td colspan="6" class="text-center text-danger">' +
+                            escaparHtml(mensaje) +
+                            '</td></tr>'
+                        );
                     }
                 });
             };
@@ -2501,6 +2777,39 @@ $terminal_point_disponible =
         $('#limpiarFiltros').on('click', function() {
             window.location.href = '?';
         });
+
+        <?php if ($documento_membresia_auto_url !== ''): ?>
+        $(document).ready(function() {
+            const documentoUrl = <?php echo json_encode(
+                $documento_membresia_auto_url,
+                JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT
+            ); ?>;
+            const ventanaPdf = window.open(
+                documentoUrl,
+                'documento_membresia_generado'
+            );
+
+            if (!ventanaPdf) {
+                Swal.fire({
+                    icon: 'success',
+                    title: 'Documento generado',
+                    html: '<p>El navegador bloqueó la ventana automática.</p>' +
+                        '<a class="document-success-link" href="' + escaparHtml(documentoUrl) + '" target="_blank" rel="noopener"><i class="fas fa-file-pdf"></i> Abrir documento PDF</a>',
+                    confirmButtonColor: '#1e3a8a'
+                });
+            }
+        });
+        <?php elseif ($cerrar_ventana_documento_membresia): ?>
+        $(document).ready(function() {
+            const ventanaPendiente = window.open(
+                '',
+                'documento_membresia_generado'
+            );
+            if (ventanaPendiente) {
+                ventanaPendiente.close();
+            }
+        });
+        <?php endif; ?>
         
         <?php if ($abrir_modal_nuevo): ?>
         $(document).ready(function() {

@@ -5,6 +5,8 @@
 
 declare(strict_types=1);
 
+require_once __DIR__ . '/super_admin_helper.php';
+
 if (!function_exists('permisos_catalogo_base')) {
     function permisos_catalogo_base(): array
     {
@@ -18,6 +20,15 @@ if (!function_exists('permisos_catalogo_base')) {
                 'tipo_acceso' => 'esencial',
                 'orden' => 10,
             ],
+            'socios' => [
+                'nombre' => 'Socios',
+                'descripcion' => 'Directorio de personas registradas, membresías, actividad y edición de datos personales.',
+                'ruta' => 'socios.php',
+                'grupo' => 'Socios',
+                'icono' => 'fa-user-group',
+                'tipo_acceso' => 'asignable',
+                'orden' => 15,
+            ],
             'inscripciones' => [
                 'nombre' => 'Inscripciones',
                 'descripcion' => 'Altas, renovaciones y administración de membresías.',
@@ -26,6 +37,15 @@ if (!function_exists('permisos_catalogo_base')) {
                 'icono' => 'fa-id-card',
                 'tipo_acceso' => 'asignable',
                 'orden' => 20,
+            ],
+            'planes' => [
+                'nombre' => 'Planes',
+                'descripcion' => 'Administración del catálogo de membresías, precios y disponibilidad por sucursal.',
+                'ruta' => 'planes.php',
+                'grupo' => 'Socios',
+                'icono' => 'fa-layer-group',
+                'tipo_acceso' => 'solo_admin',
+                'orden' => 25,
             ],
             'asistencias' => [
                 'nombre' => 'Asistencias',
@@ -188,11 +208,7 @@ if (!function_exists('permisos_roles_configurables')) {
 if (!function_exists('permisos_es_admin')) {
     function permisos_es_admin(string $rol): bool
     {
-        return in_array(
-            strtolower(trim($rol)),
-            ['admin', 'administrador'],
-            true
-        );
+        return rol_es_administrativo($rol);
     }
 }
 
@@ -203,7 +219,9 @@ if (!function_exists('permisos_modulo_por_pagina')) {
 
         $mapa = [
             'dashboard.php' => 'dashboard',
+            'socios.php' => 'socios',
             'inscripciones.php' => 'inscripciones',
+            'planes.php' => 'planes',
             'asistencias.php' => 'asistencias',
             'ventas.php' => 'ventas',
             'historial_ventas.php' => 'historial_ventas',

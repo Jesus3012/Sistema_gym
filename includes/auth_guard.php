@@ -2,9 +2,6 @@
 // Archivo: includes/auth_guard.php
 // Debe incluirse como la PRIMERA instrucción de cada página protegida.
 
-// La sucursal se valida antes del rol y de los permisos, porque el rol
-// efectivo del mismo usuario puede cambiar entre sedes.
-
 declare(strict_types=1);
 
 if (session_status() !== PHP_SESSION_ACTIVE) {
@@ -66,20 +63,77 @@ function destruirSesionProtegida(): void
     session_destroy();
 }
 
-$scriptName = str_replace(
-    '\\',
-    '/',
-    (string) ($_SERVER['SCRIPT_NAME'] ?? '')
-);
+function obtenerBaseUrlSistema(): string
+{
+    $documentRootReal = realpath(
+        (string) ($_SERVER['DOCUMENT_ROOT'] ?? '')
+    );
 
-$baseUrl = rtrim(
-    str_replace('\\', '/', dirname($scriptName)),
-    '/'
-);
+    $raizSistemaReal = realpath(__DIR__ . '/..');
 
-if ($baseUrl === '.' || $baseUrl === '/') {
-    $baseUrl = '';
+    if ($documentRootReal !== false && $raizSistemaReal !== false) {
+        $documentRoot = rtrim(
+            str_replace('\\', '/', $documentRootReal),
+            '/'
+        );
+
+        $raizSistema = rtrim(
+            str_replace('\\', '/', $raizSistemaReal),
+            '/'
+        );
+
+        if (
+            $documentRoot !== ''
+            && strncasecmp(
+                $raizSistema,
+                $documentRoot,
+                strlen($documentRoot)
+            ) === 0
+        ) {
+            $rutaRelativa = substr(
+                $raizSistema,
+                strlen($documentRoot)
+            );
+
+            $baseUrl = '/' . ltrim(
+                str_replace('\\', '/', $rutaRelativa),
+                '/'
+            );
+
+            $baseUrl = rtrim($baseUrl, '/');
+
+            return $baseUrl === '/' ? '' : $baseUrl;
+        }
+    }
+
+    $scriptName = str_replace(
+        '\\',
+        '/',
+        (string) ($_SERVER['SCRIPT_NAME'] ?? '')
+    );
+
+    foreach (['/includes/', '/api/'] as $segmentoInterno) {
+        $posicion = strpos($scriptName, $segmentoInterno);
+
+        if ($posicion !== false) {
+            return rtrim(
+                substr($scriptName, 0, $posicion),
+                '/'
+            );
+        }
+    }
+
+    $baseUrl = rtrim(
+        str_replace('\\', '/', dirname($scriptName)),
+        '/'
+    );
+
+    return ($baseUrl === '.' || $baseUrl === '/')
+        ? ''
+        : $baseUrl;
 }
+
+$baseUrl = obtenerBaseUrlSistema();
 
 $loginUrl = $baseUrl . '/login.php';
 $dashboardUrl = $baseUrl . '/dashboard.php';
@@ -92,6 +146,7 @@ if (empty($_SESSION['user_id'])) {
 }
 
 require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/super_admin_helper.php';
 require_once __DIR__ . '/sucursal_context.php';
 require_once __DIR__ . '/permisos_helper.php';
 
@@ -109,10 +164,6 @@ if (!$connPermisos instanceof mysqli) {
 $connPermisos->set_charset('utf8mb4');
 
 try {
-    /*
-     * Revalida usuario, asignación, estado de la sede y rol efectivo.
-     * Nunca se confía únicamente en sucursal_id guardado en sesión.
-     */
     $sucursalActual = sucursal_inicializar_sesion(
         $connPermisos
     );
@@ -129,15 +180,13 @@ try {
     );
 }
 
-// Variables disponibles para cualquier página protegida.
 $sucursal_id = sucursal_id_actual();
 $sucursal_nombre = sucursal_nombre_actual();
 
-// Se actualiza después de cargar la sede porque sucursal_context.php coloca
-// aquí el rol efectivo correspondiente a la sucursal activa.
-$rolActual = strtolower(
-    trim((string) ($_SESSION['user_rol'] ?? ''))
-);
+$rolActual = rol_normalizar_sistema((string) (
+    $_SESSION['user_rol'] ?? ''
+));
+$rolBaseReal = rol_base_real_sesion();
 
 $paginaActual = basename(
     (string) parse_url(
@@ -146,14 +195,27 @@ $paginaActual = basename(
     )
 );
 
+$rutasInternasPorModulo = [
+    'inscripcion_detalle.php' => 'inscripciones.php',
+    'inscripcion_detalle_historial.php' => 'inscripciones.php',
+    'ver_documento_inscripcion.php' => 'inscripciones.php',
+];
+
+$paginaParaPermisos = $rutasInternasPorModulo[$paginaActual]
+    ?? $paginaActual;
+
 $nombresRoles = [
+    'super_administrador' => 'Superadministrador',
     'admin' => 'Administrador',
     'administrador' => 'Administrador',
     'recepcionista' => 'Recepcionista',
     'entrenador' => 'Entrenador',
 ];
 
-if (!array_key_exists($rolActual, $nombresRoles)) {
+if (
+    !array_key_exists($rolActual, $nombresRoles)
+    && !array_key_exists($rolBaseReal, $nombresRoles)
+) {
     destruirSesionProtegida();
 
     redirigirSeguramente(
@@ -161,12 +223,7 @@ if (!array_key_exists($rolActual, $nombresRoles)) {
     );
 }
 
-/*
- * El entrenador cuenta con un espacio operativo exclusivo.
- * Aunque posteriormente se modifiquen los permisos por rol, nunca podrá
- * entrar a los módulos administrativos de clases, socios, ventas o caja.
- */
-$esPanelEntrenador = $paginaActual === 'panel_entrenador.php';
+$esPanelEntrenador = $paginaParaPermisos === 'panel_entrenador.php';
 
 if ($rolActual === 'entrenador') {
     $rutasEntrenador = [
@@ -175,7 +232,7 @@ if ($rolActual === 'entrenador') {
         'mi_perfil.php',
     ];
 
-    if (!in_array($paginaActual, $rutasEntrenador, true)) {
+    if (!in_array($paginaParaPermisos, $rutasEntrenador, true)) {
         $_SESSION['mensaje_acceso'] =
             'Tu cuenta de entrenador utiliza exclusivamente Mi agenda de clases.';
 
@@ -187,16 +244,12 @@ $_SESSION['last_activity'] = time();
 
 $claveModuloActual = $esPanelEntrenador
     ? 'panel_entrenador'
-    : permisos_modulo_por_pagina($paginaActual);
+    : permisos_modulo_por_pagina($paginaParaPermisos);
 
 $nombreModuloConsultado = $esPanelEntrenador
     ? 'Mi agenda de clases'
     : '';
 
-/*
- * Permite registrar nuevos módulos desde modulos_sistema sin tener que
- * editar inmediatamente el mapa fijo de permisos_helper.php.
- */
 if ($claveModuloActual === null) {
     $stmtModuloRuta = $connPermisos->prepare(
         "SELECT clave, nombre
@@ -207,7 +260,7 @@ if ($claveModuloActual === null) {
     );
 
     if ($stmtModuloRuta) {
-        $stmtModuloRuta->bind_param('s', $paginaActual);
+        $stmtModuloRuta->bind_param('s', $paginaParaPermisos);
         $stmtModuloRuta->execute();
         $resultadoModuloRuta = $stmtModuloRuta->get_result();
         $moduloRuta = $resultadoModuloRuta
@@ -222,11 +275,8 @@ if ($claveModuloActual === null) {
     }
 }
 
-$esAdministradorActual = in_array(
-    $rolActual,
-    ['admin', 'administrador'],
-    true
-);
+$esAdministradorActual = rol_es_administrativo($rolBaseReal)
+    || rol_es_administrativo($rolActual);
 
 $accesoPermitido =
     ($rolActual === 'entrenador' && $esPanelEntrenador)
@@ -244,8 +294,25 @@ $accesoPermitido =
     );
 
 if (!$accesoPermitido) {
-    $nombreRol = $nombresRoles[$rolActual]
-        ?? ucfirst($rolActual);
+    /*
+     * Nunca se redirige dashboard.php hacia sí mismo. Si una sesión quedó
+     * inconsistente después de cambiar un rol, se cierra y se vuelve al
+     * login en lugar de generar ERR_TOO_MANY_REDIRECTS.
+     */
+    if ($paginaParaPermisos === 'dashboard.php') {
+        destruirSesionProtegida();
+
+        redirigirSeguramente(
+            $loginUrl . '?error=rol_actualizado'
+        );
+    }
+
+    $rolMensaje = $rolBaseReal !== ''
+        ? $rolBaseReal
+        : $rolActual;
+
+    $nombreRol = $nombresRoles[$rolMensaje]
+        ?? ucfirst($rolMensaje);
 
     $nombreModulo = $nombreModuloConsultado !== ''
         ? $nombreModuloConsultado
@@ -270,9 +337,5 @@ if (!$accesoPermitido) {
     );
 }
 
-/*
- * Debe permanecer al final. El guard legal permite cargar el dashboard
- * para mostrar la aceptación obligatoria y bloquea los demás módulos.
- */
 require_once __DIR__ . '/legal_guard.php';
 legal_require_acceptance();

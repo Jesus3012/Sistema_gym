@@ -60,6 +60,51 @@ function reporteFechaValida($fecha)
         $objeto->format('Y-m-d') === $fecha;
 }
 
+function reporteConsultaFilas(
+    $conn,
+    $sql,
+    $tipos = '',
+    $parametros = array()
+) {
+    $stmt = $conn->prepare($sql);
+
+    if (!$stmt) {
+        throw new RuntimeException(
+            'No fue posible preparar la consulta de indicadores: '
+            . $conn->error
+        );
+    }
+
+    if (!reporteBindParams($stmt, $tipos, $parametros)) {
+        $stmt->close();
+
+        throw new RuntimeException(
+            'No fue posible vincular los filtros de indicadores.'
+        );
+    }
+
+    if (!$stmt->execute()) {
+        $detalle = $stmt->error;
+        $stmt->close();
+
+        throw new RuntimeException(
+            'No fue posible consultar los indicadores: '
+            . $detalle
+        );
+    }
+
+    $resultado = $stmt->get_result();
+    $filas = array();
+
+    while ($resultado && $fila = $resultado->fetch_assoc()) {
+        $filas[] = $fila;
+    }
+
+    $stmt->close();
+
+    return $filas;
+}
+
 function obtenerEmpresaReportes($conn)
 {
     $empresa = array(
@@ -135,7 +180,11 @@ try {
 } catch (Throwable $errorSucursal) {
     if (
         isset($_GET['action'])
-        && $_GET['action'] === 'datos'
+        && in_array(
+            (string) $_GET['action'],
+            array('datos', 'indicadores'),
+            true
+        )
     ) {
         reporteJson(409, array(
             'success' => false,
@@ -188,7 +237,11 @@ if ($sucursalIdReportes > 0) {
 if (!$sucursalActualReportes) {
     if (
         isset($_GET['action'])
-        && $_GET['action'] === 'datos'
+        && in_array(
+            (string) $_GET['action'],
+            array('datos', 'indicadores'),
+            true
+        )
     ) {
         reporteJson(409, array(
             'success' => false,
@@ -261,6 +314,498 @@ $contextoReportes = array(
     'clave' => $contextoClaveReportes,
     'detalle' => $contextoDetalleReportes
 );
+
+/*
+ * Endpoint de Indicadores.
+ * Devuelve únicamente datos agregados para las gráficas y respeta
+ * la sucursal activa o la vista global del administrador.
+ */
+if (
+    isset($_GET['action']) &&
+    $_GET['action'] === 'indicadores'
+) {
+    try {
+        $fechaInicioIndicadores = trim((string) (
+            $_GET['fecha_inicio'] ?? ''
+        ));
+
+        $fechaFinIndicadores = trim((string) (
+            $_GET['fecha_fin'] ?? ''
+        ));
+
+        $hoyIndicadores = new DateTimeImmutable('today');
+
+        if ($fechaFinIndicadores === '') {
+            $fechaFinIndicadores = $hoyIndicadores->format('Y-m-d');
+        }
+
+        if (!reporteFechaValida($fechaFinIndicadores)) {
+            throw new InvalidArgumentException(
+                'La fecha final de los indicadores no es válida.'
+            );
+        }
+
+        $fechaFinObj = new DateTimeImmutable($fechaFinIndicadores);
+
+        if ($fechaFinObj > $hoyIndicadores) {
+            throw new InvalidArgumentException(
+                'La fecha final no puede ser posterior al día de hoy.'
+            );
+        }
+
+        if ($fechaInicioIndicadores === '') {
+            $fechaInicioIndicadores = $fechaFinObj
+                ->modify('first day of this month')
+                ->modify('-11 months')
+                ->format('Y-m-d');
+        }
+
+        if (!reporteFechaValida($fechaInicioIndicadores)) {
+            throw new InvalidArgumentException(
+                'La fecha inicial de los indicadores no es válida.'
+            );
+        }
+
+        $fechaInicioObj = new DateTimeImmutable(
+            $fechaInicioIndicadores
+        );
+
+        if ($fechaInicioObj > $hoyIndicadores) {
+            throw new InvalidArgumentException(
+                'La fecha inicial no puede ser posterior al día de hoy.'
+            );
+        }
+
+        if ($fechaInicioObj > $fechaFinObj) {
+            throw new InvalidArgumentException(
+                'La fecha inicial no puede ser mayor que la final.'
+            );
+        }
+
+        $diasPeriodo = $fechaInicioObj->diff($fechaFinObj)->days;
+
+        if ($diasPeriodo !== false && $diasPeriodo > 1095) {
+            throw new InvalidArgumentException(
+                'Los indicadores admiten periodos de hasta 36 meses.'
+            );
+        }
+
+        /* =====================================================
+           INGRESOS: membresías, productos y clases pagadas.
+        ===================================================== */
+        $filtroSucursalIngresos = '';
+        $tiposIngresos = 'ss';
+        $parametrosIngresos = array(
+            $fechaInicioIndicadores,
+            $fechaFinIndicadores
+        );
+
+        if (!$vistaGlobalReportes) {
+            $filtroSucursalIngresos = ' AND ingresos.sucursal_id = ?';
+            $tiposIngresos .= 'i';
+            $parametrosIngresos[] = $sucursalIdReportes;
+        }
+
+        $sqlBaseIngresos = "
+            SELECT
+                hp.sucursal_id,
+                hp.fecha_pago AS fecha,
+                'membresias' AS fuente,
+                hp.monto AS monto
+            FROM historial_pagos hp
+            WHERE hp.monto > 0
+
+            UNION ALL
+
+            SELECT
+                v.sucursal_id,
+                DATE(v.fecha_venta) AS fecha,
+                'productos' AS fuente,
+                GREATEST(
+                    COALESCE(tv.total_original, v.total)
+                    - COALESCE(dev.total_devuelto, 0),
+                    0
+                ) AS monto
+            FROM ventas v
+            LEFT JOIN (
+                SELECT
+                    venta_id,
+                    MAX(total) AS total_original
+                FROM tickets_venta
+                GROUP BY venta_id
+            ) tv
+                ON tv.venta_id = v.id
+            LEFT JOIN (
+                SELECT
+                    venta_id,
+                    SUM(COALESCE(monto_devuelto, 0)) AS total_devuelto
+                FROM ventas_modificaciones
+                WHERE tipo_modificacion IN (
+                    'cancelacion',
+                    'devolucion_parcial'
+                )
+                GROUP BY venta_id
+            ) dev
+                ON dev.venta_id = v.id
+            WHERE v.estado = 'completada'
+
+            UNION ALL
+
+            SELECT
+                pc.sucursal_id,
+                DATE(pc.fecha_pago) AS fecha,
+                'clases' AS fuente,
+                pc.monto AS monto
+            FROM pagos_clases pc
+            WHERE pc.estado = 'completado'
+              AND pc.monto > 0
+        ";
+
+        $filasDistribucion = reporteConsultaFilas(
+            $conn,
+            "SELECT
+                ingresos.fuente,
+                ROUND(SUM(ingresos.monto), 2) AS total
+             FROM (
+                {$sqlBaseIngresos}
+             ) ingresos
+             WHERE ingresos.fecha BETWEEN ? AND ?
+             {$filtroSucursalIngresos}
+             GROUP BY ingresos.fuente
+             ORDER BY total DESC",
+            $tiposIngresos,
+            $parametrosIngresos
+        );
+
+        $filasMensuales = reporteConsultaFilas(
+            $conn,
+            "SELECT
+                DATE_FORMAT(ingresos.fecha, '%Y-%m') AS mes,
+                ingresos.fuente,
+                ROUND(SUM(ingresos.monto), 2) AS total
+             FROM (
+                {$sqlBaseIngresos}
+             ) ingresos
+             WHERE ingresos.fecha BETWEEN ? AND ?
+             {$filtroSucursalIngresos}
+             GROUP BY
+                DATE_FORMAT(ingresos.fecha, '%Y-%m'),
+                ingresos.fuente
+             ORDER BY mes ASC, ingresos.fuente ASC",
+            $tiposIngresos,
+            $parametrosIngresos
+        );
+
+        /* =====================================================
+           AFLUENCIA: visitas por día y hora de entrada.
+        ===================================================== */
+        $condicionesVisitas = array(
+            'a.fecha BETWEEN ? AND ?'
+        );
+        $tiposVisitas = 'ss';
+        $parametrosVisitas = array(
+            $fechaInicioIndicadores,
+            $fechaFinIndicadores
+        );
+
+        if (!$vistaGlobalReportes) {
+            $condicionesVisitas[] = 'a.sucursal_id = ?';
+            $tiposVisitas .= 'i';
+            $parametrosVisitas[] = $sucursalIdReportes;
+        }
+
+        $whereVisitas = implode(' AND ', $condicionesVisitas);
+
+        $filasDias = reporteConsultaFilas(
+            $conn,
+            "SELECT
+                DAYOFWEEK(a.fecha) AS dia_mysql,
+                COUNT(*) AS total
+             FROM asistencias a
+             WHERE {$whereVisitas}
+             GROUP BY DAYOFWEEK(a.fecha)
+             ORDER BY DAYOFWEEK(a.fecha)",
+            $tiposVisitas,
+            $parametrosVisitas
+        );
+
+        $filasHoras = reporteConsultaFilas(
+            $conn,
+            "SELECT
+                HOUR(a.hora_entrada) AS hora,
+                COUNT(*) AS total
+             FROM asistencias a
+             WHERE {$whereVisitas}
+             GROUP BY HOUR(a.hora_entrada)
+             ORDER BY HOUR(a.hora_entrada)",
+            $tiposVisitas,
+            $parametrosVisitas
+        );
+
+        /* =====================================================
+           SOCIOS POR PLAN: fotografía tomada al final del periodo.
+        ===================================================== */
+        $condicionesPlanes = array(
+            "i.estado <> 'cancelada'",
+            'i.fecha_inicio <= ?',
+            'i.fecha_fin >= ?'
+        );
+        $tiposPlanes = 'ss';
+        $parametrosPlanes = array(
+            $fechaFinIndicadores,
+            $fechaFinIndicadores
+        );
+
+        if (!$vistaGlobalReportes) {
+            $condicionesPlanes[] = "
+                EXISTS (
+                    SELECT 1
+                    FROM inscripciones_sucursales ins_sede
+                    WHERE ins_sede.inscripcion_id = i.id
+                      AND ins_sede.sucursal_id = ?
+                )
+            ";
+            $tiposPlanes .= 'i';
+            $parametrosPlanes[] = $sucursalIdReportes;
+        }
+
+        $filasPlanes = reporteConsultaFilas(
+            $conn,
+            "SELECT
+                p.nombre AS plan,
+                COUNT(DISTINCT i.cliente_id) AS total
+             FROM inscripciones i
+             INNER JOIN planes p
+                ON p.id = i.plan_id
+             WHERE " . implode(' AND ', $condicionesPlanes) . "
+             GROUP BY p.id, p.nombre
+             ORDER BY total DESC, p.nombre ASC",
+            $tiposPlanes,
+            $parametrosPlanes
+        );
+
+        /* =====================================================
+           ALTAS DE SOCIOS: crecimiento mensual del directorio.
+        ===================================================== */
+        $condicionesAltas = array(
+            'DATE(c.fecha_registro) BETWEEN ? AND ?'
+        );
+        $tiposAltas = 'ss';
+        $parametrosAltas = array(
+            $fechaInicioIndicadores,
+            $fechaFinIndicadores
+        );
+
+        if (!$vistaGlobalReportes) {
+            $condicionesAltas[] = 'c.sucursal_registro_id = ?';
+            $tiposAltas .= 'i';
+            $parametrosAltas[] = $sucursalIdReportes;
+        }
+
+        $filasAltas = reporteConsultaFilas(
+            $conn,
+            "SELECT
+                DATE_FORMAT(c.fecha_registro, '%Y-%m') AS mes,
+                COUNT(*) AS total
+             FROM clientes c
+             WHERE " . implode(' AND ', $condicionesAltas) . "
+             GROUP BY DATE_FORMAT(c.fecha_registro, '%Y-%m')
+             ORDER BY mes ASC",
+            $tiposAltas,
+            $parametrosAltas
+        );
+
+        /* =====================================================
+           Normalización de series para que no falten meses u horas.
+        ===================================================== */
+        $fuentes = array(
+            'membresias' => 'Membresías',
+            'productos' => 'Productos',
+            'clases' => 'Clases'
+        );
+
+        $distribucionMapa = array_fill_keys(
+            array_keys($fuentes),
+            0.0
+        );
+
+        foreach ($filasDistribucion as $fila) {
+            $clave = (string) ($fila['fuente'] ?? '');
+
+            if (array_key_exists($clave, $distribucionMapa)) {
+                $distribucionMapa[$clave] = round(
+                    (float) ($fila['total'] ?? 0),
+                    2
+                );
+            }
+        }
+
+        $mesInicio = new DateTimeImmutable(
+            $fechaInicioObj->format('Y-m-01')
+        );
+        $mesFin = new DateTimeImmutable(
+            $fechaFinObj->format('Y-m-01')
+        );
+
+        $meses = array();
+        $altasMeses = array();
+        $cursorMes = $mesInicio;
+
+        while ($cursorMes <= $mesFin) {
+            $claveMes = $cursorMes->format('Y-m');
+
+            $meses[$claveMes] = array(
+                'membresias' => 0.0,
+                'productos' => 0.0,
+                'clases' => 0.0
+            );
+            $altasMeses[$claveMes] = 0;
+
+            $cursorMes = $cursorMes->modify('+1 month');
+        }
+
+        foreach ($filasMensuales as $fila) {
+            $mes = (string) ($fila['mes'] ?? '');
+            $fuente = (string) ($fila['fuente'] ?? '');
+
+            if (
+                isset($meses[$mes]) &&
+                array_key_exists($fuente, $meses[$mes])
+            ) {
+                $meses[$mes][$fuente] = round(
+                    (float) ($fila['total'] ?? 0),
+                    2
+                );
+            }
+        }
+
+        foreach ($filasAltas as $fila) {
+            $mes = (string) ($fila['mes'] ?? '');
+
+            if (array_key_exists($mes, $altasMeses)) {
+                $altasMeses[$mes] = (int) ($fila['total'] ?? 0);
+            }
+        }
+
+        $diasEtiquetas = array(
+            2 => 'Lunes',
+            3 => 'Martes',
+            4 => 'Miércoles',
+            5 => 'Jueves',
+            6 => 'Viernes',
+            7 => 'Sábado',
+            1 => 'Domingo'
+        );
+        $diasValores = array_fill_keys(
+            array_keys($diasEtiquetas),
+            0
+        );
+
+        foreach ($filasDias as $fila) {
+            $dia = (int) ($fila['dia_mysql'] ?? 0);
+
+            if (array_key_exists($dia, $diasValores)) {
+                $diasValores[$dia] = (int) ($fila['total'] ?? 0);
+            }
+        }
+
+        $horasValores = array_fill(0, 24, 0);
+
+        foreach ($filasHoras as $fila) {
+            $hora = (int) ($fila['hora'] ?? -1);
+
+            if ($hora >= 0 && $hora <= 23) {
+                $horasValores[$hora] = (int) ($fila['total'] ?? 0);
+            }
+        }
+
+        $planesEtiquetas = array();
+        $planesValores = array();
+
+        foreach ($filasPlanes as $fila) {
+            $planesEtiquetas[] = (string) (
+                $fila['plan'] ?? 'Sin plan'
+            );
+            $planesValores[] = (int) ($fila['total'] ?? 0);
+        }
+
+        $ingresoTotal = array_sum(array_values($distribucionMapa));
+        $visitasTotal = array_sum(array_values($diasValores));
+        $sociosActivos = array_sum($planesValores);
+        $sociosNuevos = array_sum(array_values($altasMeses));
+        $horaPicoIndice = 0;
+        $horaPicoValor = 0;
+
+        foreach ($horasValores as $hora => $total) {
+            if ($total > $horaPicoValor) {
+                $horaPicoIndice = (int) $hora;
+                $horaPicoValor = (int) $total;
+            }
+        }
+
+        reporteJson(200, array(
+            'success' => true,
+            'contexto' => $contextoReportes,
+            'periodo' => array(
+                'inicio' => $fechaInicioIndicadores,
+                'fin' => $fechaFinIndicadores
+            ),
+            'resumen' => array(
+                'ingresos' => round($ingresoTotal, 2),
+                'visitas' => $visitasTotal,
+                'socios_activos' => $sociosActivos,
+                'socios_nuevos' => $sociosNuevos,
+                'hora_pico' => sprintf('%02d:00', $horaPicoIndice),
+                'visitas_hora_pico' => $horaPicoValor
+            ),
+            'distribucion_ingresos' => array(
+                'labels' => array_values($fuentes),
+                'values' => array_values($distribucionMapa)
+            ),
+            'ingresos_mensuales' => array(
+                'labels' => array_keys($meses),
+                'membresias' => array_column(
+                    array_values($meses),
+                    'membresias'
+                ),
+                'productos' => array_column(
+                    array_values($meses),
+                    'productos'
+                ),
+                'clases' => array_column(
+                    array_values($meses),
+                    'clases'
+                )
+            ),
+            'socios_nuevos_mensuales' => array(
+                'labels' => array_keys($altasMeses),
+                'values' => array_values($altasMeses)
+            ),
+            'visitas_dias' => array(
+                'labels' => array_values($diasEtiquetas),
+                'values' => array_values($diasValores)
+            ),
+            'afluencia_horas' => array(
+                'labels' => array_map(
+                    static function ($hora) {
+                        return sprintf('%02d:00', $hora);
+                    },
+                    range(0, 23)
+                ),
+                'values' => $horasValores
+            ),
+            'socios_planes' => array(
+                'labels' => $planesEtiquetas,
+                'values' => $planesValores
+            )
+        ));
+    } catch (Throwable $error) {
+        reporteJson(500, array(
+            'success' => false,
+            'message' => $error->getMessage()
+        ));
+    }
+}
 
 /*
  * Endpoint interno.
@@ -792,6 +1337,7 @@ if ($stmtPlanes) {
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 
 
     <?php
@@ -924,8 +1470,30 @@ if ($stmtPlanes) {
                         <i class="fas fa-check"></i>
                     </span>
                 </button>
+
+                <button
+                    type="button"
+                    class="report-type"
+                    data-type="indicadores"
+                >
+                    <span class="report-type-icon">
+                        <i class="fas fa-chart-line"></i>
+                    </span>
+
+                    <span class="report-type-copy">
+                        <strong>Indicadores</strong>
+                        <span>
+                            Ingresos, afluencia, crecimiento y planes.
+                        </span>
+                    </span>
+
+                    <span class="report-type-check">
+                        <i class="fas fa-check"></i>
+                    </span>
+                </button>
             </section>
 
+            <div id="reportDataView">
             <section class="report-card report-filter-card">
                 <div class="report-filter-head">
                     <div class="report-filter-title">
@@ -1299,6 +1867,216 @@ if ($stmtPlanes) {
                     ></nav>
                 </div>
             </section>
+            </div>
+
+            <section
+                class="report-indicators-view"
+                id="indicatorsView"
+                hidden
+            >
+                <div class="report-card indicators-toolbar">
+                    <div class="indicators-toolbar-copy">
+                        <span class="indicators-kicker">
+                            <i class="fas fa-chart-column"></i>
+                            Actividad y rendimiento
+                        </span>
+
+                        <h2>Indicadores del gimnasio</h2>
+
+                        <p>
+                            Consulta el comportamiento de ingresos, visitas,
+                            crecimiento de socios y membresías por plan.
+                        </p>
+                    </div>
+
+                    <div class="indicators-toolbar-controls">
+                        <label class="indicators-date-field">
+                            <span>Desde</span>
+                            <input
+                                type="text"
+                                id="indicatorsStartDate"
+                                placeholder="Selecciona una fecha"
+                                autocomplete="off"
+                                readonly
+                            >
+                        </label>
+
+                        <label class="indicators-date-field">
+                            <span>Hasta</span>
+                            <input
+                                type="text"
+                                id="indicatorsEndDate"
+                                placeholder="Selecciona una fecha"
+                                autocomplete="off"
+                                readonly
+                            >
+                        </label>
+
+                        <button
+                            type="button"
+                            class="indicators-clear-button"
+                            id="indicatorsClear"
+                        >
+                            <i class="fas fa-eraser"></i>
+                            Limpiar
+                        </button>
+
+                        <button
+                            type="button"
+                            class="indicators-refresh-button"
+                            id="indicatorsRefresh"
+                        >
+                            <i class="fas fa-rotate"></i>
+                            Actualizar
+                        </button>
+                    </div>
+
+                    <div class="indicators-presets">
+                        <div>
+                            <button type="button" data-indicators-range="30d">
+                                30 días
+                            </button>
+                            <button type="button" data-indicators-range="6m">
+                                6 meses
+                            </button>
+                            <button
+                                type="button"
+                                data-indicators-range="12m"
+                                class="active"
+                            >
+                                12 meses
+                            </button>
+                            <button type="button" data-indicators-range="24m">
+                                24 meses
+                            </button>
+                        </div>
+
+                        <span
+                            class="indicators-live-status ready"
+                            id="indicatorsStatus"
+                        >
+                            <span></span>
+                            Listo para consultar
+                        </span>
+                    </div>
+                </div>
+
+                <div class="indicators-grid">
+                    <article class="report-card indicator-chart-card wide">
+                        <header class="indicator-chart-head">
+                            <div>
+                                <span>Tendencia financiera</span>
+                                <h3>Ingresos mensuales</h3>
+                                <p>Membresías, productos y clases pagadas.</p>
+                            </div>
+                            <i class="fas fa-chart-line"></i>
+                        </header>
+                        <div class="indicator-chart-body large">
+                            <canvas id="monthlyIncomeChart"></canvas>
+                            <div class="indicator-chart-empty" data-chart-empty="monthlyIncomeChart" hidden>
+                                <i class="fas fa-chart-line"></i>
+                                <strong>Sin ingresos en este periodo</strong>
+                                <span>Selecciona otro rango para consultar la tendencia.</span>
+                            </div>
+                        </div>
+                    </article>
+
+                    <article class="report-card indicator-chart-card">
+                        <header class="indicator-chart-head">
+                            <div>
+                                <span>Origen del dinero</span>
+                                <h3>Distribución de ingresos</h3>
+                                <p>Participación de cada fuente en el total.</p>
+                            </div>
+                            <i class="fas fa-chart-pie"></i>
+                        </header>
+                        <div class="indicator-chart-body">
+                            <canvas id="incomeDistributionChart"></canvas>
+                            <div class="indicator-chart-empty" data-chart-empty="incomeDistributionChart" hidden>
+                                <i class="fas fa-chart-pie"></i>
+                                <strong>Sin ingresos para distribuir</strong>
+                                <span>No hay cobros registrados en el rango.</span>
+                            </div>
+                        </div>
+                    </article>
+
+                    <article class="report-card indicator-chart-card">
+                        <header class="indicator-chart-head">
+                            <div>
+                                <span>Crecimiento del directorio</span>
+                                <h3>Altas de socios por mes</h3>
+                                <p>Nuevas personas registradas durante el periodo.</p>
+                            </div>
+                            <i class="fas fa-user-plus"></i>
+                        </header>
+                        <div class="indicator-chart-body">
+                            <canvas id="newMembersChart"></canvas>
+                            <div class="indicator-chart-empty" data-chart-empty="newMembersChart" hidden>
+                                <i class="fas fa-user-plus"></i>
+                                <strong>Sin altas de socios</strong>
+                                <span>No se registraron socios nuevos en este rango.</span>
+                            </div>
+                        </div>
+                    </article>
+
+                    <article class="report-card indicator-chart-card">
+                        <header class="indicator-chart-head">
+                            <div>
+                                <span>Comportamiento semanal</span>
+                                <h3>Visitas por día</h3>
+                                <p>Entradas acumuladas de lunes a domingo.</p>
+                            </div>
+                            <i class="fas fa-calendar-week"></i>
+                        </header>
+                        <div class="indicator-chart-body">
+                            <canvas id="visitsByDayChart"></canvas>
+                            <div class="indicator-chart-empty" data-chart-empty="visitsByDayChart" hidden>
+                                <i class="fas fa-calendar-week"></i>
+                                <strong>Sin visitas registradas</strong>
+                                <span>No hay accesos durante el periodo seleccionado.</span>
+                            </div>
+                        </div>
+                    </article>
+
+                    <article class="report-card indicator-chart-card">
+                        <header class="indicator-chart-head">
+                            <div>
+                                <span>Afluencia diaria</span>
+                                <h3>Horarios con más visitas</h3>
+                                <p>Entradas agrupadas por hora del día.</p>
+                            </div>
+                            <i class="fas fa-clock"></i>
+                        </header>
+                        <div class="indicator-chart-body">
+                            <canvas id="peakHoursChart"></canvas>
+                            <div class="indicator-chart-empty" data-chart-empty="peakHoursChart" hidden>
+                                <i class="fas fa-clock"></i>
+                                <strong>Sin horarios para comparar</strong>
+                                <span>Registra asistencias para identificar horas pico.</span>
+                            </div>
+                        </div>
+                    </article>
+
+                    <article class="report-card indicator-chart-card wide">
+                        <header class="indicator-chart-head">
+                            <div>
+                                <span>Composición de membresías</span>
+                                <h3>Socios por plan</h3>
+                                <p>Membresías vigentes al finalizar el periodo seleccionado.</p>
+                            </div>
+                            <i class="fas fa-id-card"></i>
+                        </header>
+                        <div class="indicator-chart-body large">
+                            <canvas id="membersByPlanChart"></canvas>
+                            <div class="indicator-chart-empty" data-chart-empty="membersByPlanChart" hidden>
+                                <i class="fas fa-id-card"></i>
+                                <strong>Sin membresías vigentes</strong>
+                                <span>No hay socios activos por plan para esa fecha.</span>
+                            </div>
+                        </div>
+                    </article>
+                </div>
+            </section>
         </div>
     </div>
 </main>
@@ -1348,6 +2126,13 @@ if ($stmtPlanes) {
     let filterTimer = null;
     let requestController = null;
     let requestSequence = 0;
+    let indicatorsController = null;
+    let indicatorsTimer = null;
+    let indicatorsInitialized = false;
+    let indicatorsRequestSequence = 0;
+    let indicatorsStartPicker = null;
+    let indicatorsEndPicker = null;
+    const indicatorCharts = {};
 
     const dom = {
         reportTypes: document.querySelectorAll('.report-type'),
@@ -1377,7 +2162,17 @@ if ($stmtPlanes) {
         pagination: document.getElementById('pagination'),
         pageSize: document.getElementById('pageSize'),
         exportExcel: document.getElementById('exportExcel'),
-        exportPdf: document.getElementById('exportPdf')
+        exportPdf: document.getElementById('exportPdf'),
+        reportDataView: document.getElementById('reportDataView'),
+        indicatorsView: document.getElementById('indicatorsView'),
+        indicatorsStart: document.getElementById('indicatorsStartDate'),
+        indicatorsEnd: document.getElementById('indicatorsEndDate'),
+        indicatorsClear: document.getElementById('indicatorsClear'),
+        indicatorsRefresh: document.getElementById('indicatorsRefresh'),
+        indicatorsPresets: document.querySelectorAll(
+            '[data-indicators-range]'
+        ),
+        indicatorsStatus: document.getElementById('indicatorsStatus')
     };
 
     const stats = [1, 2, 3, 4].map(function (index) {
@@ -1735,8 +2530,740 @@ if ($stmtPlanes) {
         loadReport();
     }
 
+    function indicatorsIsoDate(date) {
+        return formatDateIso(date);
+    }
+
+    function removeIndicatorsPresetSelection() {
+        dom.indicatorsPresets.forEach(function (button) {
+            button.classList.remove('active');
+        });
+    }
+
+    function indicatorsDateChanged() {
+        removeIndicatorsPresetSelection();
+
+        if (dom.indicatorsStart.value && dom.indicatorsEnd.value) {
+            scheduleIndicatorsReload(120);
+        }
+    }
+
+    function initializeIndicatorsCalendars() {
+        if (typeof flatpickr !== 'function') {
+            return;
+        }
+
+        const commonOptions = {
+            locale: 'es',
+            dateFormat: 'Y-m-d',
+            altInput: true,
+            altFormat: 'd/m/Y',
+            allowInput: false,
+            clickOpens: true,
+            maxDate: 'today',
+            disableMobile: true,
+            monthSelectorType: 'static',
+            onReady: function (_selectedDates, _dateStr, instance) {
+                instance.calendarContainer.classList.add(
+                    'indicators-calendar'
+                );
+            }
+        };
+
+        indicatorsStartPicker = flatpickr(
+            dom.indicatorsStart,
+            Object.assign({}, commonOptions, {
+                onChange: function (_selectedDates, dateStr) {
+                    if (indicatorsEndPicker) {
+                        indicatorsEndPicker.set('minDate', dateStr || null);
+
+                        if (
+                            dateStr &&
+                            dom.indicatorsEnd.value &&
+                            dom.indicatorsEnd.value < dateStr
+                        ) {
+                            indicatorsEndPicker.setDate(dateStr, false);
+                        }
+                    }
+
+                    indicatorsDateChanged();
+                }
+            })
+        );
+
+        indicatorsEndPicker = flatpickr(
+            dom.indicatorsEnd,
+            Object.assign({}, commonOptions, {
+                onChange: function (_selectedDates, dateStr) {
+                    if (indicatorsStartPicker) {
+                        indicatorsStartPicker.set(
+                            'maxDate',
+                            dateStr || 'today'
+                        );
+                    }
+
+                    indicatorsDateChanged();
+                }
+            })
+        );
+    }
+
+    function initializeIndicatorsDates() {
+        if (indicatorsInitialized) {
+            return;
+        }
+
+        indicatorsInitialized = true;
+        setIndicatorsPreset('12m', null, false);
+    }
+
+    function setIndicatorsStatus(text, state) {
+        if (!dom.indicatorsStatus) {
+            return;
+        }
+
+        dom.indicatorsStatus.className =
+            'indicators-live-status ' + (state || 'ready');
+
+        dom.indicatorsStatus.innerHTML =
+            '<span></span>' + escapeHtml(text);
+    }
+
+    function setIndicatorsPreset(type, button, reload) {
+        const end = new Date();
+        end.setHours(0, 0, 0, 0);
+
+        let start = new Date(end);
+
+        if (type === '30d') {
+            start.setDate(start.getDate() - 29);
+        } else {
+            const months = type === '6m'
+                ? 5
+                : (type === '24m' ? 23 : 11);
+
+            start = new Date(
+                end.getFullYear(),
+                end.getMonth() - months,
+                1
+            );
+        }
+
+        const startIso = indicatorsIsoDate(start);
+        const endIso = indicatorsIsoDate(end);
+
+        if (indicatorsStartPicker && indicatorsEndPicker) {
+            indicatorsStartPicker.set('maxDate', endIso);
+            indicatorsEndPicker.set('minDate', startIso);
+            indicatorsStartPicker.setDate(startIso, false);
+            indicatorsEndPicker.setDate(endIso, false);
+        } else {
+            dom.indicatorsStart.value = startIso;
+            dom.indicatorsEnd.value = endIso;
+        }
+
+        dom.indicatorsPresets.forEach(function (item) {
+            item.classList.toggle(
+                'active',
+                item === button || (
+                    !button &&
+                    item.dataset.indicatorsRange === type
+                )
+            );
+        });
+
+        if (reload !== false) {
+            loadIndicators();
+        }
+    }
+
+    function scheduleIndicatorsReload(delay) {
+        clearTimeout(indicatorsTimer);
+
+        indicatorsTimer = setTimeout(function () {
+            loadIndicators();
+        }, typeof delay === 'number' ? delay : 220);
+    }
+
+    function indicatorHasValues(values) {
+        return Array.isArray(values) && values.some(function (value) {
+            return Number(value || 0) > 0;
+        });
+    }
+
+    function toggleIndicatorEmpty(chartId, empty) {
+        const canvas = document.getElementById(chartId);
+        const emptyNode = document.querySelector(
+            '[data-chart-empty="' + chartId + '"]'
+        );
+
+        if (canvas) {
+            canvas.hidden = Boolean(empty);
+        }
+
+        if (emptyNode) {
+            emptyNode.hidden = !empty;
+        }
+    }
+
+    function destroyIndicatorChart(chartId) {
+        if (indicatorCharts[chartId]) {
+            indicatorCharts[chartId].destroy();
+            delete indicatorCharts[chartId];
+        }
+    }
+
+    function createIndicatorChart(chartId, config, empty) {
+        destroyIndicatorChart(chartId);
+        toggleIndicatorEmpty(chartId, empty);
+
+        if (empty) {
+            return;
+        }
+
+        const canvas = document.getElementById(chartId);
+
+        if (!canvas || typeof Chart === 'undefined') {
+            return;
+        }
+
+        indicatorCharts[chartId] = new Chart(
+            canvas.getContext('2d'),
+            config
+        );
+    }
+
+    function formatIndicatorMonth(value) {
+        const parts = String(value || '').split('-');
+
+        if (parts.length !== 2) {
+            return value;
+        }
+
+        const date = new Date(
+            Number(parts[0]),
+            Number(parts[1]) - 1,
+            1
+        );
+
+        return new Intl.DateTimeFormat('es-MX', {
+            month: 'short',
+            year: '2-digit'
+        }).format(date);
+    }
+
+    function moneyTooltip(context) {
+        return context.dataset.label + ': '
+            + formatMoney(context.parsed.y !== undefined
+                ? context.parsed.y
+                : context.parsed);
+    }
+
+    function renderIndicators(data) {
+        const monthly = data.ingresos_mensuales || {};
+        const distribution = data.distribucion_ingresos || {};
+        const visits = data.visitas_dias || {};
+        const hours = data.afluencia_horas || {};
+        const plans = data.socios_planes || {};
+        const newMembers = data.socios_nuevos_mensuales || {};
+
+        const colors = {
+            blue: '#2f66b3',
+            green: '#2f7d5a',
+            orange: '#c27a1a',
+            purple: '#6652a3',
+            cyan: '#1685a5',
+            red: '#b54752',
+            text: '#68768a',
+            grid: 'rgba(104, 118, 138, 0.16)'
+        };
+
+        const monthLabels = (monthly.labels || []).map(
+            formatIndicatorMonth
+        );
+
+        createIndicatorChart(
+            'monthlyIncomeChart',
+            {
+                type: 'line',
+                data: {
+                    labels: monthLabels,
+                    datasets: [
+                        {
+                            label: 'Membresías',
+                            data: monthly.membresias || [],
+                            borderColor: colors.blue,
+                            backgroundColor: 'rgba(47, 102, 179, 0.10)',
+                            borderWidth: 2.4,
+                            pointRadius: 2.5,
+                            pointHoverRadius: 5,
+                            tension: 0.32,
+                            fill: false
+                        },
+                        {
+                            label: 'Productos',
+                            data: monthly.productos || [],
+                            borderColor: colors.green,
+                            backgroundColor: 'rgba(47, 125, 90, 0.10)',
+                            borderWidth: 2.4,
+                            pointRadius: 2.5,
+                            pointHoverRadius: 5,
+                            tension: 0.32,
+                            fill: false
+                        },
+                        {
+                            label: 'Clases',
+                            data: monthly.clases || [],
+                            borderColor: colors.orange,
+                            backgroundColor: 'rgba(194, 122, 26, 0.10)',
+                            borderWidth: 2.4,
+                            pointRadius: 2.5,
+                            pointHoverRadius: 5,
+                            tension: 0.32,
+                            fill: false
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        mode: 'index',
+                        intersect: false
+                    },
+                    plugins: {
+                        legend: {
+                            position: 'bottom',
+                            labels: {
+                                usePointStyle: true,
+                                boxWidth: 8,
+                                color: colors.text
+                            }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: moneyTooltip
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            grid: { display: false },
+                            ticks: {
+                                color: colors.text,
+                                maxRotation: 0,
+                                autoSkip: true
+                            }
+                        },
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                color: colors.text,
+                                callback: function (value) {
+                                    return new Intl.NumberFormat('es-MX', {
+                                        notation: Number(value) >= 10000
+                                            ? 'compact'
+                                            : 'standard'
+                                    }).format(value);
+                                }
+                            },
+                            grid: { color: colors.grid }
+                        }
+                    }
+                }
+            },
+            !indicatorHasValues([].concat(
+                monthly.membresias || [],
+                monthly.productos || [],
+                monthly.clases || []
+            ))
+        );
+
+        createIndicatorChart(
+            'incomeDistributionChart',
+            {
+                type: 'doughnut',
+                data: {
+                    labels: distribution.labels || [],
+                    datasets: [{
+                        data: distribution.values || [],
+                        backgroundColor: [
+                            colors.blue,
+                            colors.green,
+                            colors.orange
+                        ],
+                        borderColor: '#ffffff',
+                        borderWidth: 4,
+                        hoverOffset: 7
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    cutout: '65%',
+                    plugins: {
+                        legend: {
+                            position: 'bottom',
+                            labels: {
+                                usePointStyle: true,
+                                boxWidth: 8,
+                                color: colors.text
+                            }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function (context) {
+                                    return context.label + ': '
+                                        + formatMoney(context.parsed);
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            !indicatorHasValues(distribution.values)
+        );
+
+        createIndicatorChart(
+            'newMembersChart',
+            {
+                type: 'bar',
+                data: {
+                    labels: (newMembers.labels || []).map(
+                        formatIndicatorMonth
+                    ),
+                    datasets: [{
+                        label: 'Socios nuevos',
+                        data: newMembers.values || [],
+                        backgroundColor: colors.purple,
+                        borderRadius: 7,
+                        maxBarThickness: 42
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        x: {
+                            grid: { display: false },
+                            ticks: {
+                                color: colors.text,
+                                maxRotation: 0,
+                                autoSkip: true
+                            }
+                        },
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                precision: 0,
+                                color: colors.text
+                            },
+                            grid: { color: colors.grid }
+                        }
+                    }
+                }
+            },
+            !indicatorHasValues(newMembers.values)
+        );
+
+        createIndicatorChart(
+            'visitsByDayChart',
+            {
+                type: 'bar',
+                data: {
+                    labels: visits.labels || [],
+                    datasets: [{
+                        label: 'Visitas',
+                        data: visits.values || [],
+                        backgroundColor: colors.cyan,
+                        borderRadius: 7,
+                        maxBarThickness: 46
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        x: {
+                            grid: { display: false },
+                            ticks: { color: colors.text }
+                        },
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                precision: 0,
+                                color: colors.text
+                            },
+                            grid: { color: colors.grid }
+                        }
+                    }
+                }
+            },
+            !indicatorHasValues(visits.values)
+        );
+
+        createIndicatorChart(
+            'peakHoursChart',
+            {
+                type: 'line',
+                data: {
+                    labels: hours.labels || [],
+                    datasets: [{
+                        label: 'Visitas',
+                        data: hours.values || [],
+                        borderColor: colors.orange,
+                        backgroundColor: 'rgba(194, 122, 26, 0.13)',
+                        borderWidth: 2.5,
+                        pointRadius: 2.3,
+                        pointHoverRadius: 5,
+                        fill: true,
+                        tension: 0.34
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        mode: 'index',
+                        intersect: false
+                    },
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        x: {
+                            grid: { display: false },
+                            ticks: {
+                                color: colors.text,
+                                maxRotation: 0,
+                                autoSkip: true,
+                                maxTicksLimit: 12
+                            }
+                        },
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                precision: 0,
+                                color: colors.text
+                            },
+                            grid: { color: colors.grid }
+                        }
+                    }
+                }
+            },
+            !indicatorHasValues(hours.values)
+        );
+
+        createIndicatorChart(
+            'membersByPlanChart',
+            {
+                type: 'bar',
+                data: {
+                    labels: plans.labels || [],
+                    datasets: [{
+                        label: 'Socios',
+                        data: plans.values || [],
+                        backgroundColor: [
+                            colors.blue,
+                            colors.green,
+                            colors.orange,
+                            colors.purple,
+                            colors.cyan,
+                            colors.red
+                        ],
+                        borderRadius: 6,
+                        maxBarThickness: 38
+                    }]
+                },
+                options: {
+                    indexAxis: 'y',
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        x: {
+                            beginAtZero: true,
+                            ticks: {
+                                precision: 0,
+                                color: colors.text
+                            },
+                            grid: { color: colors.grid }
+                        },
+                        y: {
+                            grid: { display: false },
+                            ticks: { color: colors.text }
+                        }
+                    }
+                }
+            },
+            !indicatorHasValues(plans.values)
+        );
+    }
+
+    async function loadIndicators() {
+        if (reportType !== 'indicadores') {
+            return;
+        }
+
+        initializeIndicatorsDates();
+
+        const start = dom.indicatorsStart.value;
+        const end = dom.indicatorsEnd.value;
+        const today = formatDateIso(new Date());
+
+        if (!start || !end) {
+            setIndicatorsStatus(
+                'Selecciona ambas fechas',
+                'error'
+            );
+            return;
+        }
+
+        if (start > end) {
+            setIndicatorsStatus(
+                'La fecha inicial es mayor que la final',
+                'error'
+            );
+            return;
+        }
+
+        if (start > today || end > today) {
+            setIndicatorsStatus(
+                'El periodo no puede incluir fechas futuras',
+                'error'
+            );
+            return;
+        }
+
+        if (indicatorsController) {
+            indicatorsController.abort();
+        }
+
+        const requestId = ++indicatorsRequestSequence;
+        indicatorsController = new AbortController();
+        dom.indicatorsRefresh.disabled = true;
+        dom.indicatorsView.classList.add('is-loading');
+        setIndicatorsStatus('Actualizando gráficas...', 'loading');
+
+        const params = new URLSearchParams({
+            action: 'indicadores',
+            vista: contexto.vista_global ? 'global' : 'sucursal',
+            fecha_inicio: start,
+            fecha_fin: end,
+            _refresh: String(Date.now())
+        });
+
+        try {
+            const response = await fetch(
+                'reportes.php?' + params.toString(),
+                {
+                    method: 'GET',
+                    credentials: 'same-origin',
+                    cache: 'no-store',
+                    headers: {
+                        'Accept': 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest',
+                        'Cache-Control': 'no-cache'
+                    },
+                    signal: indicatorsController.signal
+                }
+            );
+
+            const responseText = await response.text();
+            let data;
+
+            try {
+                data = JSON.parse(responseText);
+            } catch (parseError) {
+                const returnedHtml = /^\s*</.test(responseText);
+
+                throw new Error(
+                    returnedHtml
+                        ? 'El servidor devolvió una página HTML. Actualiza la sesión e intenta nuevamente.'
+                        : 'El servidor devolvió una respuesta no válida.'
+                );
+            }
+
+            if (requestId !== indicatorsRequestSequence) {
+                return;
+            }
+
+            if (!response.ok || !data.success) {
+                throw new Error(
+                    data.message ||
+                    'No fue posible cargar los indicadores.'
+                );
+            }
+
+            if (
+                !data.periodo ||
+                data.periodo.inicio !== start ||
+                data.periodo.fin !== end
+            ) {
+                throw new Error(
+                    'La respuesta no corresponde al periodo seleccionado.'
+                );
+            }
+
+            renderIndicators(data);
+
+            const updatedAt = new Intl.DateTimeFormat('es-MX', {
+                hour: '2-digit',
+                minute: '2-digit'
+            }).format(new Date());
+
+            setIndicatorsStatus(
+                'Actualizado ' + updatedAt +
+                ' · ' + formatDate(start, false) +
+                ' al ' + formatDate(end, false),
+                'ready'
+            );
+        } catch (error) {
+            if (
+                error.name === 'AbortError' ||
+                requestId !== indicatorsRequestSequence
+            ) {
+                return;
+            }
+
+            setIndicatorsStatus(
+                'No fue posible actualizar',
+                'error'
+            );
+
+            Swal.fire({
+                icon: 'error',
+                title: 'No se pudieron cargar las gráficas',
+                text: error.message,
+                confirmButtonColor: '#2f66b3'
+            });
+        } finally {
+            if (requestId === indicatorsRequestSequence) {
+                dom.indicatorsRefresh.disabled = false;
+                dom.indicatorsView.classList.remove('is-loading');
+            }
+        }
+    }
+
     function setReportType(type) {
+        if (!['inscripciones', 'ventas', 'indicadores'].includes(type)) {
+            return;
+        }
+
         if (type === reportType) {
+            if (type === 'indicadores') {
+                loadIndicators();
+            } else {
+                loadReport();
+            }
             return;
         }
 
@@ -1748,6 +3275,17 @@ if ($stmtPlanes) {
                 button.dataset.type === type
             );
         });
+
+        const showIndicators = type === 'indicadores';
+
+        dom.reportDataView.hidden = showIndicators;
+        dom.indicatorsView.hidden = !showIndicators;
+
+        if (showIndicators) {
+            initializeIndicatorsDates();
+            loadIndicators();
+            return;
+        }
 
         dom.inscriptionPlanField.hidden =
             type !== 'inscripciones';
@@ -1962,17 +3500,36 @@ if ($stmtPlanes) {
         setLoadingState();
 
         try {
+            const requestParams = getFilterParams();
+            requestParams.set('_refresh', String(Date.now()));
+
             const response = await fetch(
-                'reportes.php?' + getFilterParams().toString(),
+                'reportes.php?' + requestParams.toString(),
                 {
+                    method: 'GET',
+                    credentials: 'same-origin',
+                    cache: 'no-store',
                     headers: {
-                        'Accept': 'application/json'
+                        'Accept': 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest',
+                        'Cache-Control': 'no-cache'
                     },
                     signal: signal
                 }
             );
 
-            const data = await response.json();
+            const responseText = await response.text();
+            let data;
+
+            try {
+                data = JSON.parse(responseText);
+            } catch (parseError) {
+                throw new Error(
+                    /^\s*</.test(responseText)
+                        ? 'El servidor devolvió una página HTML. Actualiza la sesión e intenta nuevamente.'
+                        : 'El servidor devolvió una respuesta no válida.'
+                );
+            }
 
             if (currentRequest !== requestSequence) {
                 return;
@@ -2874,7 +4431,7 @@ if ($stmtPlanes) {
             XLSX.utils.book_append_sheet(
                 workbook,
                 analysisSheet,
-                'Análisis'
+                'Desglose'
             );
 
             if (contexto.vista_global) {
@@ -3670,6 +5227,63 @@ if ($stmtPlanes) {
         'click',
         exportPdf
     );
+
+    dom.indicatorsPresets.forEach(function (button) {
+        button.addEventListener('click', function () {
+            setIndicatorsPreset(
+                button.dataset.indicatorsRange,
+                button,
+                true
+            );
+        });
+    });
+
+    initializeIndicatorsCalendars();
+
+    if (!indicatorsStartPicker || !indicatorsEndPicker) {
+        [dom.indicatorsStart, dom.indicatorsEnd].forEach(
+            function (control) {
+                control.addEventListener(
+                    'change',
+                    indicatorsDateChanged
+                );
+            }
+        );
+    }
+
+    dom.indicatorsClear.addEventListener(
+        'click',
+        function () {
+            const defaultButton = document.querySelector(
+                '[data-indicators-range="12m"]'
+            );
+
+            setIndicatorsPreset(
+                '12m',
+                defaultButton,
+                true
+            );
+        }
+    );
+
+    dom.indicatorsRefresh.addEventListener(
+        'click',
+        function () {
+            loadIndicators();
+        }
+    );
+
+    window.addEventListener('pageshow', function (event) {
+        if (!event.persisted) {
+            return;
+        }
+
+        if (reportType === 'indicadores') {
+            loadIndicators();
+        } else {
+            loadReport();
+        }
+    });
 
     updateStatusOptions();
     updateReportCopy();

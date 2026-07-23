@@ -2,6 +2,7 @@
 require_once __DIR__ . '/includes/auth_guard.php';
 require_once __DIR__ . '/config/database.php';
 require_once __DIR__ . '/includes/sucursal_context.php';
+require_once __DIR__ . '/includes/super_admin_helper.php';
 require_once __DIR__ . '/includes/configuracion_context.php';
 require_once __DIR__ . '/PHPMailer/PHPMailer.php';
 require_once __DIR__ . '/PHPMailer/SMTP.php';
@@ -21,14 +22,24 @@ $conn->set_charset('utf8mb4');
 
 $usuario_id = (int) ($_SESSION['user_id'] ?? 0);
 $usuario_nombre = (string) ($_SESSION['user_name'] ?? 'Usuario');
-$usuario_rol = configuracion_rol_base();
+
+/*
+ * Se conserva el rol real para las acciones exclusivas del
+ * superadministrador. El rol operativo continúa siendo "admin" para
+ * mantener compatibilidad con los módulos anteriores.
+ */
+$usuario_rol_real = rol_base_real_sesion();
+$esSuperAdministradorActual = rol_es_super_administrador(
+    $usuario_rol_real
+);
+$usuario_rol = rol_operativo_desde_base($usuario_rol_real);
 
 if ($usuario_id <= 0) {
     header('Location: login.php');
     exit;
 }
 
-if ($usuario_rol !== 'admin') {
+if (!rol_es_administrativo($usuario_rol_real)) {
     header('Location: dashboard.php');
     exit;
 }
@@ -181,6 +192,7 @@ function enviarCredencialesAcceso(
     }
 
     $roles = array(
+        'super_administrador' => 'Superadministrador',
         'admin' => 'Administrador',
         'recepcionista' => 'Recepcionista',
         'entrenador' => 'Entrenador'
@@ -1506,18 +1518,84 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $id = (int) ($_POST['id'] ?? 0);
             $nombre = trim((string) ($_POST['nombre'] ?? ''));
             $email = strtolower(trim((string) ($_POST['email'] ?? '')));
-            $rol = (string) ($_POST['rol'] ?? 'recepcionista');
+            $rol = rol_normalizar_sistema((string) (
+                $_POST['rol'] ?? 'recepcionista'
+            ));
             $estado = (string) ($_POST['estado'] ?? 'activo');
 
-            if ($nombre === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
-                throw new RuntimeException('Nombre y correo válido son obligatorios.');
+            if ($id > 0) {
+                $cuentaProtegida = configuracion_fila(
+                    $conn,
+                    "SELECT rol
+                     FROM usuarios
+                     WHERE id = ?
+                     LIMIT 1",
+                    'i',
+                    array($id)
+                );
+
+                if (
+                    rol_normalizar_sistema((string) (
+                        $cuentaProtegida['rol'] ?? ''
+                    )) === 'super_administrador'
+                ) {
+                    throw new RuntimeException(
+                        'Las cuentas superadministradoras son globales y '
+                        . 'no se editan desde este catálogo.'
+                    );
+                }
             }
 
-            if (!in_array($rol, array('admin', 'recepcionista', 'entrenador'), true)) {
-                throw new RuntimeException('El rol seleccionado no es válido.');
+            if (
+                $nombre === ''
+                || !filter_var($email, FILTER_VALIDATE_EMAIL)
+            ) {
+                throw new RuntimeException(
+                    'Nombre y correo válido son obligatorios.'
+                );
             }
 
-            if (!in_array($estado, array('activo', 'inactivo'), true)) {
+            $rolesPermitidos = array(
+                'admin',
+                'recepcionista',
+                'entrenador'
+            );
+
+            if ($esSuperAdministradorActual) {
+                $rolesPermitidos[] = 'super_administrador';
+            }
+
+            if (!in_array($rol, $rolesPermitidos, true)) {
+                throw new RuntimeException(
+                    'El rol seleccionado no es válido.'
+                );
+            }
+
+            if ($rol === 'super_administrador') {
+                if (!$esSuperAdministradorActual) {
+                    throw new RuntimeException(
+                        'Solo un superadministrador puede crear otra '
+                        . 'cuenta superadministradora.'
+                    );
+                }
+
+                if (!$vistaGlobalConfiguracion) {
+                    throw new RuntimeException(
+                        'El superadministrador debe crearse desde '
+                        . 'Todas las sucursales.'
+                    );
+                }
+
+                /*
+                 * Un superadministrador siempre queda activo y su rol
+                 * operativo por sucursal es "admin".
+                 */
+                $estado = 'activo';
+            } elseif (!in_array(
+                $estado,
+                array('activo', 'inactivo'),
+                true
+            )) {
                 $estado = 'activo';
             }
 
@@ -1525,32 +1603,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $conn,
                 "SELECT id
                  FROM usuarios
-                 WHERE email = ? AND id <> ?
+                 WHERE email = ?
+                   AND id <> ?
                  LIMIT 1",
                 'si',
                 array($email, $id)
             );
 
             if ($duplicado) {
-                throw new RuntimeException('Ya existe un usuario con ese correo.');
+                throw new RuntimeException(
+                    'Ya existe un usuario con ese correo.'
+                );
             }
 
             if ($id > 0) {
-                if ($vistaGlobalConfiguracion && $id === $usuario_id) {
+                if (
+                    $vistaGlobalConfiguracion
+                    && $id === $usuario_id
+                ) {
                     if ($rol !== 'admin' || $estado !== 'activo') {
                         throw new RuntimeException(
-                            'No puedes desactivar ni retirar el rol administrador de tu propia cuenta.'
+                            'No puedes desactivar ni retirar el rol '
+                            . 'administrador de tu propia cuenta.'
                         );
                     }
                 }
 
-                if (!$vistaGlobalConfiguracion && $id === $usuario_id) {
+                if (
+                    !$vistaGlobalConfiguracion
+                    && $id === $usuario_id
+                ) {
                     $asignacionPropia = configuracion_fila(
                         $conn,
-                        "SELECT COALESCE(rol_sucursal, 'admin') AS rol_sucursal,
-                                estado
+                        "SELECT
+                            COALESCE(rol_sucursal, 'admin')
+                                AS rol_sucursal,
+                            estado
                          FROM usuarios_sucursales
-                         WHERE usuario_id = ? AND sucursal_id = ?
+                         WHERE usuario_id = ?
+                           AND sucursal_id = ?
                          LIMIT 1",
                         'ii',
                         array($id, $sucursalIdConfiguracion)
@@ -1559,10 +1650,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     if (
                         !$asignacionPropia
                         || $estado !== 'activo'
-                        || $rol !== (string) $asignacionPropia['rol_sucursal']
+                        || $rol !== (string) (
+                            $asignacionPropia['rol_sucursal']
+                            ?? ''
+                        )
                     ) {
                         throw new RuntimeException(
-                            'No puedes cambiar tu propio rol ni suspender tu acceso a la sucursal activa.'
+                            'No puedes cambiar tu propio rol ni '
+                            . 'suspender tu acceso a la sucursal activa.'
                         );
                     }
                 }
@@ -1581,14 +1676,49 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
 
                 if ($vistaGlobalConfiguracion) {
-                    configuracion_ejecutar(
-                        $conn,
-                        "UPDATE usuarios
-                         SET nombre = ?, email = ?, rol = ?, estado = ?
-                         WHERE id = ?",
-                        'ssssi',
-                        array($nombre, $email, $rol, $estado, $id)
-                    );
+                    $conn->begin_transaction();
+
+                    try {
+                        configuracion_ejecutar(
+                            $conn,
+                            "UPDATE usuarios
+                             SET nombre = ?,
+                                 email = ?,
+                                 rol = ?,
+                                 estado = ?
+                             WHERE id = ?",
+                            'ssssi',
+                            array(
+                                $nombre,
+                                $email,
+                                $rol,
+                                $estado,
+                                $id
+                            )
+                        );
+
+                        configuracion_ejecutar(
+                            $conn,
+                            "UPDATE usuarios_sucursales
+                             SET rol_sucursal = ?,
+                                 estado = ?,
+                                 puede_operar_caja = ?,
+                                 updated_at = CURRENT_TIMESTAMP
+                             WHERE usuario_id = ?",
+                            'ssii',
+                            array(
+                                $rol,
+                                $estado,
+                                $rol === 'entrenador' ? 0 : 1,
+                                $id
+                            )
+                        );
+
+                        $conn->commit();
+                    } catch (Throwable $errorUsuarioGlobal) {
+                        $conn->rollback();
+                        throw $errorUsuarioGlobal;
+                    }
                 } else {
                     $cuentaGlobal = configuracion_fila(
                         $conn,
@@ -1602,29 +1732,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                     if (
                         $estado === 'activo'
-                        && (!$cuentaGlobal || $cuentaGlobal['estado'] !== 'activo')
+                        && (
+                            !$cuentaGlobal
+                            || $cuentaGlobal['estado'] !== 'activo'
+                        )
                     ) {
                         throw new RuntimeException(
-                            'La cuenta está inactiva globalmente. Actívala desde Todas las sucursales.'
+                            'La cuenta está inactiva globalmente. '
+                            . 'Actívala desde Todas las sucursales.'
                         );
                     }
 
                     $conn->begin_transaction();
+
                     try {
                         configuracion_ejecutar(
                             $conn,
                             "UPDATE usuarios
-                             SET nombre = ?, email = ?
+                             SET nombre = ?,
+                                 email = ?
                              WHERE id = ?",
                             'ssi',
                             array($nombre, $email, $id)
                         );
+
                         configuracion_ejecutar(
                             $conn,
                             "UPDATE usuarios_sucursales
-                             SET rol_sucursal = ?, estado = ?,
+                             SET rol_sucursal = ?,
+                                 estado = ?,
                                  puede_operar_caja = ?
-                             WHERE usuario_id = ? AND sucursal_id = ?",
+                             WHERE usuario_id = ?
+                               AND sucursal_id = ?",
                             'ssiii',
                             array(
                                 $rol,
@@ -1634,6 +1773,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 $sucursalIdConfiguracion
                             )
                         );
+
                         $conn->commit();
                     } catch (Throwable $errorUsuario) {
                         $conn->rollback();
@@ -1645,41 +1785,177 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'success' => true,
                     'usuario_nuevo' => false,
                     'message' => $vistaGlobalConfiguracion
-                        ? 'Usuario actualizado.'
+                        ? 'Usuario y rol actualizados en todas sus sucursales.'
                         : 'Usuario y acceso de sucursal actualizados.'
                 ));
             }
 
+            $passwordTemporal = generarPasswordTemporal();
+            $password = password_hash(
+                $passwordTemporal,
+                PASSWORD_DEFAULT
+            );
+
+            /*
+             * El alta global se reserva para superadministradores.
+             * La cuenta queda relacionada con todas las sucursales activas
+             * usando "admin" como rol operativo.
+             */
             if ($vistaGlobalConfiguracion) {
-                throw new RuntimeException(
-                    'Selecciona una sucursal antes de crear un usuario para que tenga una sede asignada.'
+                if ($rol !== 'super_administrador') {
+                    throw new RuntimeException(
+                        'Desde Todas las sucursales únicamente puedes '
+                        . 'crear un superadministrador. Para otro rol, '
+                        . 'selecciona primero una sucursal.'
+                    );
+                }
+
+                $sucursalPrincipal = configuracion_fila(
+                    $conn,
+                    "SELECT id
+                     FROM sucursales
+                     WHERE estado = 'activa'
+                     ORDER BY es_matriz DESC, id ASC
+                     LIMIT 1"
                 );
+
+                $sucursalPrincipalId = (int) (
+                    $sucursalPrincipal['id'] ?? 0
+                );
+
+                if ($sucursalPrincipalId <= 0) {
+                    throw new RuntimeException(
+                        'No existe una sucursal activa para asignar '
+                        . 'al nuevo superadministrador.'
+                    );
+                }
+
+                $conn->begin_transaction();
+
+                try {
+                    configuracion_ejecutar(
+                        $conn,
+                        "INSERT INTO usuarios
+                            (
+                                nombre,
+                                email,
+                                password,
+                                rol,
+                                estado,
+                                password_change_required
+                            )
+                         VALUES (
+                            ?,
+                            ?,
+                            ?,
+                            'super_administrador',
+                            'activo',
+                            1
+                         )",
+                        'sss',
+                        array($nombre, $email, $password)
+                    );
+
+                    $id = (int) $conn->insert_id;
+
+                    configuracion_ejecutar(
+                        $conn,
+                        "INSERT INTO usuarios_sucursales
+                            (
+                                usuario_id,
+                                sucursal_id,
+                                rol_sucursal,
+                                es_principal,
+                                puede_operar_caja,
+                                estado
+                            )
+                         SELECT
+                            ?,
+                            s.id,
+                            'admin',
+                            CASE WHEN s.id = ? THEN 1 ELSE 0 END,
+                            1,
+                            'activo'
+                         FROM sucursales s
+                         WHERE s.estado = 'activa'",
+                        'ii',
+                        array($id, $sucursalPrincipalId)
+                    );
+
+                    $sedesAsignadas = (int) $conn->affected_rows;
+
+                    if ($sedesAsignadas <= 0) {
+                        throw new RuntimeException(
+                            'No fue posible asignar las sucursales '
+                            . 'al nuevo superadministrador.'
+                        );
+                    }
+
+                    $conn->commit();
+                } catch (Throwable $errorNuevoSuperAdministrador) {
+                    $conn->rollback();
+                    throw $errorNuevoSuperAdministrador;
+                }
+
+                $correo = enviarCredencialesAcceso(
+                    $conn,
+                    $nombre,
+                    $email,
+                    $passwordTemporal,
+                    'super_administrador'
+                );
+
+                configuracion_json(array(
+                    'success' => true,
+                    'usuario_nuevo' => true,
+                    'super_administrador' => true,
+                    'sedes_asignadas' => $sedesAsignadas,
+                    'correo_enviado' => $correo['enviado'],
+                    'correo_error' => $correo['error'],
+                    'password_temporal' => $correo['enviado']
+                        ? ''
+                        : $passwordTemporal,
+                    'message' => $correo['enviado']
+                        ? 'Superadministrador creado y asignado a '
+                            . $sedesAsignadas
+                            . ' sucursal(es). Las credenciales fueron enviadas.'
+                        : 'Superadministrador creado y asignado a '
+                            . $sedesAsignadas
+                            . ' sucursal(es), pero el correo no pudo enviarse.'
+                ));
             }
 
-            $passwordTemporal = generarPasswordTemporal();
-            $password = password_hash($passwordTemporal, PASSWORD_DEFAULT);
-
             $conn->begin_transaction();
+
             try {
                 configuracion_ejecutar(
                     $conn,
                     "INSERT INTO usuarios
                         (
-                            nombre, email, password, rol,
-                            estado, password_change_required
+                            nombre,
+                            email,
+                            password,
+                            rol,
+                            estado,
+                            password_change_required
                         )
                      VALUES (?, ?, ?, ?, 'activo', 1)",
                     'ssss',
                     array($nombre, $email, $password, $rol)
                 );
+
                 $id = (int) $conn->insert_id;
 
                 configuracion_ejecutar(
                     $conn,
                     "INSERT INTO usuarios_sucursales
                         (
-                            usuario_id, sucursal_id, rol_sucursal,
-                            es_principal, puede_operar_caja, estado
+                            usuario_id,
+                            sucursal_id,
+                            rol_sucursal,
+                            es_principal,
+                            puede_operar_caja,
+                            estado
                         )
                      VALUES (?, ?, ?, 1, ?, ?)",
                     'iisis',
@@ -1691,6 +1967,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $estado
                     )
                 );
+
                 $conn->commit();
             } catch (Throwable $errorNuevoUsuario) {
                 $conn->rollback();
@@ -1725,6 +2002,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($id <= 0 || $id === $usuario_id) {
                 throw new RuntimeException(
                     'No puedes retirar tu propio acceso desde esta pantalla.'
+                );
+            }
+
+            $cuentaProtegida = configuracion_fila(
+                $conn,
+                "SELECT rol FROM usuarios WHERE id = ? LIMIT 1",
+                'i',
+                array($id)
+            );
+
+            if (
+                rol_normalizar_sistema((string) ($cuentaProtegida['rol'] ?? ''))
+                === 'super_administrador'
+            ) {
+                throw new RuntimeException(
+                    'La cuenta principal está protegida.'
                 );
             }
 
@@ -1800,6 +2093,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 "SELECT nombre, email, rol
                  FROM usuarios
                  WHERE id = ?
+                   AND rol <> 'super_administrador'
                  LIMIT 1",
                 'i',
                 array($id)
@@ -1921,7 +2215,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $fila = $vistaGlobalConfiguracion
                     ? configuracion_fila(
                         $conn,
-                        "SELECT * FROM usuarios WHERE id = ? LIMIT 1",
+                        "SELECT *
+                         FROM usuarios
+                         WHERE id = ?
+                           AND rol <> 'super_administrador'
+                         LIMIT 1",
                         'i',
                         array($id)
                     )
@@ -1934,7 +2232,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                          FROM usuarios u
                          INNER JOIN usuarios_sucursales us
                             ON us.usuario_id = u.id
-                         WHERE u.id = ? AND us.sucursal_id = ?
+                         WHERE u.id = ?
+                           AND us.sucursal_id = ?
+                           AND u.rol <> 'super_administrador'
                          LIMIT 1",
                         'ii',
                         array($id, $sucursalIdConfiguracion)
@@ -1984,6 +2284,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 // Estadísticas y listados con el alcance actual.
+/*
+ * El administrador normal no puede descubrir cuentas
+ * superadministradoras. Un superadministrador sí puede verlas en la
+ * vista global, pero continúan protegidas contra edición accidental.
+ */
+$filtroSuperAdministradoresGlobal = $esSuperAdministradorActual
+    ? ''
+    : " AND rol <> 'super_administrador'";
+
+$filtroSuperAdministradoresGlobalAlias = $esSuperAdministradorActual
+    ? ''
+    : " WHERE u.rol <> 'super_administrador'";
+
 if ($vistaGlobalConfiguracion) {
     $total_clientes = array('total' => configuracion_contar(
         $conn,
@@ -1999,7 +2312,10 @@ if ($vistaGlobalConfiguracion) {
     ));
     $total_usuarios = array('total' => configuracion_contar(
         $conn,
-        "SELECT COUNT(*) AS total FROM usuarios WHERE estado = 'activo'"
+        "SELECT COUNT(*) AS total
+         FROM usuarios
+         WHERE estado = 'activo'"
+         . $filtroSuperAdministradoresGlobal
     ));
     $total_clases = array('total' => configuracion_contar(
         $conn,
@@ -2065,8 +2381,17 @@ if ($vistaGlobalConfiguracion) {
                 WHERE us.usuario_id = u.id
                   AND us.estado = 'activo'
             ) AS sedes_activas
-         FROM usuarios u
-         ORDER BY u.id"
+         FROM usuarios u"
+         . $filtroSuperAdministradoresGlobalAlias
+         . " ORDER BY
+                FIELD(
+                    u.rol,
+                    'super_administrador',
+                    'admin',
+                    'recepcionista',
+                    'entrenador'
+                ),
+                u.nombre ASC"
     );
 } else {
     $total_clientes = array('total' => configuracion_contar(
@@ -2121,7 +2446,8 @@ if ($vistaGlobalConfiguracion) {
          INNER JOIN usuarios u ON u.id = us.usuario_id
          WHERE us.sucursal_id = ?
            AND us.estado = 'activo'
-           AND u.estado = 'activo'",
+           AND u.estado = 'activo'
+           AND u.rol <> 'super_administrador'",
         'i',
         array($sucursalIdConfiguracion)
     ));
@@ -2237,6 +2563,7 @@ if ($vistaGlobalConfiguracion) {
          FROM usuarios_sucursales us
          INNER JOIN usuarios u ON u.id = us.usuario_id
          WHERE us.sucursal_id = ?
+           AND u.rol <> 'super_administrador'
          ORDER BY u.nombre",
         'i',
         array($sucursalIdConfiguracion)
@@ -2333,6 +2660,7 @@ $ultima_actualizacion = getLastGitHubDateTime();
 $configuracionVista = array(
     'conn' => $conn,
     'usuario_id' => $usuario_id,
+    'es_super_administrador' => $esSuperAdministradorActual,
     'vista_global' => $vistaGlobalConfiguracion,
     'sucursal_id' => $sucursalIdConfiguracion,
     'sucursal_nombre' => $sucursalNombreConfiguracion,
