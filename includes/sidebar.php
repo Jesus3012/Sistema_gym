@@ -149,6 +149,7 @@ $sidebar_puede_vista_global = rol_es_administrativo(
 $sidebar_paginas_globales = [
     'dashboard.php',
     'socios.php',
+    'expediente_salud.php',
     'inscripciones.php',
     'planes.php',
     'asistencias.php',
@@ -274,6 +275,8 @@ $sidebar_global_urls = [
         'dashboard.php?vista=global',
     'socios.php' =>
         'socios.php?vista=global',
+    'expediente_salud.php' =>
+        'expediente_salud.php?vista=global',
     'inscripciones.php' =>
         'inscripciones.php?vista=global',
     'planes.php' =>
@@ -319,6 +322,8 @@ $sidebar_sucursal_urls = [
         'dashboard.php?vista=sucursal',
     'socios.php' =>
         'socios.php?vista=sucursal',
+    'expediente_salud.php' =>
+        'expediente_salud.php?vista=sucursal',
     'inscripciones.php' =>
         'inscripciones.php?vista=sucursal',
     'planes.php' =>
@@ -367,6 +372,8 @@ $sidebar_contexto_titulos = [
     'dashboard.php' => 'Vista del panel',
     'socios.php' =>
         'Vista de socios',
+    'expediente_salud.php' =>
+        'Vista de expedientes',
     'inscripciones.php' =>
         'Vista de inscripciones',
     'planes.php' =>
@@ -468,6 +475,8 @@ $sidebar_contexto_nombre = $sidebar_vista_global
 $sidebar_contexto_detalles_globales = [
     'socios.php' =>
         'Socios de todas las sucursales · ' . $sidebar_total_sedes_texto,
+    'expediente_salud.php' =>
+        'Expedientes de todas las sucursales · ' . $sidebar_total_sedes_texto,
     'inscripciones.php' =>
         'Inscripciones globales · ' . $sidebar_total_sedes_texto,
     'planes.php' =>
@@ -637,6 +646,8 @@ if ($sidebar_legal_activo) {
     $active_module = 'historial_ventas';
 } elseif ($current_page === 'socios.php') {
     $active_module = 'members';
+} elseif ($current_page === 'expediente_salud.php') {
+    $active_module = 'health_records';
 } elseif ($current_page === 'inscripciones.php') {
     $active_module = 'inscriptions';
 } elseif ($current_page === 'planes.php') {
@@ -958,6 +969,8 @@ $sidebar_navbar_version = is_file($sidebar_navbar_css)
                                 <?php
                                 if ($current_page === 'socios.php') {
                                     echo 'Directorio de socios de todas las sucursales';
+                                } elseif ($current_page === 'expediente_salud.php') {
+                                    echo 'Cuestionarios y documentos de responsabilidad de todas las sucursales';
                                 } elseif ($current_page === 'inscripciones.php') {
                                     echo 'Inscripciones de todas las sucursales';
                                 } elseif ($current_page === 'planes.php') {
@@ -1061,6 +1074,8 @@ $sidebar_navbar_version = is_file($sidebar_navbar_css)
                     <?php
                     if ($current_page === 'socios.php') {
                         echo 'Directorio consolidado de';
+                    } elseif ($current_page === 'expediente_salud.php') {
+                        echo 'Expedientes consolidados de';
                     } elseif ($current_page === 'inscripciones.php') {
                         echo 'Listado consolidado de';
                     } elseif ($current_page === 'planes.php') {
@@ -1124,6 +1139,8 @@ $sidebar_navbar_version = is_file($sidebar_navbar_css)
                 <?php
                 if ($current_page === 'socios.php') {
                     echo 'Actualizando socios...';
+                } elseif ($current_page === 'expediente_salud.php') {
+                    echo 'Actualizando expedientes...';
                 } elseif ($current_page === 'planes.php') {
                     echo 'Actualizando planes...';
                 } elseif ($current_page === 'asistencias.php') {
@@ -1171,6 +1188,7 @@ $sidebar_navbar_version = is_file($sidebar_navbar_css)
     <?php
     $puede_dashboard = $sidebar_puede('dashboard');
     $puede_socios = $sidebar_puede('socios');
+    $puede_expediente_salud = rol_es_administrativo($sidebar_user_rol_base);
     $puede_inscripciones = $sidebar_puede('inscripciones');
     $puede_planes = $sidebar_puede('planes');
     $puede_asistencias = $sidebar_puede('asistencias');
@@ -1199,6 +1217,7 @@ $sidebar_navbar_version = is_file($sidebar_navbar_css)
     if ($puede_panel_entrenador) {
         $puede_dashboard = false;
         $puede_socios = false;
+        $puede_expediente_salud = false;
         $puede_inscripciones = false;
         $puede_planes = false;
         $puede_asistencias = false;
@@ -1219,7 +1238,11 @@ $sidebar_navbar_version = is_file($sidebar_navbar_css)
         $puede_servicio_plataforma = false;
     }
 
-    $mostrar_grupo_socios = $puede_socios || $puede_inscripciones || $puede_planes || $puede_asistencias;
+    $mostrar_grupo_socios = $puede_socios
+        || $puede_expediente_salud
+        || $puede_inscripciones
+        || $puede_planes
+        || $puede_asistencias;
     $mostrar_grupo_ventas = $puede_ventas || $puede_historial_ventas || $puede_corte_caja;
     $mostrar_grupo_inventario = $puede_inventario_resumen
         || $puede_productos
@@ -1238,7 +1261,11 @@ $sidebar_navbar_version = is_file($sidebar_navbar_css)
         true
     );
     $grupo_ventas_activo = in_array($active_module, ['ventas', 'historial_ventas', 'corte_caja'], true);
-    $grupo_socios_activo = in_array($active_module, ['members', 'inscriptions', 'plans', 'assistance'], true);
+    $grupo_socios_activo = in_array(
+        $active_module,
+        ['members', 'health_records', 'inscriptions', 'plans', 'assistance'],
+        true
+    );
     $grupo_clases_activo = in_array($active_module, ['classes', 'clases_inscriptions'], true);
     $grupo_admin_activo = in_array(
         $active_module,
@@ -1291,6 +1318,18 @@ $sidebar_navbar_version = is_file($sidebar_navbar_css)
                                 <a href="socios.php" class="nav-link <?php echo $active_module === 'members' ? 'active' : ''; ?>">
                                     <i class="fas fa-user-group"></i>
                                     <span class="nav-text">Socios</span>
+                                </a>
+                            </li>
+                        <?php endif; ?>
+                        <?php if ($puede_expediente_salud): ?>
+                            <li>
+                                <a
+                                    href="expediente_salud.php"
+                                    class="nav-link <?php echo $active_module === 'health_records' ? 'active' : ''; ?>"
+                                    <?php echo $active_module === 'health_records' ? 'aria-current="page"' : ''; ?>
+                                >
+                                    <i class="fas fa-heart-pulse"></i>
+                                    <span class="nav-text">Expediente de salud</span>
                                 </a>
                             </li>
                         <?php endif; ?>
