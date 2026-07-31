@@ -203,6 +203,10 @@ $rutasInternasPorModulo = [
     'inscripcion_detalle.php' => 'inscripciones.php',
     'inscripcion_detalle_historial.php' => 'inscripciones.php',
     'ver_documento_inscripcion.php' => 'inscripciones.php',
+
+    // Páginas internas del expediente de salud.
+    // Se validan con el mismo permiso del módulo principal.
+    'expediente_salud_imprimir.php' => 'expediente_salud.php',
 ];
 
 $paginaParaPermisos = $rutasInternasPorModulo[$paginaActual]

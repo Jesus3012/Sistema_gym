@@ -78,6 +78,32 @@ if ($stmt) {
 
 $logo = trim((string) ($expediente['gimnasio_logo'] ?? ''));
 $logoExiste = $logo !== '' && is_file(__DIR__ . DIRECTORY_SEPARATOR . ltrim($logo, '/\\'));
+
+/**
+ * Convierte el valor técnico guardado en la base de datos en una respuesta
+ * entendible para el documento impreso.
+ */
+function expediente_respuesta_impresa(array $respuesta): string
+{
+    $valor = trim((string) ($respuesta['respuesta_texto'] ?? ''));
+    $tipo = trim((string) ($respuesta['tipo_respuesta_snapshot'] ?? ''));
+
+    if ($valor === '') {
+        return 'Sin respuesta';
+    }
+
+    if ($tipo === 'si_no') {
+        if (in_array(strtolower($valor), ['1', 'si', 'sí', 'true'], true)) {
+            return 'Sí';
+        }
+
+        if (in_array(strtolower($valor), ['0', 'no', 'false'], true)) {
+            return 'No';
+        }
+    }
+
+    return $valor;
+}
 ?>
 <!doctype html>
 <html lang="es">
@@ -211,7 +237,7 @@ $logoExiste = $logo !== '' && is_file(__DIR__ . DIRECTORY_SEPARATOR . ltrim($log
         <?php endif; ?>
         <div class="answer <?php echo (int) $respuesta['genera_alerta'] === 1 ? 'alert' : ''; ?>">
             <strong><?php echo expediente_h($respuesta['pregunta_snapshot']); ?></strong>
-            <span><?php echo expediente_h($respuesta['respuesta_texto'] !== '' ? $respuesta['respuesta_texto'] : 'Sin respuesta'); ?></span>
+            <span><?php echo expediente_h(expediente_respuesta_impresa($respuesta)); ?></span>
         </div>
     <?php endforeach; ?>
     <?php if ($seccion !== ''): ?></section><?php endif; ?>
@@ -227,7 +253,6 @@ $logoExiste = $logo !== '' && is_file(__DIR__ . DIRECTORY_SEPARATOR . ltrim($log
             <strong>Aceptado por:</strong> <?php echo expediente_h($expediente['nombre_firmante']); ?><br>
             <strong>Relación con el socio:</strong> <?php echo expediente_h($expediente['parentesco_firmante']); ?><br>
             <strong>Fecha:</strong> <?php echo expediente_h(expediente_formatear_fecha($expediente['fecha_aplicacion'], true)); ?><br>
-            <strong>Registro:</strong> El sistema no almacena una firma manuscrita.
         </div>
         <div class="acceptance-checkmark">✓</div>
     </section>

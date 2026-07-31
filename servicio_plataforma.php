@@ -259,7 +259,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             $proveedor = servicioPlataformaPost(
                 'proveedor_nombre',
-                'GGFit'
+                'RexCoreSolutions'
             );
             $contactoEmail = servicioPlataformaPost('contacto_email');
             $contactoTelefono = servicioPlataformaPost('contacto_telefono');
@@ -732,7 +732,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 [
                     'gimnasio' => $nombreGimnasio,
                     'proveedor' => (string) (
-                        $configuracion['proveedor_nombre'] ?? 'GGFit'
+                        $configuracion['proveedor_nombre'] ?? 'RexCoreSolutions'
                     ),
                     'periodo_inicio' => $fechaInicioRenovacion,
                     'periodo_fin' => $fechaNueva,
@@ -1252,7 +1252,7 @@ $iconoEstado = in_array(
                                             name="proveedor_nombre"
                                             maxlength="120"
                                             required
-                                            value="<?php echo servicioPlataformaEscapar((string) ($configuracion['proveedor_nombre'] ?? 'GGFit')); ?>"
+                                            value="<?php echo servicioPlataformaEscapar((string) ($configuracion['proveedor_nombre'] ?? 'RexCoreSolutions')); ?>"
                                         >
                                     </label>
                                     <label class="service-field">

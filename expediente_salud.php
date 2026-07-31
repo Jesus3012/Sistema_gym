@@ -214,6 +214,26 @@ function expediente_limpiar_repeticion_documento(string $texto): string
  * Sustituye etiquetas fáciles de entender dentro de la carta. También
  * conserva compatibilidad con los marcadores antiguos {{SOCIO}}, etc.
  */
+function expediente_parentesco_para_documento(string $parentesco): string
+{
+    $normalizado = trim($parentesco);
+    $clave = function_exists('mb_strtolower')
+        ? mb_strtolower($normalizado, 'UTF-8')
+        : strtolower($normalizado);
+
+    $mapa = [
+        'socio' => 'socio',
+        'es el socio' => 'socio',
+        'madre/padre/tutor' => 'madre, padre o tutor',
+        'madre, padre o tutor' => 'madre, padre o tutor',
+        'responsable legal' => 'responsable legal',
+        'otro' => 'otro responsable',
+        'otro responsable' => 'otro responsable',
+    ];
+
+    return $mapa[$clave] ?? ($normalizado !== '' ? $normalizado : 'socio');
+}
+
 function expediente_documento_con_datos(string $texto, array $datos): string
 {
     $texto = expediente_limpiar_repeticion_documento($texto);
@@ -228,7 +248,7 @@ function expediente_documento_con_datos(string $texto, array $datos): string
         '[SUCURSAL]' => trim((string) ($datos['sucursal'] ?? 'Sucursal')),
         '[ADMINISTRADOR]' => trim((string) ($datos['administrador'] ?? 'Administrador')),
         '[PERSONA QUE ACEPTA]' => trim((string) ($datos['firmante'] ?? $datos['socio'] ?? 'Socio')),
-        '[RELACIÓN CON EL SOCIO]' => trim((string) ($datos['parentesco'] ?? 'Socio')),
+        '[RELACIÓN CON EL SOCIO]' => expediente_parentesco_para_documento((string) ($datos['parentesco'] ?? 'Socio')),
     ];
 
     return trim(str_ireplace(
@@ -298,7 +318,7 @@ if ($tab === 'configuracion' && $preguntasTodas !== []) {
     }
 }
 
-$siguienteOrdenPregunta = expediente_siguiente_orden($conn);
+$siguienteOrdenPregunta = max(1, count($preguntasTodas) + 1);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $accion = trim((string) ($_POST['accion'] ?? ''));
@@ -518,7 +538,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     throw $e;
                 }
 
-                expediente_redirigir('expediente_salud.php?tab=configuracion&vista=' . ($vistaGlobal ? 'global' : 'sucursal') . '&tipo=success&mensaje=' . rawurlencode($textoExito . ' El orden quedó actualizado automáticamente.'));
+                expediente_redirigir('expediente_salud.php?tab=configuracion&vista=' . ($vistaGlobal ? 'global' : 'sucursal') . '&tipo=success&mensaje=' . rawurlencode($textoExito . ' El orden quedó actualizado automáticamente.') . '#preguntasGuardadas');
             }
 
             if ($accion === 'cambiar_estado_pregunta') {
@@ -553,7 +573,42 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     throw $e;
                 }
 
-                expediente_redirigir('expediente_salud.php?tab=configuracion&vista=' . ($vistaGlobal ? 'global' : 'sucursal') . '&tipo=success&mensaje=' . rawurlencode('Estado de la pregunta actualizado.'));
+                expediente_redirigir('expediente_salud.php?tab=configuracion&vista=' . ($vistaGlobal ? 'global' : 'sucursal') . '&tipo=success&mensaje=' . rawurlencode('Estado de la pregunta actualizado.') . '#preguntasGuardadas');
+            }
+
+            if ($accion === 'eliminar_pregunta') {
+                $preguntaId = (int) ($_POST['pregunta_id'] ?? 0);
+
+                if ($preguntaId <= 0) {
+                    throw new RuntimeException('No fue posible identificar la pregunta que deseas eliminar.');
+                }
+
+                $conn->begin_transaction();
+
+                try {
+                    $stmt = $conn->prepare("DELETE FROM preguntas_expediente_salud WHERE id = ? LIMIT 1");
+                    if (!$stmt) {
+                        throw new RuntimeException('No fue posible preparar la eliminación de la pregunta.');
+                    }
+
+                    $stmt->bind_param('i', $preguntaId);
+
+                    if (!$stmt->execute()) {
+                        $detalle = $stmt->error;
+                        $stmt->close();
+                        throw new RuntimeException('No fue posible eliminar la pregunta: ' . $detalle);
+                    }
+
+                    $stmt->close();
+                    expediente_reordenar_preguntas($conn);
+                    expediente_incrementar_version($conn, $usuarioId);
+                    $conn->commit();
+                } catch (Throwable $e) {
+                    $conn->rollback();
+                    throw $e;
+                }
+
+                expediente_redirigir('expediente_salud.php?tab=configuracion&vista=' . ($vistaGlobal ? 'global' : 'sucursal') . '&tipo=success&mensaje=' . rawurlencode('Pregunta eliminada correctamente.') . '#preguntasGuardadas');
             }
 
             if ($accion === 'guardar_expediente') {
@@ -802,6 +857,53 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $clienteSeleccionadoId = (int) ($_GET['cliente_id'] ?? $_POST['cliente_id'] ?? 0);
 $clienteSeleccionado = $clienteSeleccionadoId > 0 ? expediente_cliente($conn, $clienteSeleccionadoId) : null;
+$ultimoExpedienteCliente = null;
+$respuestasPreviasCliente = [];
+
+if ($clienteSeleccionado) {
+    $stmtUltimoExpediente = $conn->prepare(
+        "SELECT id, fecha_aplicacion, vigente_hasta, total_alertas,
+                estado_seguimiento, observaciones_admin,
+                acepta_responsabilidad, nombre_firmante, parentesco_firmante
+         FROM expedientes_salud
+         WHERE cliente_id = ?
+         ORDER BY fecha_aplicacion DESC, id DESC
+         LIMIT 1"
+    );
+
+    if ($stmtUltimoExpediente) {
+        $stmtUltimoExpediente->bind_param('i', $clienteSeleccionadoId);
+        $stmtUltimoExpediente->execute();
+        $resultadoUltimoExpediente = $stmtUltimoExpediente->get_result();
+        $ultimoExpedienteCliente = $resultadoUltimoExpediente
+            ? $resultadoUltimoExpediente->fetch_assoc()
+            : null;
+        $stmtUltimoExpediente->close();
+    }
+
+    if ($ultimoExpedienteCliente) {
+        $ultimoExpedienteId = (int) ($ultimoExpedienteCliente['id'] ?? 0);
+        $stmtRespuestasPrevias = $conn->prepare(
+            "SELECT pregunta_id, respuesta_texto
+             FROM expedientes_salud_respuestas
+             WHERE expediente_id = ?"
+        );
+
+        if ($stmtRespuestasPrevias) {
+            $stmtRespuestasPrevias->bind_param('i', $ultimoExpedienteId);
+            $stmtRespuestasPrevias->execute();
+            $resultadoRespuestasPrevias = $stmtRespuestasPrevias->get_result();
+
+            while ($resultadoRespuestasPrevias && $filaRespuestaPrevia = $resultadoRespuestasPrevias->fetch_assoc()) {
+                $respuestasPreviasCliente[(int) $filaRespuestaPrevia['pregunta_id']] =
+                    (string) ($filaRespuestaPrevia['respuesta_texto'] ?? '');
+            }
+
+            $stmtRespuestasPrevias->close();
+        }
+    }
+}
+
 $expedienteVerId = (int) ($_GET['ver'] ?? 0);
 $expedienteDetalle = null;
 $respuestasDetalle = [];
@@ -990,6 +1092,16 @@ if ($stmtStats) {
     $stmtStats->close();
 }
 
+$paginaPreguntas = max(1, (int) ($_GET['pagina_preguntas'] ?? 1));
+$porPaginaPreguntas = 8;
+$totalPreguntasRegistradas = count($preguntasTodas);
+$totalPaginasPreguntas = max(1, (int) ceil($totalPreguntasRegistradas / $porPaginaPreguntas));
+if ($paginaPreguntas > $totalPaginasPreguntas) {
+    $paginaPreguntas = $totalPaginasPreguntas;
+}
+$offsetPreguntas = ($paginaPreguntas - 1) * $porPaginaPreguntas;
+$preguntasPagina = array_slice($preguntasTodas, $offsetPreguntas, $porPaginaPreguntas);
+
 $preguntaEditarId = (int) ($_GET['editar_pregunta'] ?? 0);
 $preguntaEditar = null;
 foreach ($preguntasTodas as $preguntaItem) {
@@ -1011,6 +1123,21 @@ function expediente_url_paginacion(int $paginaObjetivo, string $busqueda, bool $
     }
     return 'expediente_salud.php?' . http_build_query($params);
 }
+
+function expediente_url_paginacion_preguntas(int $paginaObjetivo, bool $vistaGlobal, int $preguntaEditarId = 0): string
+{
+    $params = [
+        'tab' => 'configuracion',
+        'pagina_preguntas' => $paginaObjetivo,
+        'vista' => $vistaGlobal ? 'global' : 'sucursal',
+    ];
+
+    if ($preguntaEditarId > 0) {
+        $params['editar_pregunta'] = $preguntaEditarId;
+    }
+
+    return 'expediente_salud.php?' . http_build_query($params) . '#preguntasGuardadas';
+}
 ?>
 <!doctype html>
 <html lang="es">
@@ -1020,7 +1147,7 @@ function expediente_url_paginacion(int $paginaObjetivo, string $busqueda, bool $
     <title>Expediente de salud</title>
     <link rel="preconnect" href="https://cdnjs.cloudflare.com">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css">
-    <link rel="stylesheet" href="css/expediente_salud.css?v=1.2.0">
+    <link rel="stylesheet" href="css/expediente_salud.css?v=1.3.0">
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 </head>
 <body>
@@ -1147,7 +1274,7 @@ function expediente_url_paginacion(int $paginaObjetivo, string $busqueda, bool $
                     <div>
                         <span class="health-kicker">Aceptación registrada</span>
                         <h3><?php echo expediente_h($expedienteDetalle['documento_titulo_snapshot']); ?></h3>
-                        <p>Aceptado por: <strong><?php echo expediente_h($expedienteDetalle['nombre_firmante']); ?></strong> · <?php echo expediente_h($expedienteDetalle['parentesco_firmante']); ?></p>
+                        <p>Aceptado por: <strong><?php echo expediente_h($expedienteDetalle['nombre_firmante']); ?></strong> · <?php echo expediente_h(expediente_parentesco_para_documento((string) $expedienteDetalle['parentesco_firmante'])); ?></p>
                     </div>
                     <span class="health-acceptance-badge"><i class="fa-solid fa-circle-check"></i> Documento aceptado</span>
                 </div>
@@ -1244,8 +1371,17 @@ function expediente_url_paginacion(int $paginaObjetivo, string $busqueda, bool $
                     <?php foreach ($socios as $socio): ?>
                         <a href="expediente_salud.php?tab=nuevo&cliente_id=<?php echo (int) $socio['id']; ?>&vista=<?php echo $vistaGlobal ? 'global' : 'sucursal'; ?>">
                             <span class="health-member-avatar small"><?php echo expediente_h(strtoupper(substr((string) $socio['nombre'], 0, 1) . substr((string) $socio['apellido'], 0, 1))); ?></span>
-                            <span><strong><?php echo expediente_h(trim($socio['nombre'] . ' ' . $socio['apellido'])); ?></strong><small><?php echo expediente_h($socio['telefono'] ?: 'Sin teléfono'); ?> · <?php echo expediente_h($socio['sucursal_registro'] ?? 'Sin sucursal'); ?></small></span>
-                            <i class="fa-solid fa-chevron-right"></i>
+                            <span class="health-select-member-copy">
+                                <strong><?php echo expediente_h(trim($socio['nombre'] . ' ' . $socio['apellido'])); ?></strong>
+                                <small><?php echo expediente_h($socio['telefono'] ?: 'Sin teléfono'); ?> · <?php echo expediente_h($socio['sucursal_registro'] ?? 'Sin sucursal'); ?></small>
+                                <?php if (!empty($socio['expediente_id'])): ?>
+                                    <em class="health-select-saved-status">
+                                        <i class="fa-solid fa-circle-check"></i>
+                                        Cuestionario aceptado el <?php echo expediente_h(expediente_formatear_fecha($socio['fecha_aplicacion'])); ?>
+                                    </em>
+                                <?php endif; ?>
+                            </span>
+                            <span class="health-select-arrow"><i class="fa-solid fa-chevron-right"></i></span>
                         </a>
                     <?php endforeach; ?>
                 </div>
@@ -1258,11 +1394,33 @@ function expediente_url_paginacion(int $paginaObjetivo, string $busqueda, bool $
 
                 <section class="health-selected-member">
                     <div class="health-member-avatar large"><?php echo expediente_h(strtoupper(substr((string) $clienteSeleccionado['nombre'], 0, 1) . substr((string) $clienteSeleccionado['apellido'], 0, 1))); ?></div>
-                    <div><span class="health-kicker">Socio seleccionado</span><h2><?php echo expediente_h(expediente_nombre_cliente($clienteSeleccionado)); ?></h2><p><?php echo expediente_h($clienteSeleccionado['telefono'] ?: 'Sin teléfono'); ?> · <?php echo expediente_h($clienteSeleccionado['sucursal_registro'] ?: 'Sin sucursal'); ?></p></div>
+                    <div class="health-selected-member-copy">
+                        <span class="health-kicker">Socio seleccionado</span>
+                        <h2><?php echo expediente_h(expediente_nombre_cliente($clienteSeleccionado)); ?></h2>
+                        <p><?php echo expediente_h($clienteSeleccionado['telefono'] ?: 'Sin teléfono'); ?> · <?php echo expediente_h($clienteSeleccionado['sucursal_registro'] ?: 'Sin sucursal'); ?></p>
+                    </div>
+                    <?php if ($ultimoExpedienteCliente): ?>
+                        <span class="health-member-accepted-badge"><i class="fa-solid fa-circle-check"></i> Ya aceptó anteriormente</span>
+                    <?php endif; ?>
                     <a class="health-secondary-button" href="expediente_salud.php?tab=nuevo&vista=<?php echo $vistaGlobal ? 'global' : 'sucursal'; ?>"><i class="fa-solid fa-repeat"></i> Cambiar socio</a>
                 </section>
 
-                <section class="health-panel compact">
+                <?php if ($ultimoExpedienteCliente): ?>
+                    <section class="health-previous-record-banner">
+                        <div class="health-previous-record-icon"><i class="fa-solid fa-clock-rotate-left"></i></div>
+                        <div class="health-previous-record-copy">
+                            <span class="health-kicker">Cuestionario anterior encontrado</span>
+                            <strong>Las respuestas y la aceptación anterior ya están cargadas.</strong>
+                            <p>Revisa cada respuesta, actualiza únicamente lo que haya cambiado y confirma nuevamente antes de guardar.</p>
+                        </div>
+                        <div class="health-previous-record-meta">
+                            <span><i class="fa-solid fa-calendar-check"></i> <?php echo expediente_h(expediente_formatear_fecha($ultimoExpedienteCliente['fecha_aplicacion'], true)); ?></span>
+                            <span><i class="fa-solid fa-file-circle-check"></i> Documento aceptado</span>
+                        </div>
+                    </section>
+                <?php endif; ?>
+
+                <section class="health-panel compact health-questionnaire-intro">
                     <div class="health-panel-heading"><div><span class="health-kicker">Cuestionario vigente</span><h2><?php echo expediente_h($configuracion['nombre_cuestionario'] ?? 'Cuestionario médico'); ?></h2><p><?php echo expediente_h($configuracion['introduccion'] ?? ''); ?></p></div></div>
                 </section>
 
@@ -1273,12 +1431,13 @@ function expediente_url_paginacion(int $paginaObjetivo, string $busqueda, bool $
                         <?php if ($indice > 0): ?></div></section><?php endif; ?>
                         <section class="health-question-section"><div class="health-question-section-heading"><span><?php echo $indice + 1; ?></span><div><h2><?php echo expediente_h($seccionActual); ?></h2><p>Registra exactamente la respuesta proporcionada por el socio.</p></div></div><div class="health-question-list">
                     <?php endif; ?>
-                    <?php $campo = 'pregunta_' . (int) $pregunta['id']; $valorPrevio = (string) ($_POST[$campo] ?? ''); ?>
-                    <article class="health-question-card">
+                    <?php $campo = 'pregunta_' . (int) $pregunta['id']; $preguntaIdActual = (int) $pregunta['id']; $tieneRespuestaPrevia = array_key_exists($preguntaIdActual, $respuestasPreviasCliente); $valorPrevio = (string) ($_POST[$campo] ?? ($respuestasPreviasCliente[$preguntaIdActual] ?? '')); ?>
+                    <article class="health-question-card <?php echo $tieneRespuestaPrevia ? 'is-prefilled' : ''; ?>">
                         <label for="<?php echo expediente_h($campo); ?>">
                             <?php echo expediente_h($pregunta['pregunta']); ?>
                             <?php if ((int) $pregunta['obligatoria'] === 1): ?><span class="required">Obligatoria</span><?php endif; ?>
                             <?php if ($pregunta['dispara_alerta'] !== 'ninguna'): ?><span class="review"><i class="fa-solid fa-triangle-exclamation"></i> Puede requerir revisión</span><?php endif; ?>
+                            <?php if ($tieneRespuestaPrevia): ?><span class="health-saved-answer"><i class="fa-solid fa-clock-rotate-left"></i> Respuesta anterior cargada</span><?php endif; ?>
                         </label>
                         <?php if ((string) $pregunta['ayuda'] !== ''): ?><p><?php echo expediente_h($pregunta['ayuda']); ?></p><?php endif; ?>
 
@@ -1300,35 +1459,62 @@ function expediente_url_paginacion(int $paginaObjetivo, string $busqueda, bool $
                 <?php endforeach; ?>
                 <?php if ($preguntasActivas !== []): ?></div></section><?php endif; ?>
 
+                <?php
+                $nombreAceptanteActual = (string) (
+                    $_POST['nombre_firmante']
+                    ?? ($ultimoExpedienteCliente['nombre_firmante'] ?? expediente_nombre_cliente($clienteSeleccionado))
+                );
+                $parentescoAceptanteActual = (string) (
+                    $_POST['parentesco_firmante']
+                    ?? ($ultimoExpedienteCliente['parentesco_firmante'] ?? 'Socio')
+                );
+                $aceptacionYaMarcada = isset($_POST['acepta_responsabilidad'])
+                    || ((int) ($ultimoExpedienteCliente['acepta_responsabilidad'] ?? 0) === 1);
+                $estadoSeguimientoActual = (string) (
+                    $_POST['estado_seguimiento']
+                    ?? ($ultimoExpedienteCliente['estado_seguimiento'] ?? 'sin_observaciones')
+                );
+                ?>
+
                 <section class="health-question-section responsibility">
                     <div class="health-question-section-heading"><span><i class="fa-solid fa-file-circle-check"></i></span><div><h2><?php echo expediente_h($configuracion['documento_titulo'] ?? 'Documento de responsabilidad'); ?></h2><p>Lee el documento al socio y registra únicamente su aceptación. El sistema no almacena una firma manuscrita.</p></div></div>
                     <div
                         class="health-document-preview"
                         id="healthDocumentPreview"
                         data-template="<?php echo expediente_h(expediente_limpiar_repeticion_documento((string) ($configuracion['documento_texto'] ?? ''))); ?>"
-                    ><?php echo nl2br(expediente_h(expediente_documento_con_datos((string) ($configuracion['documento_texto'] ?? ''), ['gimnasio' => $gimnasioNombreSistema, 'socio' => expediente_nombre_cliente($clienteSeleccionado), 'fecha' => date('d/m/Y'), 'sucursal' => $sucursalNombre, 'administrador' => $usuarioNombre, 'firmante' => (string) ($_POST['nombre_firmante'] ?? expediente_nombre_cliente($clienteSeleccionado)), 'parentesco' => (string) ($_POST['parentesco_firmante'] ?? 'Socio')]))); ?></div>
+                    ><?php echo nl2br(expediente_h(expediente_documento_con_datos((string) ($configuracion['documento_texto'] ?? ''), ['gimnasio' => $gimnasioNombreSistema, 'socio' => expediente_nombre_cliente($clienteSeleccionado), 'fecha' => date('d/m/Y'), 'sucursal' => $sucursalNombre, 'administrador' => $usuarioNombre, 'firmante' => $nombreAceptanteActual, 'parentesco' => $parentescoAceptanteActual]))); ?></div>
 
-                    <div class="health-acceptance-grid">
-                        <label class="health-field"><span>Nombre de quien acepta el documento</span><input id="healthAcceptingPerson" type="text" name="nombre_firmante" value="<?php echo expediente_h((string) ($_POST['nombre_firmante'] ?? expediente_nombre_cliente($clienteSeleccionado))); ?>" required></label>
-                        <label class="health-field"><span>Relación con el socio</span><select id="healthAcceptingRelation" name="parentesco_firmante"><option value="Socio">Es el socio</option><option value="Madre/Padre/Tutor">Madre, padre o tutor</option><option value="Responsable legal">Responsable legal</option><option value="Otro">Otro responsable</option></select></label>
-                    </div>
+                    <div class="health-acceptance-panel">
+                        <div class="health-acceptance-panel-heading">
+                            <div>
+                                <span class="health-kicker">Confirmación de aceptación</span>
+                                <h3>¿Quién acepta el documento?</h3>
+                                <p>Estos datos quedarán vinculados al contenido exacto mostrado arriba.</p>
+                            </div>
+                            <?php if ($ultimoExpedienteCliente && (int) ($ultimoExpedienteCliente['acepta_responsabilidad'] ?? 0) === 1): ?>
+                                <span class="health-previous-acceptance-badge"><i class="fa-solid fa-check"></i> Aceptado anteriormente</span>
+                            <?php endif; ?>
+                        </div>
 
-                    <div class="health-acceptance-info">
-                        <i class="fa-solid fa-shield-halved"></i>
-                        <div>
-                            <strong>Sin almacenamiento de firma</strong>
-                            <span>Se guardará el nombre de quien aceptó, la fecha, el socio, la sucursal y el administrador que realizó el registro.</span>
+                        <div class="health-acceptance-grid">
+                            <label class="health-field"><span>Nombre de quien acepta el documento</span><input id="healthAcceptingPerson" type="text" name="nombre_firmante" value="<?php echo expediente_h($nombreAceptanteActual); ?>" required></label>
+                            <label class="health-field"><span>Relación con el socio</span><select id="healthAcceptingRelation" name="parentesco_firmante"><option value="Socio" data-document-label="socio" <?php echo $parentescoAceptanteActual === 'Socio' ? 'selected' : ''; ?>>Es el socio</option><option value="Madre/Padre/Tutor" data-document-label="madre, padre o tutor" <?php echo $parentescoAceptanteActual === 'Madre/Padre/Tutor' ? 'selected' : ''; ?>>Madre, padre o tutor</option><option value="Responsable legal" data-document-label="responsable legal" <?php echo $parentescoAceptanteActual === 'Responsable legal' ? 'selected' : ''; ?>>Responsable legal</option><option value="Otro" data-document-label="otro responsable" <?php echo $parentescoAceptanteActual === 'Otro' ? 'selected' : ''; ?>>Otro responsable</option></select></label>
+                        </div>
+
+                        <label class="health-acceptance-check prominent"><input type="checkbox" name="acepta_responsabilidad" value="1" required <?php echo $aceptacionYaMarcada ? 'checked' : ''; ?>><span><strong>Confirmo que el socio o responsable leyó y aceptó el documento.</strong><small><?php echo $ultimoExpedienteCliente ? 'La casilla se cargó con la aceptación anterior. Verifica el contenido y confirma nuevamente antes de guardar.' : 'Esta confirmación quedará vinculada al expediente y al contenido exacto mostrado en este momento.'; ?></small></span><i class="fa-solid fa-circle-check health-acceptance-check-icon"></i></label>
+
+                        <div class="health-acceptance-info compact">
+                            <i class="fa-solid fa-shield-halved"></i>
+                            <div><strong>Sin almacenamiento de firma manuscrita</strong><span>Solo se guardará el nombre, la relación con el socio, la fecha, la sucursal y el administrador.</span></div>
                         </div>
                     </div>
-
-                    <label class="health-acceptance-check"><input type="checkbox" name="acepta_responsabilidad" value="1" required <?php echo isset($_POST['acepta_responsabilidad']) ? 'checked' : ''; ?>><span><strong>Confirmo que el socio o responsable leyó y aceptó el documento.</strong><small>Esta confirmación quedará vinculada al expediente y al contenido exacto mostrado en este momento.</small></span></label>
                 </section>
 
                 <section class="health-panel">
                     <div class="health-panel-heading"><div><h2>Seguimiento administrativo</h2><p>Este resultado no sustituye una valoración médica; únicamente indica si el expediente necesita revisión o documentos adicionales.</p></div></div>
                     <div class="health-followup-grid">
-                        <label class="health-field"><span>Estado del expediente</span><select name="estado_seguimiento"><option value="sin_observaciones">Sin observaciones</option><option value="requiere_revision">Requiere revisión</option><option value="documentacion_pendiente">Documentación pendiente</option></select></label>
-                        <label class="health-field full"><span>Observaciones internas</span><textarea name="observaciones_admin" rows="4" placeholder="Ejemplo: solicitar valoración médica antes de iniciar entrenamiento intenso."><?php echo expediente_h((string) ($_POST['observaciones_admin'] ?? '')); ?></textarea></label>
+                        <label class="health-field"><span>Estado del expediente</span><select name="estado_seguimiento"><option value="sin_observaciones" <?php echo $estadoSeguimientoActual === 'sin_observaciones' ? 'selected' : ''; ?>>Sin observaciones</option><option value="requiere_revision" <?php echo $estadoSeguimientoActual === 'requiere_revision' ? 'selected' : ''; ?>>Requiere revisión</option><option value="documentacion_pendiente" <?php echo $estadoSeguimientoActual === 'documentacion_pendiente' ? 'selected' : ''; ?>>Documentación pendiente</option></select></label>
+                        <label class="health-field full"><span>Observaciones internas</span><textarea name="observaciones_admin" rows="4" placeholder="Ejemplo: solicitar valoración médica antes de iniciar entrenamiento intenso."><?php echo expediente_h((string) ($_POST['observaciones_admin'] ?? ($ultimoExpedienteCliente['observaciones_admin'] ?? ''))); ?></textarea></label>
                     </div>
                 </section>
 
@@ -1441,7 +1627,7 @@ function expediente_url_paginacion(int $paginaObjetivo, string $busqueda, bool $
 
                     <div class="health-panel-heading">
                         <div>
-                            <span class="health-kicker"><?php echo $preguntaEditar ? 'Editando la pregunta ' . (int) $preguntaEditar['orden'] : 'Nueva pregunta'; ?></span>
+                            <span class="health-kicker"><?php echo $preguntaEditar ? 'Editando la pregunta #' . (int) $preguntaEditar['orden'] : 'Nueva pregunta'; ?></span>
                             <h2><?php echo $preguntaEditar ? 'Actualizar pregunta' : 'Agregar pregunta'; ?></h2>
                             <p>Completa la pregunta y selecciona cómo deberá responderse.</p>
                         </div>
@@ -1450,18 +1636,20 @@ function expediente_url_paginacion(int $paginaObjetivo, string $busqueda, bool $
                         <?php endif; ?>
                     </div>
 
+                    <div class="health-question-editor-topnote"><i class="fa-solid fa-circle-info"></i><span>Primero escribe la pregunta, después define cómo se responderá y finalmente guarda. El sistema acomodará el orden automáticamente.</span></div>
+
                     <div class="health-question-editor-grid">
                         <label class="health-field health-question-main-field">
                             <span>Pregunta</span>
                             <textarea name="pregunta" rows="3" required placeholder="Ejemplo: ¿Actualmente tiene alguna lesión?"><?php echo expediente_h($preguntaEditar['pregunta'] ?? ''); ?></textarea>
                         </label>
 
-                        <label class="health-field">
+                        <label class="health-field health-question-section-field">
                             <span>Sección del cuestionario</span>
                             <input type="text" name="seccion" value="<?php echo expediente_h($preguntaEditar['seccion'] ?? 'Antecedentes generales'); ?>" required>
                         </label>
 
-                        <label class="health-field">
+                        <label class="health-field health-question-type-field">
                             <span>Tipo de respuesta</span>
                             <select name="tipo_respuesta" id="questionType">
                                 <option value="si_no" <?php echo ($preguntaEditar['tipo_respuesta'] ?? '') === 'si_no' ? 'selected' : ''; ?>>Sí o No</option>
@@ -1472,7 +1660,7 @@ function expediente_url_paginacion(int $paginaObjetivo, string $busqueda, bool $
                             </select>
                         </label>
 
-                        <label class="health-field">
+                        <label class="health-field health-question-alert-field">
                             <span>Respuesta que requiere revisión</span>
                             <select name="dispara_alerta">
                                 <option value="ninguna">Ninguna</option>
@@ -1523,25 +1711,49 @@ function expediente_url_paginacion(int $paginaObjetivo, string $busqueda, bool $
             </div>
         </section>
 
-        <section class="health-panel health-saved-questions-panel">
+        <section class="health-panel health-saved-questions-panel" id="preguntasGuardadas">
             <div class="health-panel-heading">
                 <div>
                     <h2>Preguntas guardadas</h2>
-                    <p><?php echo count($preguntasActivas); ?> activas de <?php echo count($preguntasTodas); ?> registradas. El número indica el orden en el cuestionario.</p>
+                    <p><?php echo count($preguntasActivas); ?> activas de <?php echo count($preguntasTodas); ?> registradas. Se muestran <?php echo count($preguntasPagina); ?> por página y el número indica el orden en el cuestionario.</p>
                 </div>
             </div>
             <div class="health-question-admin-list">
-                <?php foreach ($preguntasTodas as $pregunta): ?>
+                <?php foreach ($preguntasPagina as $pregunta): ?>
                     <article class="<?php echo $pregunta['estado'] === 'inactiva' ? 'inactive' : ''; ?>">
                         <div class="health-question-order" title="Orden de la pregunta"><?php echo (int) $pregunta['orden']; ?></div>
-                        <div class="health-question-admin-copy"><span><?php echo expediente_h($pregunta['seccion']); ?></span><strong><?php echo expediente_h($pregunta['pregunta']); ?></strong><small><?php echo expediente_h(str_replace('_', ' / ', $pregunta['tipo_respuesta'])); ?> · <?php echo (int) $pregunta['obligatoria'] === 1 ? 'Obligatoria' : 'Opcional'; ?><?php echo $pregunta['dispara_alerta'] !== 'ninguna' ? ' · Requiere revisión según respuesta' : ''; ?></small></div>
+                        <div class="health-question-admin-copy">
+                            <span><?php echo expediente_h($pregunta['seccion']); ?></span>
+                            <strong><?php echo expediente_h($pregunta['pregunta']); ?></strong>
+                            <small><?php echo expediente_h(str_replace('_', ' / ', $pregunta['tipo_respuesta'])); ?> · <?php echo (int) $pregunta['obligatoria'] === 1 ? 'Obligatoria' : 'Opcional'; ?><?php echo $pregunta['dispara_alerta'] !== 'ninguna' ? ' · Requiere revisión según respuesta' : ''; ?></small>
+                        </div>
                         <div class="health-question-admin-actions">
-                            <a class="health-icon-button" href="expediente_salud.php?tab=configuracion&editar_pregunta=<?php echo (int) $pregunta['id']; ?>&vista=<?php echo $vistaGlobal ? 'global' : 'sucursal'; ?>" title="Editar pregunta"><i class="fa-solid fa-pen"></i></a>
-                            <form method="post"><input type="hidden" name="accion" value="cambiar_estado_pregunta"><input type="hidden" name="csrf" value="<?php echo expediente_h($csrf); ?>"><input type="hidden" name="pregunta_id" value="<?php echo (int) $pregunta['id']; ?>"><input type="hidden" name="nuevo_estado" value="<?php echo $pregunta['estado'] === 'activa' ? 'inactiva' : 'activa'; ?>"><button class="health-icon-button" type="submit" title="<?php echo $pregunta['estado'] === 'activa' ? 'Ocultar pregunta' : 'Mostrar pregunta'; ?>"><i class="fa-solid <?php echo $pregunta['estado'] === 'activa' ? 'fa-eye-slash' : 'fa-eye'; ?>"></i></button></form>
+                            <a class="health-icon-button" href="expediente_salud.php?tab=configuracion&editar_pregunta=<?php echo (int) $pregunta['id']; ?>&pagina_preguntas=<?php echo (int) $paginaPreguntas; ?>&vista=<?php echo $vistaGlobal ? 'global' : 'sucursal'; ?>" title="Editar pregunta"><i class="fa-solid fa-pen"></i></a>
+                            <form method="post">
+                                <input type="hidden" name="accion" value="cambiar_estado_pregunta">
+                                <input type="hidden" name="csrf" value="<?php echo expediente_h($csrf); ?>">
+                                <input type="hidden" name="pregunta_id" value="<?php echo (int) $pregunta['id']; ?>">
+                                <input type="hidden" name="nuevo_estado" value="<?php echo $pregunta['estado'] === 'activa' ? 'inactiva' : 'activa'; ?>">
+                                <button class="health-icon-button" type="submit" title="<?php echo $pregunta['estado'] === 'activa' ? 'Ocultar pregunta' : 'Mostrar pregunta'; ?>"><i class="fa-solid <?php echo $pregunta['estado'] === 'activa' ? 'fa-eye-slash' : 'fa-eye'; ?>"></i></button>
+                            </form>
+                            <form method="post" onsubmit="return confirm('¿Deseas eliminar esta pregunta? Esta acción no se puede deshacer.');">
+                                <input type="hidden" name="accion" value="eliminar_pregunta">
+                                <input type="hidden" name="csrf" value="<?php echo expediente_h($csrf); ?>">
+                                <input type="hidden" name="pregunta_id" value="<?php echo (int) $pregunta['id']; ?>">
+                                <button class="health-icon-button danger" type="submit" title="Eliminar pregunta"><i class="fa-solid fa-trash"></i></button>
+                            </form>
                         </div>
                     </article>
                 <?php endforeach; ?>
             </div>
+
+            <?php if ($totalPaginasPreguntas > 1): ?>
+                <nav class="health-pagination health-pagination-questions" aria-label="Paginación de preguntas">
+                    <a class="<?php echo $paginaPreguntas <= 1 ? 'disabled' : ''; ?>" href="<?php echo $paginaPreguntas <= 1 ? '#' : expediente_h(expediente_url_paginacion_preguntas($paginaPreguntas - 1, $vistaGlobal, $preguntaEditarId)); ?>"><i class="fa-solid fa-chevron-left"></i></a>
+                    <span>Página <?php echo $paginaPreguntas; ?> de <?php echo $totalPaginasPreguntas; ?></span>
+                    <a class="<?php echo $paginaPreguntas >= $totalPaginasPreguntas ? 'disabled' : ''; ?>" href="<?php echo $paginaPreguntas >= $totalPaginasPreguntas ? '#' : expediente_h(expediente_url_paginacion_preguntas($paginaPreguntas + 1, $vistaGlobal, $preguntaEditarId)); ?>"><i class="fa-solid fa-chevron-right"></i></a>
+                </nav>
+            <?php endif; ?>
         </section>
     <?php endif; ?>
 </main>
@@ -1617,7 +1829,7 @@ function expediente_url_paginacion(int $paginaObjetivo, string $busqueda, bool $
         sucursal: <?php echo json_encode($sucursalNombre !== '' ? $sucursalNombre : 'Sucursal principal', JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT); ?>,
         administrador: <?php echo json_encode($usuarioNombre, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT); ?>,
         firmante: 'Juan Pérez López',
-        parentesco: 'Socio'
+        parentesco: 'socio'
     };
 
     function updateDocumentExamplePreview() {
@@ -1707,14 +1919,18 @@ Declaro que la información proporcionada es verdadera y acepto cumplir las regl
             sucursal: <?php echo json_encode($sucursalNombre, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT); ?>,
             administrador: <?php echo json_encode($usuarioNombre, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT); ?>,
             firmante: '',
-            parentesco: 'Socio'
+            parentesco: 'socio'
         };
 
         function updateAcceptancePreview() {
             realData.firmante = acceptingPerson ? acceptingPerson.value.trim() : realData.socio;
-            realData.parentesco = acceptingRelation
-                ? acceptingRelation.options[acceptingRelation.selectedIndex].text
-                : 'Socio';
+            if (acceptingRelation) {
+                const selectedRelation = acceptingRelation.options[acceptingRelation.selectedIndex];
+                realData.parentesco = selectedRelation.dataset.documentLabel
+                    || selectedRelation.value.toLowerCase();
+            } else {
+                realData.parentesco = 'socio';
+            }
             acceptancePreview.textContent = replaceDocumentData(
                 acceptancePreview.getAttribute('data-template') || '',
                 realData
