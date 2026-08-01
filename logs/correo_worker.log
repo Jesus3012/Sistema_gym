@@ -1,0 +1,7 @@
+[2026-07-31 14:01:57] {"id":5,"tipo":"expediente_invitacion","estado":"procesando","enviado":false,"error":""}
+[2026-07-31 14:12:26] {"id":6,"tipo":"expediente_invitacion","estado":"enviado","enviado":true,"error":""}
+[2026-07-31 14:18:30] {"id":7,"tipo":"inscripcion_renovacion","estado":"enviado","enviado":true,"error":""}
+[2026-07-31 14:23:28] {"id":8,"tipo":"inscripcion_renovacion","estado":"enviado","enviado":true,"error":""}
+[2026-07-31 14:25:55] {"id":9,"tipo":"expediente_invitacion","estado":"enviado","enviado":true,"error":""}
+[2026-07-31 15:03:14] {"id":10,"tipo":"expediente_invitacion","estado":"enviado","enviado":true,"error":""}
+[2026-07-31 15:04:21] {"id":11,"tipo":"expediente_completado","estado":"enviado","enviado":true,"error":""}

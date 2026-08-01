@@ -15,6 +15,9 @@ require_once __DIR__ . '/includes/sucursal_context.php';
 require_once __DIR__ . '/includes/qr_helper.php'; // Incluir el helper de QR
 require_once __DIR__ . '/includes/correo_inscripciones.php'; // Correos de bienvenida y renovación
 require_once __DIR__ . '/includes/documentos_inscripciones.php'; // PDF persistente por inscripción y renovación
+require_once __DIR__ . '/includes/expediente_salud_invitaciones.php'; // Enlaces seguros del cuestionario médico
+require_once __DIR__ . '/includes/correo_expediente_salud.php'; // Invitación y copia PDF del expediente
+require_once __DIR__ . '/includes/correo_cola.php'; // Envío en segundo plano, sin bloquear el alta
 require_once __DIR__ . '/includes/mercadopago_inscripciones.php'; // Validación y vínculo de pagos Point
 
 
@@ -127,6 +130,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
             $apellido = trim($_POST['apellido']);
             $telefono = trim((string) ($_POST['telefono'] ?? ''));
             $email = trim((string) ($_POST['email'] ?? ''));
+            $solicitar_cuestionario_salud = isset($_POST['solicitar_cuestionario_salud']);
+            $modo_cuestionario_salud = trim((string) ($_POST['modo_cuestionario_salud'] ?? 'recepcion'));
+            if (!in_array($modo_cuestionario_salud, ['recepcion', 'correo'], true)) {
+                $modo_cuestionario_salud = 'recepcion';
+            }
             $contacto_emergencia_nombre = trim((string) (
                 $_POST['contacto_emergencia_nombre'] ?? ''
             ));
@@ -156,6 +164,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
             }
 
             if (
+                $solicitar_cuestionario_salud
+                && $modo_cuestionario_salud === 'correo'
+                && !filter_var($email, FILTER_VALIDATE_EMAIL)
+            ) {
+                throw new Exception(
+                    'Para enviar el cuestionario médico, captura un correo electrónico válido.'
+                );
+            }
+
+            if (
                 $contacto_emergencia_nombre !== ''
                 && (
                     strlen($contacto_emergencia_nombre) < 3
@@ -179,14 +197,30 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
                 );
             }
             
-            // Validar que no exista cliente con mismo teléfono o email
-            $stmt = $conn->prepare("SELECT id FROM clientes WHERE telefono = ? OR (email = ? AND email != '')");
+            // Validar si el socio ya existe sin fallar todavía.
+            /*
+             * Una petición anterior pudo guardar al socio y quedar detenida
+             * antes de crear la invitación del expediente. Más adelante se
+             * verifica si se trata de un reintento recuperable.
+             */
+            $cliente_existente_id = 0;
+            $cliente_existente = null;
+
+            $stmt = $conn->prepare(
+                "SELECT id, nombre, apellido, email, codigo_qr
+                 FROM clientes
+                 WHERE telefono = ?
+                    OR (email = ? AND email != '')
+                 ORDER BY id DESC
+                 LIMIT 1"
+            );
             $stmt->bind_param("ss", $telefono, $email);
             $stmt->execute();
-            $result = $stmt->get_result();
-            
-            if ($result->num_rows > 0) {
-                throw new Exception('Ya existe un cliente con ese teléfono o email');
+            $cliente_existente = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+
+            if ($cliente_existente) {
+                $cliente_existente_id = (int) $cliente_existente['id'];
             }
             
             // Obtener datos del plan
@@ -219,6 +253,169 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
                 throw new Exception('El precio del plan cambió. Actualiza el formulario e intenta nuevamente.');
             }
             $precio_pagado = $precio_plan;
+
+            /*
+             * Recuperación idempotente:
+             * si el primer POST ya guardó la inscripción pero se cortó antes
+             * de crear la invitación o encolar el correo, el segundo intento
+             * completa lo pendiente sin duplicar al socio.
+             */
+            if ($cliente_existente_id > 0) {
+                $stmt = $conn->prepare(
+                    "SELECT
+                        i.id AS inscripcion_id,
+                        i.fecha_fin,
+                        i.fecha_registro,
+                        hp.id AS historial_pago_id,
+                        hp.metodo_pago AS metodo_pago_guardado,
+                        hp.referencia AS referencia_guardada,
+                        c.codigo_qr
+                     FROM inscripciones i
+                     INNER JOIN clientes c ON c.id = i.cliente_id
+                     LEFT JOIN historial_pagos hp
+                        ON hp.id = (
+                            SELECT MAX(hp2.id)
+                            FROM historial_pagos hp2
+                            WHERE hp2.inscripcion_id = i.id
+                        )
+                     WHERE i.cliente_id = ?
+                       AND i.plan_id = ?
+                       AND i.fecha_inicio = ?
+                       AND ABS(i.precio_pagado - ?) <= 0.01
+                       AND i.fecha_registro >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+                     ORDER BY i.id DESC
+                     LIMIT 1"
+                );
+                $stmt->bind_param(
+                    'iisd',
+                    $cliente_existente_id,
+                    $plan_id,
+                    $fecha_inicio,
+                    $precio_pagado
+                );
+                $stmt->execute();
+                $alta_reciente = $stmt->get_result()->fetch_assoc();
+                $stmt->close();
+
+                if (
+                    $alta_reciente
+                    && $solicitar_cuestionario_salud
+                    && $modo_cuestionario_salud === 'correo'
+                ) {
+                    correo_cola_asegurar_tabla($conn);
+
+                    $invitacion_recuperada = expediente_crear_invitacion(
+                        $conn,
+                        $cliente_existente_id,
+                        (int) $alta_reciente['inscripcion_id'],
+                        $sucursal_id,
+                        $usuario_id,
+                        $email,
+                        'correo',
+                        7
+                    );
+
+                    $codigo_qr_recuperado = trim((string) (
+                        $alta_reciente['codigo_qr']
+                        ?? $cliente_existente['codigo_qr']
+                        ?? ''
+                    ));
+
+                    $ruta_qr_recuperada = '';
+                    if ($codigo_qr_recuperado !== '') {
+                        $directorio_qr_recuperado = __DIR__
+                            . DIRECTORY_SEPARATOR
+                            . 'qrcodes';
+                        @mkdir($directorio_qr_recuperado, 0775, true);
+                        $archivo_qr_recuperado = preg_replace(
+                            '/[^a-zA-Z0-9_-]/',
+                            '_',
+                            $codigo_qr_recuperado
+                        ) . '.png';
+                        $ruta_qr_recuperada = $directorio_qr_recuperado
+                            . DIRECTORY_SEPARATOR
+                            . $archivo_qr_recuperado;
+
+                        if (!is_file($ruta_qr_recuperada)) {
+                            generarCodigoQR(
+                                $codigo_qr_recuperado,
+                                $ruta_qr_recuperada
+                            );
+                        }
+                    }
+
+                    $metodo_guardado = trim((string) (
+                        $alta_reciente['metodo_pago_guardado'] ?? ''
+                    ));
+                    $metodo_mostrado = $metodo_guardado !== ''
+                        ? ucfirst($metodo_guardado)
+                        : $metodo_pago_descripcion;
+
+                    $correo_recuperado_job = correo_cola_encolar(
+                        $conn,
+                        'expediente_invitacion',
+                        [
+                            'email' => $email,
+                            'nombre' => trim(
+                                (string) ($cliente_existente['nombre'] ?? $nombre)
+                                . ' '
+                                . (string) ($cliente_existente['apellido'] ?? $apellido)
+                            ),
+                            'url' => (string) $invitacion_recuperada['url'],
+                            'vence_en' => (string) $invitacion_recuperada['vence_en'],
+                            'invitacion_id' => (int) $invitacion_recuperada['id'],
+                            'datos_inscripcion' => [
+                                'plan' => (string) $plan['plan_nombre'],
+                                'fecha_inicio' => date(
+                                    'd/m/Y',
+                                    strtotime($fecha_inicio) ?: time()
+                                ),
+                                'fecha_fin' => !empty($alta_reciente['fecha_fin'])
+                                    ? date(
+                                        'd/m/Y',
+                                        strtotime((string) $alta_reciente['fecha_fin']) ?: time()
+                                    )
+                                    : 'Sin vencimiento',
+                                'monto' => $precio_pagado,
+                                'metodo_pago' => $metodo_mostrado,
+                                'codigo_qr' => $codigo_qr_recuperado,
+                                'ruta_qr' => $ruta_qr_recuperada,
+                                'historial_pago_id' => (int) ($alta_reciente['historial_pago_id'] ?? 0),
+                                'documento_pdf' => '',
+                            ],
+                        ]
+                    );
+                    correo_cola_disparar_async(
+                        (string) $correo_recuperado_job['token']
+                    );
+
+                    $_SESSION['mensaje_exito'] =
+                        'La inscripción ya había quedado guardada. '
+                        . 'Se recuperó el proceso y el cuestionario médico quedó '
+                        . 'preparado para enviarse a '
+                        . htmlspecialchars($email, ENT_QUOTES, 'UTF-8')
+                        . '.';
+
+                    unset($_SESSION['csrf_token']);
+                    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+
+                    header('Location: inscripciones.php');
+                    exit;
+                }
+
+                if ($alta_reciente) {
+                    throw new Exception(
+                        'Esta inscripción ya había quedado guardada. '
+                        . 'No vuelvas a registrar al socio; localízalo en el '
+                        . 'listado para continuar con su expediente o renovación.'
+                    );
+                }
+
+                throw new Exception(
+                    'El socio ya existe con ese teléfono o correo. '
+                    . 'Utiliza su registro actual desde Socios o Inscripciones.'
+                );
+            }
 
             if (mp_inscripcion_es_tarjeta($metodo_pago_solicitado)) {
                 $mp_pago_data = mp_validar_pago_inscripcion(
@@ -261,22 +458,41 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
                 throw new Exception('No se pudo generar un código QR único. Intente nuevamente.');
             }
             
-            // Crear directorio para QR si no existe
-            $qr_dir = 'qrcodes/';
-            if (!file_exists($qr_dir)) {
-                mkdir($qr_dir, 0777, true);
+            // Crear el QR usando una ruta absoluta estable. No depende del
+            // directorio actual desde el que Apache ejecute este archivo.
+            $qr_dir_absoluto = __DIR__ . DIRECTORY_SEPARATOR . 'qrcodes';
+            $qr_dir_relativo = 'qrcodes/';
+
+            if (
+                !is_dir($qr_dir_absoluto)
+                && !@mkdir($qr_dir_absoluto, 0775, true)
+                && !is_dir($qr_dir_absoluto)
+            ) {
+                throw new RuntimeException(
+                    'No fue posible crear la carpeta de códigos QR.'
+                );
             }
-            
-            // Generar el archivo de imagen QR
-            $nombre_archivo_qr = preg_replace('/[^a-zA-Z0-9_-]/', '_', $codigo_qr) . '.png';
-            $ruta_qr_completa = $qr_dir . $nombre_archivo_qr;
-            
-            // Generar el QR
-            $qr_generado = generarCodigoQR($codigo_qr, $ruta_qr_completa);
-            
+
+            $nombre_archivo_qr = preg_replace(
+                '/[^a-zA-Z0-9_-]/',
+                '_',
+                $codigo_qr
+            ) . '.png';
+            $ruta_qr_absoluta = $qr_dir_absoluto
+                . DIRECTORY_SEPARATOR
+                . $nombre_archivo_qr;
+            $ruta_qr_completa = $qr_dir_relativo . $nombre_archivo_qr;
+
+            $qr_generado = generarCodigoQR(
+                $codigo_qr,
+                $ruta_qr_absoluta
+            );
+
             if (!$qr_generado) {
-                // Si falla la generación del QR, igual creamos el cliente pero con advertencia
-                error_log("Error al generar QR para código: " . $codigo_qr);
+                error_log(
+                    '[Inscripciones QR] Código ' . $codigo_qr . ': '
+                    . obtenerUltimoErrorQR()
+                );
             }
             
             $conn->begin_transaction();
@@ -417,54 +633,151 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
             
             $conn->commit();
 
-// ========== GENERAR Y CONSERVAR DOCUMENTO PDF ==========
-$documento_membresia = asegurarDocumentoHistorialInscripcion(
-    $conn,
-    $historial_pago_id
-);
+// ========== PREPARAR CUESTIONARIO MÉDICO ==========
+$invitacion_cuestionario_salud = null;
+$error_cuestionario_salud = '';
 
-if (!empty($documento_membresia['success'])) {
-    $_SESSION['abrir_documento_membresia_url'] =
-        (string) $documento_membresia['url'];
-} else {
-    $_SESSION['cerrar_ventana_documento_membresia'] = true;
-    error_log(
-        '[Inscripciones] No se pudo generar el PDF de inscripción: ' .
-        (string) ($documento_membresia['error'] ?? 'Error desconocido')
-    );
-}
-// ========== FIN DOCUMENTO PDF ==========
-
-// ========== ENVIAR CORREO DE BIENVENIDA CON QR ==========
-$envio_correo = false;
-if (!empty($email)) {
-    $nombre_completo = $nombre . ' ' . $apellido;
-    
-    // Llamar a la función con todos los parámetros
-    $envio_correo = enviarCorreoBienvenidaInscripcion(
-        $conn,
-        $email,                    // email del cliente
-        $nombre_completo,          // nombre completo
-        $plan['plan_nombre'],      // plan
-        $fecha_inicio,             // fecha inicio
-        $fecha_fin,                // fecha fin
-        $precio_pagado,            // monto
-        $metodo_pago_descripcion,  // método de pago mostrado al socio
-        $referencia,               // referencia
-        $codigo_qr,                // ← código QR
-        $ruta_qr_completa          // ← ruta del archivo QR
-    );
-    
-    if (!$envio_correo) {
-        error_log("Error al enviar correo a: " . $email);
+if ($solicitar_cuestionario_salud) {
+    try {
+        $invitacion_cuestionario_salud = expediente_crear_invitacion(
+            $conn,
+            (int) $cliente_id,
+            (int) $inscripcion_id,
+            (int) $sucursal_id,
+            (int) $usuario_id,
+            $email,
+            $modo_cuestionario_salud,
+            7
+        );
+    } catch (Throwable $cuestionarioError) {
+        $error_cuestionario_salud = $cuestionarioError->getMessage();
+        error_log('[Inscripciones cuestionario salud] ' . $error_cuestionario_salud);
     }
 }
-// ========== FIN ENVÍO DE CORREO ==========
+// ========== FIN CUESTIONARIO MÉDICO ==========
+
+// ========== DOCUMENTO DE MEMBRESÍA ==========
+/*
+ * Cuando existe un correo válido, el PDF se genera dentro del worker y se
+ * adjunta al mensaje. Así FPDF no bloquea el alta y el socio conserva su
+ * comprobante de inscripción o renovación.
+ */
+$diferir_documento_membresia =
+    filter_var($email, FILTER_VALIDATE_EMAIL) !== false;
+
+$documento_membresia = [
+    'success' => false,
+    'deferred' => $diferir_documento_membresia,
+];
+
+if (!$diferir_documento_membresia) {
+    $documento_membresia = asegurarDocumentoHistorialInscripcion(
+        $conn,
+        $historial_pago_id
+    );
+
+    if (!empty($documento_membresia['success'])) {
+        $_SESSION['abrir_documento_membresia_url'] =
+            (string) $documento_membresia['url'];
+    } else {
+        $_SESSION['cerrar_ventana_documento_membresia'] = true;
+        error_log(
+            '[Inscripciones] No se pudo generar el PDF de inscripción: '
+            . (string) ($documento_membresia['error'] ?? 'Error desconocido')
+        );
+    }
+}
+// ========== FIN DOCUMENTO DE MEMBRESÍA ==========
+
+// ========== PROGRAMAR CORREO SIN BLOQUEAR EL ALTA ==========
+/*
+ * El correo ya no se envía dentro de esta petición. Primero se guarda en una
+ * cola persistente y después un worker independiente realiza la conexión SMTP.
+ * Así la inscripción responde inmediatamente aunque Gmail tarde o falle.
+ */
+$correo_programado = false;
+$correo_job = null;
+$es_correo_cuestionario =
+    $solicitar_cuestionario_salud
+    && $modo_cuestionario_salud === 'correo'
+    && is_array($invitacion_cuestionario_salud);
+
+if (!empty($email)) {
+    $nombre_completo = trim($nombre . ' ' . $apellido);
+
+    try {
+        if ($es_correo_cuestionario) {
+            $correo_job = correo_cola_encolar(
+                $conn,
+                'expediente_invitacion',
+                [
+                    'email' => $email,
+                    'nombre' => $nombre_completo,
+                    'url' => (string) $invitacion_cuestionario_salud['url'],
+                    'vence_en' => (string) $invitacion_cuestionario_salud['vence_en'],
+                    'invitacion_id' => (int) $invitacion_cuestionario_salud['id'],
+                    'datos_inscripcion' => [
+                        'plan' => (string) $plan['plan_nombre'],
+                        'fecha_inicio' => date('d/m/Y', strtotime($fecha_inicio) ?: time()),
+                        'fecha_fin' => $fecha_fin !== null && $fecha_fin !== ''
+                            ? date('d/m/Y', strtotime((string) $fecha_fin) ?: time())
+                            : 'Sin vencimiento',
+                        'monto' => $precio_pagado,
+                        'metodo_pago' => $metodo_pago_descripcion,
+                        'codigo_qr' => $codigo_qr,
+                        'ruta_qr' => $ruta_qr_absoluta,
+                        'historial_pago_id' => (int) $historial_pago_id,
+                        'documento_pdf' => !empty($documento_membresia['success'])
+                            ? (string) ($documento_membresia['path'] ?? '')
+                            : '',
+                    ],
+                ]
+            );
+        } else {
+            $correo_job = correo_cola_encolar(
+                $conn,
+                'inscripcion_bienvenida',
+                [
+                    'email' => $email,
+                    'nombre' => $nombre_completo,
+                    'plan' => (string) $plan['plan_nombre'],
+                    'fecha_inicio' => date('d/m/Y', strtotime($fecha_inicio) ?: time()),
+                    'fecha_fin' => $fecha_fin !== null && $fecha_fin !== ''
+                        ? date('d/m/Y', strtotime((string) $fecha_fin) ?: time())
+                        : 'Sin vencimiento',
+                    'monto' => $precio_pagado,
+                    'metodo_pago' => $metodo_pago_descripcion,
+                    'referencia' => (string) ($referencia ?? ''),
+                    'codigo_qr' => $codigo_qr,
+                    'ruta_qr' => $ruta_qr_absoluta,
+                    'historial_pago_id' => (int) $historial_pago_id,
+                    'documento_pdf' => !empty($documento_membresia['success'])
+                        ? (string) ($documento_membresia['path'] ?? '')
+                        : '',
+                ]
+            );
+        }
+
+        /*
+         * Solo se encola. El worker del navegador se ejecuta después de que
+         * inscripciones.php ya cargó; nunca se llama al propio Apache desde
+         * este POST.
+         */
+        $correo_programado = is_array($correo_job);
+        if ($correo_programado && !empty($correo_job['token'])) {
+            correo_cola_disparar_async((string) $correo_job['token']);
+        }
+    } catch (Throwable $correoQueueError) {
+        $error_cuestionario_salud = $correoQueueError->getMessage();
+        error_log('[Inscripciones cola correo] ' . $correoQueueError->getMessage());
+    }
+}
+// ========== FIN PROGRAMACIÓN DE CORREO ==========
 
 // Mensaje de éxito con información del QR
 $mensaje_exito = "Cliente e inscripción creados exitosamente. ";
 $mensaje_exito .= "Código QR: <strong>{$codigo_qr}</strong><br>";
-if ($qr_generado && file_exists($ruta_qr_completa)) {
+if ($qr_generado && is_file($ruta_qr_absoluta)) {
     $mensaje_exito .= "El QR quedó disponible en el botón <strong>QR</strong> del listado.";
 } else {
     $mensaje_exito .= "<span class='text-warning'>No se pudo generar la imagen del código QR. El código es: {$codigo_qr}</span>";
@@ -484,16 +797,42 @@ if (!empty($documento_membresia['success'])) {
     $mensaje_exito .= '<br><a class="document-success-link" href="' .
         $url_documento .
         '" target="_blank" rel="noopener"><i class="fas fa-file-pdf"></i> Abrir documento de inscripción</a>';
+} elseif (!empty($documento_membresia['deferred'])) {
+    $mensaje_exito .= '<br><span class="text-muted">El comprobante PDF se generará en segundo plano y se adjuntará al correo.</span>';
 } else {
     $mensaje_exito .= '<br><span class="text-warning">⚠ La inscripción se guardó, pero no fue posible generar el documento PDF.</span>';
 }
 
-// Agregar información del correo al mensaje
+// Estado real: preparado en cola. El worker confirmará el envío después.
 if (!empty($email)) {
-    if ($envio_correo) {
-        $mensaje_exito .= "<br><span class='text-success'>✓ Se ha enviado un correo de confirmación a {$email}</span>";
+    if ($correo_programado) {
+        $mensaje_exito .= $es_correo_cuestionario
+            ? "<br><span class='text-success'>✓ La confirmación y el cuestionario quedaron preparados para enviarse a {$email}.</span>"
+            : "<br><span class='text-success'>✓ El correo de confirmación quedó preparado para enviarse a {$email}.</span>";
     } else {
-        $mensaje_exito .= "<br><span class='text-warning'>⚠ No se pudo enviar el correo a {$email}. Verifique la configuración SMTP.</span>";
+        $mensaje_exito .= "<br><span class='text-warning'>⚠ La inscripción se guardó, pero el correo no pudo agregarse a la cola"
+            . ($error_cuestionario_salud !== ''
+                ? ': ' . htmlspecialchars($error_cuestionario_salud, ENT_QUOTES, 'UTF-8')
+                : '.')
+            . "</span>";
+    }
+}
+
+if ($solicitar_cuestionario_salud) {
+    if (!is_array($invitacion_cuestionario_salud)) {
+        $mensaje_exito .= '<br><span class="text-warning">⚠ La inscripción se guardó, pero no fue posible preparar el cuestionario médico'
+            . ($error_cuestionario_salud !== ''
+                ? ': ' . htmlspecialchars($error_cuestionario_salud, ENT_QUOTES, 'UTF-8')
+                : '.')
+            . '</span>';
+    } elseif ($modo_cuestionario_salud === 'correo') {
+        if ($correo_programado) {
+            $mensaje_exito .= '<br><span class="text-success">✓ El enlace privado quedó en la cola de envío.</span>';
+        } else {
+            $mensaje_exito .= '<br><span class="text-warning">⚠ El enlace fue creado, pero no pudo programarse el correo.</span>';
+        }
+    } else {
+        $mensaje_exito .= '<br><span class="text-success">✓ El cuestionario médico está listo para contestarse ahora.</span>';
     }
 }
 
@@ -503,6 +842,15 @@ $_SESSION['mensaje_exito'] = $mensaje_exito;
             unset($_SESSION['csrf_token']);
             $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
             
+            if (
+                $solicitar_cuestionario_salud
+                && $modo_cuestionario_salud === 'recepcion'
+                && is_array($invitacion_cuestionario_salud)
+            ) {
+                header('Location: ' . (string) $invitacion_cuestionario_salud['url']);
+                exit;
+            }
+
             header('Location: inscripciones.php');
             exit;
             
@@ -803,20 +1151,28 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
         $ruta_qr_cliente = '';
 
         if ($codigo_qr_cliente !== '') {
-            $qr_dir = 'qrcodes/';
-            if (!file_exists($qr_dir)) {
-                mkdir($qr_dir, 0777, true);
-            }
+            $qr_dir_cliente = __DIR__ . DIRECTORY_SEPARATOR . 'qrcodes';
+            @mkdir($qr_dir_cliente, 0775, true);
 
-            $nombre_archivo_qr = preg_replace('/[^a-zA-Z0-9_-]/', '_', $codigo_qr_cliente) . '.png';
-            $ruta_qr_cliente = $qr_dir . $nombre_archivo_qr;
+            $nombre_archivo_qr = preg_replace(
+                '/[^a-zA-Z0-9_-]/',
+                '_',
+                $codigo_qr_cliente
+            ) . '.png';
+            $ruta_qr_cliente = $qr_dir_cliente
+                . DIRECTORY_SEPARATOR
+                . $nombre_archivo_qr;
 
-            if (!file_exists($ruta_qr_cliente)) {
+            if (!is_file($ruta_qr_cliente)) {
                 generarCodigoQR($codigo_qr_cliente, $ruta_qr_cliente);
             }
         }
 
-// Generar el documento aunque el socio no tenga email.
+// Generar el comprobante local antes de encolar el correo.
+// Esta operación usa FPDF y archivos locales; no abre conexión SMTP y suele
+// completarse rápidamente. Así la ventana que el navegador abrió al enviar
+// el formulario recibe inmediatamente la URL real del comprobante, mientras
+// el correo continúa enviándose en un proceso separado.
 $documento_membresia = asegurarDocumentoHistorialInscripcion(
     $conn,
     $historial_pago_id
@@ -833,29 +1189,41 @@ if (!empty($documento_membresia['success'])) {
     );
 }
 
-// Enviar correo solo si el cliente proporcionó un email
-$envio_correo = false;
+// Programar el correo de renovación sin bloquear la respuesta.
+$correo_renovacion_programado = false;
 if (!empty($email_cliente)) {
-    $nombre_completo = $cliente_data['nombre'] . ' ' . $cliente_data['apellido'];
-    
-    $envio_correo = enviarCorreoRenovacionInscripcion(
-        $conn,
-        $email_cliente,
-        $nombre_completo,
-        $plan['plan_nombre'],
-        $fecha_inicio,
-        $fecha_fin,
-        $precio_pagado,
-        $metodo_pago_descripcion,
-        $referencia,
-        $codigo_qr_cliente,
-        $ruta_qr_cliente
-    );
-    
-    if (!$envio_correo) {
-        error_log("Error al enviar correo a: " . $email_cliente . ' | ' . obtenerUltimoErrorCorreoInscripciones());
-        // Agregar advertencia visible
-        $_SESSION['warning_correo'] = "No se pudo enviar el correo electrónico, pero la inscripción se guardó correctamente.";
+    $nombre_completo = trim($cliente_data['nombre'] . ' ' . $cliente_data['apellido']);
+    try {
+        $correo_renovacion_job = correo_cola_encolar(
+            $conn,
+            'inscripcion_renovacion',
+            [
+                'email' => $email_cliente,
+                'nombre' => $nombre_completo,
+                'plan' => (string) $plan['plan_nombre'],
+                'fecha_inicio' => date('d/m/Y', strtotime($fecha_inicio) ?: time()),
+                'fecha_fin' => $fecha_fin !== null && $fecha_fin !== ''
+                    ? date('d/m/Y', strtotime((string) $fecha_fin) ?: time())
+                    : 'Sin vencimiento',
+                'monto' => $precio_pagado,
+                'metodo_pago' => $metodo_pago_descripcion,
+                'referencia' => (string) ($referencia ?? ''),
+                'codigo_qr' => $codigo_qr_cliente,
+                'ruta_qr' => $ruta_qr_cliente,
+                'historial_pago_id' => (int) $historial_pago_id,
+                'documento_pdf' => !empty($documento_membresia['success'])
+                    ? (string) ($documento_membresia['path'] ?? '')
+                    : '',
+            ]
+        );
+        $correo_renovacion_programado = true;
+        correo_cola_disparar_async(
+            (string) $correo_renovacion_job['token']
+        );
+        // El worker se ejecutará después de la redirección.
+    } catch (Throwable $correoRenovacionError) {
+        error_log('[Renovación cola correo] ' . $correoRenovacionError->getMessage());
+        $_SESSION['warning_correo'] = 'La renovación se guardó, pero el correo no pudo programarse: ' . $correoRenovacionError->getMessage();
     }
 }
 
@@ -863,10 +1231,10 @@ if (!empty($email_cliente)) {
         unset($_SESSION[$clave_renovacion]);
 
         // Guardar mensaje en sesión
-        if (!empty($email_cliente) && $envio_correo) {
-            $mensaje_renovacion = 'Inscripción renovada exitosamente con el plan ' . $plan['plan_nombre'] . '. Se ha enviado un ticket a su correo electrónico.';
-        } elseif (!empty($email_cliente) && !$envio_correo) {
-            $mensaje_renovacion = 'Inscripción renovada exitosamente con el plan ' . $plan['plan_nombre'] . '. No se pudo enviar el correo electrónico.';
+        if (!empty($email_cliente) && $correo_renovacion_programado) {
+            $mensaje_renovacion = 'Inscripción renovada exitosamente con el plan ' . $plan['plan_nombre'] . '. El correo quedó preparado para enviarse en segundo plano.';
+        } elseif (!empty($email_cliente) && !$correo_renovacion_programado) {
+            $mensaje_renovacion = 'Inscripción renovada exitosamente con el plan ' . $plan['plan_nombre'] . '. El correo no pudo agregarse a la cola.';
         } else {
             $mensaje_renovacion = 'Inscripción renovada exitosamente con el plan ' . $plan['plan_nombre'] . '. No se envió correo porque el cliente no tiene email registrado.';
         }
@@ -879,7 +1247,7 @@ if (!empty($email_cliente)) {
             );
             $mensaje_renovacion .= '<br><a class="document-success-link" href="' .
                 $url_documento .
-                'documento de renovación</a>';
+                '" target="_blank" rel="noopener"><i class="fas fa-file-pdf"></i> Abrir documento de renovación</a>';
         } else {
             $mensaje_renovacion .= '<br><span class="text-warning">⚠ La renovación se guardó, pero no fue posible generar el documento PDF.</span>';
         }
@@ -1143,6 +1511,10 @@ unset(
     $_SESSION['abrir_documento_membresia_url'],
     $_SESSION['cerrar_ventana_documento_membresia']
 );
+
+// Tokens de los correos creados en el POST anterior. Se consumen una sola vez
+// y se procesan después de que esta página ya fue entregada al navegador.
+$correo_tokens_async = correo_cola_extraer_tokens_async();
 ?>
 
 <!DOCTYPE html>
@@ -1879,6 +2251,50 @@ unset(
                             <div class="mt-2">Código QR para el Socio</div>
                             <div class="small text-muted">Se generará automáticamente al registrar</div>
                         </div>
+
+
+                        <section class="health-enrollment-section" aria-labelledby="healthEnrollmentTitle">
+                            <label class="health-enrollment-toggle" for="solicitar_cuestionario_salud">
+                                <input
+                                    type="checkbox"
+                                    name="solicitar_cuestionario_salud"
+                                    id="solicitar_cuestionario_salud"
+                                    value="1"
+                                >
+                                <span class="health-enrollment-check"><i class="fas fa-check"></i></span>
+                                <span class="health-enrollment-copy">
+                                    <strong id="healthEnrollmentTitle">Completar expediente de salud</strong>
+                                    <small>Activa esta opción para responder el cuestionario médico y aceptar el documento de responsabilidad.</small>
+                                </span>
+                                <span class="health-enrollment-icon"><i class="fas fa-heart-pulse"></i></span>
+                            </label>
+
+                            <div class="health-enrollment-options" id="healthEnrollmentOptions" hidden>
+                                <div class="health-enrollment-options-title">¿Cómo deseas completarlo?</div>
+                                <div class="health-enrollment-methods">
+                                    <label class="health-enrollment-method">
+                                        <input type="radio" name="modo_cuestionario_salud" value="recepcion" checked>
+                                        <span>
+                                            <i class="fas fa-tablet-screen-button"></i>
+                                            <strong>Contestar ahora</strong>
+                                            <small>Al terminar la inscripción se abrirá el cuestionario en este equipo.</small>
+                                        </span>
+                                    </label>
+                                    <label class="health-enrollment-method" id="healthEmailMethod">
+                                        <input type="radio" name="modo_cuestionario_salud" value="correo">
+                                        <span>
+                                            <i class="fas fa-envelope"></i>
+                                            <strong>Enviar por correo</strong>
+                                            <small>El socio recibirá un enlace privado y, al finalizar, su PDF completo.</small>
+                                        </span>
+                                    </label>
+                                </div>
+                                <div class="health-enrollment-note" id="healthEnrollmentEmailNote">
+                                    <i class="fas fa-circle-info"></i>
+                                    <span>El correo del formulario se utilizará para enviar el enlace y la copia final del expediente.</span>
+                                </div>
+                            </div>
+                        </section>
                     </div>
                     
                     <div class="modal-footer">
@@ -2186,6 +2602,46 @@ unset(
             });
         }
         
+        function actualizarOpcionesCuestionarioSalud() {
+            const checkbox = document.getElementById('solicitar_cuestionario_salud');
+            const options = document.getElementById('healthEnrollmentOptions');
+            if (!checkbox || !options) return;
+
+            options.hidden = !checkbox.checked;
+            options.classList.toggle('is-visible', checkbox.checked);
+        }
+
+        function validarCuestionarioSaludInscripcion(form) {
+            const checkbox = form.elements.solicitar_cuestionario_salud;
+            if (!checkbox || !checkbox.checked) return true;
+
+            const modoSeleccionado = form.querySelector('input[name="modo_cuestionario_salud"]:checked');
+            const modo = modoSeleccionado ? modoSeleccionado.value : 'recepcion';
+            const email = String(form.elements.email.value || '').trim();
+
+            if (modo === 'correo') {
+                const emailValido = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+                if (!emailValido) {
+                    Swal.fire({
+                        icon: 'warning',
+                        title: 'Correo necesario',
+                        text: 'Captura un correo válido para enviar el cuestionario médico.',
+                        confirmButtonColor: '#244292'
+                    });
+                    form.elements.email.focus();
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        const healthToggle = document.getElementById('solicitar_cuestionario_salud');
+        if (healthToggle) {
+            healthToggle.addEventListener('change', actualizarOpcionesCuestionarioSalud);
+            actualizarOpcionesCuestionarioSalud();
+        }
+
         function actualizarPrecioNuevo() {
             const planSelect = document.getElementById('plan_id_nuevo');
             const selectedOption = planSelect.options[planSelect.selectedIndex];
@@ -2449,6 +2905,10 @@ unset(
                 return false;
             }
 
+            if (operation === 'new' && !validarCuestionarioSaludInscripcion(form)) {
+                return false;
+            }
+
             const metodo = String(form.elements.metodo_pago.value || '');
             const total = Number(form.elements.precio_pagado.value || 0);
 
@@ -2457,7 +2917,25 @@ unset(
                 return false;
             }
 
-            prepararVentanaDocumentoMembresia();
+            const modoCuestionarioSeleccionado = operation === 'new'
+                && form.querySelector('input[name="modo_cuestionario_salud"]:checked')
+                ? form.querySelector('input[name="modo_cuestionario_salud"]:checked').value
+                : '';
+
+            const cuestionarioSolicitado = operation === 'new'
+                && form.elements.solicitar_cuestionario_salud
+                && form.elements.solicitar_cuestionario_salud.checked;
+
+            const cuestionarioAhora = cuestionarioSolicitado
+                && modoCuestionarioSeleccionado === 'recepcion';
+
+            const cuestionarioPorCorreo = cuestionarioSolicitado
+                && modoCuestionarioSeleccionado === 'correo';
+
+            // En el flujo por correo no se abre una ventana vacía mientras SMTP responde.
+            if (!cuestionarioAhora && !cuestionarioPorCorreo) {
+                prepararVentanaDocumentoMembresia();
+            }
 
             formularioEnviando = true;
             button.disabled = true;
@@ -2574,6 +3052,13 @@ unset(
         $('#modalNuevoCliente').on('hidden.bs.modal', function() {
             formularioEnviando = false;
             limpiarDatosPoint(document.getElementById('formNuevoCliente'));
+            const healthCheckbox = document.getElementById('solicitar_cuestionario_salud');
+            if (healthCheckbox) {
+                healthCheckbox.checked = false;
+                const recepcion = document.querySelector('input[name="modo_cuestionario_salud"][value="recepcion"]');
+                if (recepcion) recepcion.checked = true;
+                actualizarOpcionesCuestionarioSalud();
+            }
             $('#btnGuardarNuevo').prop('disabled', false).html('Guardar');
         });
         
@@ -2776,6 +3261,178 @@ unset(
         
         $('#limpiarFiltros').on('click', function() {
             window.location.href = '?';
+        });
+
+        // El proceso CLI se lanza desde PHP. Este bloque es un respaldo
+        // confiable: verifica el estado y, si hace falta, ejecuta el worker
+        // mediante fetch después de que la página ya cargó. La interfaz nunca
+        // espera a Gmail y no se utiliza sendBeacon para tareas SMTP largas.
+        const correoTokensPendientes = <?php echo json_encode(
+            $correo_tokens_async,
+            JSON_UNESCAPED_SLASHES
+            | JSON_HEX_TAG
+            | JSON_HEX_APOS
+            | JSON_HEX_AMP
+            | JSON_HEX_QUOT
+        ); ?>;
+
+        const correosNotificados = new Set();
+
+        function esperarCorreo(ms) {
+            return new Promise(function(resolve) {
+                window.setTimeout(resolve, ms);
+            });
+        }
+
+        async function consultarEstadoCorreo(token) {
+            const response = await fetch(
+                'api/correo/estado_token.php?token=' + encodeURIComponent(token),
+                {
+                    method: 'GET',
+                    credentials: 'same-origin',
+                    cache: 'no-store'
+                }
+            );
+
+            const texto = await response.text();
+            let data = null;
+            try {
+                data = JSON.parse(texto);
+            } catch (error) {
+                throw new Error('El servidor no devolvió un estado de correo válido.');
+            }
+
+            if (!response.ok || !data.success) {
+                throw new Error(data.message || 'No fue posible consultar el correo.');
+            }
+
+            return data;
+        }
+
+        async function ejecutarWorkerCorreo(token) {
+            const contenido = 'token=' + encodeURIComponent(token);
+            const response = await fetch('api/correo/procesar_token.php', {
+                method: 'POST',
+                credentials: 'same-origin',
+                cache: 'no-store',
+                headers: {
+                    'Content-Type':
+                        'application/x-www-form-urlencoded;charset=UTF-8',
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                body: contenido
+            });
+
+            const texto = await response.text();
+            let data = null;
+            try {
+                data = JSON.parse(texto);
+            } catch (error) {
+                throw new Error(
+                    texto.trim() !== ''
+                        ? texto.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
+                        : 'El worker de correo no devolvió JSON.'
+                );
+            }
+
+            if (!response.ok && !data.omitido) {
+                throw new Error(data.message || data.error || 'No fue posible procesar el correo.');
+            }
+
+            return data;
+        }
+
+        function notificarCorreoEnviado(token) {
+            if (correosNotificados.has(token)) return;
+            correosNotificados.add(token);
+
+            Swal.fire({
+                toast: true,
+                position: 'top-end',
+                icon: 'success',
+                title: 'Correo enviado correctamente',
+                showConfirmButton: false,
+                timer: 3800
+            });
+        }
+
+        function notificarCorreoFallido(token, mensaje) {
+            if (correosNotificados.has(token)) return;
+            correosNotificados.add(token);
+
+            Swal.fire({
+                icon: 'warning',
+                title: 'El correo no pudo enviarse',
+                text: mensaje || 'El trabajo quedó registrado para reintento.',
+                confirmButtonColor: '#244292'
+            });
+        }
+
+        async function vigilarCorreoEnSegundoPlano(token) {
+            if (!/^[a-f0-9]{64}$/.test(String(token || ''))) return;
+
+            let workerSolicitado = false;
+
+            for (let intento = 0; intento < 14; intento++) {
+                try {
+                    const estado = await consultarEstadoCorreo(token);
+
+                    if (estado.estado === 'enviado') {
+                        notificarCorreoEnviado(token);
+                        return;
+                    }
+
+                    if (estado.estado === 'fallido') {
+                        notificarCorreoFallido(
+                            token,
+                            estado.ultimo_error || 'Se agotaron los intentos de envío.'
+                        );
+                        return;
+                    }
+
+                    if (
+                        !workerSolicitado
+                        && (estado.estado === 'pendiente' || intento >= 2)
+                    ) {
+                        workerSolicitado = true;
+                        ejecutarWorkerCorreo(token).catch(function(error) {
+                            console.error('Worker de correo:', error);
+                        });
+                    }
+                } catch (error) {
+                    console.error('Estado del correo:', error);
+                }
+
+                await esperarCorreo(intento < 4 ? 1100 : 1800);
+            }
+
+            // No muestra un falso éxito. El correo continúa en la cola y el
+            // procesador general podrá retomarlo en la siguiente carga.
+            console.warn('El correo sigue en proceso o pendiente de reintento.');
+        }
+
+        async function procesarUnCorreoPendienteGeneral() {
+            try {
+                await fetch('api/correo/procesar_pendientes.php', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    cache: 'no-store',
+                    headers: { 'X-Requested-With': 'XMLHttpRequest' }
+                });
+            } catch (error) {
+                console.error('Procesador general de correo:', error);
+            }
+        }
+
+        $(document).ready(function() {
+            correoTokensPendientes.forEach(function(token, indice) {
+                window.setTimeout(function() {
+                    vigilarCorreoEnSegundoPlano(token);
+                }, 220 + (indice * 180));
+            });
+
+            // También recupera trabajos antiguos que hayan quedado pendientes.
+            window.setTimeout(procesarUnCorreoPendienteGeneral, 1800);
         });
 
         <?php if ($documento_membresia_auto_url !== ''): ?>

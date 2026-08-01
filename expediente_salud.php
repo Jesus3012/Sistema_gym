@@ -269,6 +269,38 @@ function expediente_documento_tiene_etiqueta(string $texto, array $etiquetas): b
     return false;
 }
 
+
+/**
+ * Convierte los valores internos del cuestionario a una respuesta legible.
+ * La base conserva 1 y 0 para mantener compatibilidad con las reglas de alerta,
+ * pero la interfaz siempre muestra Sí y No.
+ */
+function expediente_respuesta_visible(array $respuesta): string
+{
+    $valor = trim((string) ($respuesta['respuesta_texto'] ?? ''));
+    $tipo = trim((string) ($respuesta['tipo_respuesta_snapshot'] ?? ''));
+
+    if ($valor === '') {
+        return 'Sin respuesta';
+    }
+
+    if ($tipo === 'si_no') {
+        $normalizado = function_exists('mb_strtolower')
+            ? mb_strtolower($valor, 'UTF-8')
+            : strtolower($valor);
+
+        if (in_array($normalizado, ['1', 'si', 'sí', 'true'], true)) {
+            return 'Sí';
+        }
+
+        if (in_array($normalizado, ['0', 'no', 'false'], true)) {
+            return 'No';
+        }
+    }
+
+    return $valor;
+}
+
 $usuarioId = (int) ($_SESSION['user_id'] ?? 0);
 $usuarioNombre = trim((string) ($_SESSION['user_name'] ?? 'Administrador'));
 $sucursalActual = (int) ($_SESSION['sucursal_id'] ?? 0);
@@ -609,6 +641,105 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
 
                 expediente_redirigir('expediente_salud.php?tab=configuracion&vista=' . ($vistaGlobal ? 'global' : 'sucursal') . '&tipo=success&mensaje=' . rawurlencode('Pregunta eliminada correctamente.') . '#preguntasGuardadas');
+            }
+
+            if ($accion === 'resolver_revision_expediente') {
+                $expedienteIdRevision = (int) ($_POST['expediente_id'] ?? 0);
+                $decisionRevision = trim((string) ($_POST['decision_revision'] ?? ''));
+                $comentarioRevision = trim((string) ($_POST['observaciones_revision'] ?? ''));
+
+                $decisionesPermitidas = [
+                    'aprobar' => 'sin_observaciones',
+                    'mantener_revision' => 'requiere_revision',
+                    'solicitar_documentacion' => 'documentacion_pendiente',
+                ];
+
+                if ($expedienteIdRevision <= 0 || !isset($decisionesPermitidas[$decisionRevision])) {
+                    throw new RuntimeException('No fue posible identificar la decisión de revisión.');
+                }
+
+                if (
+                    in_array($decisionRevision, ['mantener_revision', 'solicitar_documentacion'], true)
+                    && $comentarioRevision === ''
+                ) {
+                    throw new RuntimeException('Escribe una observación para indicar qué debe revisarse o qué documento se solicita.');
+                }
+
+                $stmt = $conn->prepare(
+                    "SELECT observaciones_admin
+                     FROM expedientes_salud
+                     WHERE id = ?
+                     LIMIT 1"
+                );
+
+                if (!$stmt) {
+                    throw new RuntimeException('No fue posible consultar el expediente que deseas revisar.');
+                }
+
+                $stmt->bind_param('i', $expedienteIdRevision);
+                $stmt->execute();
+                $resultadoRevision = $stmt->get_result();
+                $expedienteRevision = $resultadoRevision
+                    ? $resultadoRevision->fetch_assoc()
+                    : null;
+                $stmt->close();
+
+                if (!$expedienteRevision) {
+                    throw new RuntimeException('El expediente seleccionado ya no existe.');
+                }
+
+                $estadoNuevo = $decisionesPermitidas[$decisionRevision];
+                $etiquetaDecision = [
+                    'aprobar' => 'Expediente revisado y aprobado',
+                    'mantener_revision' => 'Expediente mantenido en revisión',
+                    'solicitar_documentacion' => 'Se solicitó documentación adicional',
+                ][$decisionRevision];
+
+                $registroRevision = '[' . date('d/m/Y H:i') . '] '
+                    . $usuarioNombre . ': '
+                    . $etiquetaDecision
+                    . ($comentarioRevision !== '' ? '. ' . $comentarioRevision : '.');
+
+                $observacionesAnteriores = trim((string) ($expedienteRevision['observaciones_admin'] ?? ''));
+                $observacionesNuevas = $observacionesAnteriores !== ''
+                    ? $observacionesAnteriores . "\n" . $registroRevision
+                    : $registroRevision;
+
+                $stmt = $conn->prepare(
+                    "UPDATE expedientes_salud
+                     SET estado_seguimiento = ?,
+                         observaciones_admin = ?
+                     WHERE id = ?"
+                );
+
+                if (!$stmt) {
+                    throw new RuntimeException('No fue posible preparar la actualización de la revisión.');
+                }
+
+                $stmt->bind_param(
+                    'ssi',
+                    $estadoNuevo,
+                    $observacionesNuevas,
+                    $expedienteIdRevision
+                );
+
+                if (!$stmt->execute()) {
+                    $detalle = $stmt->error;
+                    $stmt->close();
+                    throw new RuntimeException('No fue posible guardar la revisión: ' . $detalle);
+                }
+
+                $stmt->close();
+
+                expediente_redirigir(
+                    'expediente_salud.php?tab=expedientes&ver='
+                    . $expedienteIdRevision
+                    . '&vista='
+                    . ($vistaGlobal ? 'global' : 'sucursal')
+                    . '&tipo=success&mensaje='
+                    . rawurlencode($etiquetaDecision . '.')
+                    . '#detalleExpediente'
+                );
             }
 
             if ($accion === 'guardar_expediente') {
@@ -1148,6 +1279,144 @@ function expediente_url_paginacion_preguntas(int $paginaObjetivo, bool $vistaGlo
     <link rel="preconnect" href="https://cdnjs.cloudflare.com">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css">
     <link rel="stylesheet" href="css/expediente_salud.css?v=1.3.0">
+    <style>
+        .health-review-panel {
+            margin-top: 20px;
+            padding: 20px;
+            border: 1px solid #dbe5f3;
+            border-radius: 18px;
+            background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+        }
+
+        .health-review-panel.is-review {
+            border-color: #f5d67b;
+            background: linear-gradient(180deg, #fffef8 0%, #fffbeb 100%);
+        }
+
+        .health-review-panel.is-pending {
+            border-color: #f2b9b9;
+            background: linear-gradient(180deg, #fffafa 0%, #fff1f2 100%);
+        }
+
+        .health-review-panel.is-approved {
+            border-color: #a7e5c8;
+            background: linear-gradient(180deg, #fbfffd 0%, #ecfdf5 100%);
+        }
+
+        .health-review-heading {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 16px;
+        }
+
+        .health-review-heading h3 {
+            margin: 4px 0 6px;
+            color: #102a61;
+            font-size: 1.08rem;
+        }
+
+        .health-review-heading p {
+            margin: 0;
+            color: #64748b;
+            line-height: 1.55;
+        }
+
+        .health-review-count {
+            flex: 0 0 auto;
+            padding: 7px 11px;
+            border-radius: 999px;
+            background: #fff7d6;
+            color: #9a5b00;
+            font-size: .78rem;
+            font-weight: 800;
+        }
+
+        .health-review-form {
+            margin-top: 16px;
+        }
+
+        .health-review-form textarea {
+            width: 100%;
+            min-height: 92px;
+            padding: 12px 14px;
+            border: 1px solid #cfd9e8;
+            border-radius: 12px;
+            background: #fff;
+            color: #172033;
+            resize: vertical;
+            outline: none;
+        }
+
+        .health-review-form textarea:focus {
+            border-color: #6f8ed7;
+            box-shadow: 0 0 0 4px rgba(36, 66, 146, .10);
+        }
+
+        .health-review-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            margin-top: 12px;
+            flex-wrap: wrap;
+        }
+
+        .health-review-button {
+            display: inline-flex;
+            min-height: 42px;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 9px 14px;
+            border: 1px solid transparent;
+            border-radius: 10px;
+            font: inherit;
+            font-weight: 800;
+            cursor: pointer;
+        }
+
+        .health-review-button.approve {
+            border-color: #059669;
+            background: #059669;
+            color: #fff;
+        }
+
+        .health-review-button.review {
+            border-color: #e5a000;
+            background: #fff8df;
+            color: #8a5700;
+        }
+
+        .health-review-button.documents {
+            border-color: #d8a2a2;
+            background: #fff;
+            color: #a32c2c;
+        }
+
+        .health-review-history {
+            margin-top: 14px;
+            padding-top: 14px;
+            border-top: 1px solid rgba(148, 163, 184, .25);
+            color: #64748b;
+            font-size: .82rem;
+            white-space: pre-line;
+            line-height: 1.55;
+        }
+
+        @media (max-width: 700px) {
+            .health-review-heading {
+                flex-direction: column;
+            }
+
+            .health-review-actions {
+                flex-direction: column;
+            }
+
+            .health-review-button {
+                width: 100%;
+            }
+        }
+    </style>
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 </head>
 <body>
@@ -1263,12 +1532,91 @@ function expediente_url_paginacion_preguntas(int $paginaObjetivo, bool $vistaGlo
                         <article class="<?php echo (int) $respuesta['genera_alerta'] === 1 ? 'has-alert' : ''; ?>">
                             <div>
                                 <strong><?php echo expediente_h($respuesta['pregunta_snapshot']); ?></strong>
-                                <span><?php echo expediente_h($respuesta['respuesta_texto'] !== '' ? $respuesta['respuesta_texto'] : 'Sin respuesta'); ?></span>
+                                <span><?php echo expediente_h(expediente_respuesta_visible($respuesta)); ?></span>
                             </div>
                             <?php if ((int) $respuesta['genera_alerta'] === 1): ?><i class="fa-solid fa-triangle-exclamation" title="Respuesta marcada para revisión"></i><?php endif; ?>
                         </article>
                     <?php endforeach; ?>
                 </div>
+
+                <?php
+                $estadoRevisionActual = (string) ($expedienteDetalle['estado_seguimiento'] ?? 'sin_observaciones');
+                $claseRevision = $estadoRevisionActual === 'requiere_revision'
+                    ? 'is-review'
+                    : ($estadoRevisionActual === 'documentacion_pendiente' ? 'is-pending' : 'is-approved');
+                ?>
+                <section class="health-review-panel <?php echo expediente_h($claseRevision); ?>">
+                    <div class="health-review-heading">
+                        <div>
+                            <span class="health-kicker">Revisión administrativa</span>
+                            <h3>
+                                <?php echo $estadoRevisionActual === 'requiere_revision'
+                                    ? 'Este expediente necesita verificación'
+                                    : ($estadoRevisionActual === 'documentacion_pendiente'
+                                        ? 'Hay documentación pendiente'
+                                        : 'Expediente revisado sin observaciones'); ?>
+                            </h3>
+                            <p>
+                                Las alertas se generan automáticamente según las respuestas configuradas.
+                                Revisa la información y registra una decisión. Aprobar no elimina ni modifica
+                                las respuestas originales.
+                            </p>
+                        </div>
+                        <span class="health-review-count">
+                            <?php echo (int) ($expedienteDetalle['total_alertas'] ?? 0); ?>
+                            alerta(s)
+                        </span>
+                    </div>
+
+                    <form method="post" class="health-review-form">
+                        <input type="hidden" name="accion" value="resolver_revision_expediente">
+                        <input type="hidden" name="csrf" value="<?php echo expediente_h($csrf); ?>">
+                        <input type="hidden" name="expediente_id" value="<?php echo (int) $expedienteDetalle['id']; ?>">
+
+                        <textarea
+                            name="observaciones_revision"
+                            placeholder="Escribe el resultado de la revisión, indicaciones para el socio o documentos que debe presentar."
+                        ></textarea>
+
+                        <div class="health-review-actions">
+                            <button
+                                class="health-review-button documents"
+                                type="submit"
+                                name="decision_revision"
+                                value="solicitar_documentacion"
+                            >
+                                <i class="fa-solid fa-file-circle-exclamation"></i>
+                                Solicitar documentación
+                            </button>
+
+                            <button
+                                class="health-review-button review"
+                                type="submit"
+                                name="decision_revision"
+                                value="mantener_revision"
+                            >
+                                <i class="fa-solid fa-clock-rotate-left"></i>
+                                Mantener en revisión
+                            </button>
+
+                            <button
+                                class="health-review-button approve"
+                                type="submit"
+                                name="decision_revision"
+                                value="aprobar"
+                                onclick="return confirm('¿Confirmas que revisaste las respuestas y deseas aprobar este expediente?');"
+                            >
+                                <i class="fa-solid fa-circle-check"></i>
+                                Aprobar expediente
+                            </button>
+                        </div>
+                    </form>
+
+                    <?php if (trim((string) ($expedienteDetalle['observaciones_admin'] ?? '')) !== ''): ?>
+                        <div class="health-review-history"><strong>Historial y observaciones</strong>
+<?php echo expediente_h((string) $expedienteDetalle['observaciones_admin']); ?></div>
+                    <?php endif; ?>
+                </section>
 
                 <div class="health-responsibility-summary">
                     <div>
@@ -1872,7 +2220,7 @@ function expediente_url_paginacion_preguntas(int $paginaObjetivo, bool $vistaGlo
         updateDocumentExamplePreview();
     }
 
-    const recommendedTemplate = `Yo, [PERSONA QUE ACEPTA], en mi carácter de [RELACIÓN CON EL SOCIO], manifiesto que el día [FECHA] leí y comprendí el presente documento para el uso de las instalaciones de [NOMBRE DEL GIMNASIO], sucursal [SUCURSAL].
+    const recommendedTemplate = `Yo, [PERSONA QUE ACEPTA], en mi carácter de [RELACIÓN CON EL SOCIO] respecto de [NOMBRE DEL SOCIO], manifiesto que el día [FECHA] leí y comprendí el presente documento para el uso de las instalaciones de [NOMBRE DEL GIMNASIO], sucursal [SUCURSAL].
 
 Reconozco que el ejercicio físico implica esfuerzo y riesgos inherentes. Me comprometo a utilizar correctamente las instalaciones y el equipo, respetar las indicaciones de seguridad, mantener una conducta responsable y detener la actividad si presento dolor, mareo, falta de aire fuera de lo habitual u otro malestar.
 

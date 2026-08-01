@@ -1320,3 +1320,203 @@ body.modal-open {
         width: 100%;
     }
 }
+
+/* =========================================================
+   CUESTIONARIO MÉDICO DESDE NUEVA INSCRIPCIÓN
+   ========================================================= */
+.health-enrollment-section {
+    margin-top: 18px;
+    overflow: hidden;
+    border: 1px solid #d9e2f1;
+    border-radius: 12px;
+    background: #fff;
+}
+
+.health-enrollment-toggle {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 13px;
+    align-items: center;
+    min-height: 78px;
+    padding: 14px 16px;
+    cursor: pointer;
+    transition: background-color .18s ease, border-color .18s ease;
+}
+
+.health-enrollment-toggle:hover {
+    background: #f8faff;
+}
+
+.health-enrollment-toggle > input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.health-enrollment-check {
+    display: grid;
+    width: 25px;
+    height: 25px;
+    place-items: center;
+    border: 2px solid #aeb9ca;
+    border-radius: 7px;
+    background: #fff;
+    color: transparent;
+    font-size: .72rem;
+    transition: background-color .18s ease, border-color .18s ease, color .18s ease;
+}
+
+.health-enrollment-toggle > input:checked + .health-enrollment-check {
+    border-color: var(--brand);
+    background: var(--brand);
+    color: #fff;
+}
+
+.health-enrollment-copy strong,
+.health-enrollment-copy small {
+    display: block;
+}
+
+.health-enrollment-copy strong {
+    color: #1d3159;
+    font-size: .92rem;
+    font-weight: 780;
+}
+
+.health-enrollment-copy small {
+    margin-top: 4px;
+    color: #6c788b;
+    font-size: .75rem;
+    line-height: 1.45;
+}
+
+.health-enrollment-icon {
+    display: grid;
+    width: 42px;
+    height: 42px;
+    place-items: center;
+    border-radius: 11px;
+    background: #eef3ff;
+    color: var(--brand);
+    font-size: 1rem;
+}
+
+.health-enrollment-options {
+    padding: 0 16px 16px;
+    border-top: 1px solid #e8edf5;
+    background: #fafcff;
+}
+
+.health-enrollment-options[hidden] {
+    display: none !important;
+}
+
+.health-enrollment-options-title {
+    padding: 14px 0 10px;
+    color: #53617a;
+    font-size: .74rem;
+    font-weight: 800;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+}
+
+.health-enrollment-methods {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.health-enrollment-method {
+    min-width: 0;
+    cursor: pointer;
+}
+
+.health-enrollment-method > input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.health-enrollment-method > span {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas:
+        "icon title"
+        "icon text";
+    gap: 3px 10px;
+    min-height: 94px;
+    align-content: center;
+    padding: 13px 14px;
+    border: 1px solid #d8e0ec;
+    border-radius: 10px;
+    background: #fff;
+    transition: border-color .18s ease, box-shadow .18s ease, background-color .18s ease;
+}
+
+.health-enrollment-method > span > i {
+    grid-area: icon;
+    align-self: center;
+    color: #6680bd;
+    font-size: 1.05rem;
+}
+
+.health-enrollment-method strong {
+    grid-area: title;
+    color: #263754;
+    font-size: .82rem;
+}
+
+.health-enrollment-method small {
+    grid-area: text;
+    color: #758196;
+    font-size: .68rem;
+    line-height: 1.4;
+}
+
+.health-enrollment-method > input:checked + span {
+    border-color: #6f8ed7;
+    background: #f3f6ff;
+    box-shadow: 0 0 0 3px rgba(36, 66, 146, .08);
+}
+
+.health-enrollment-method > input:checked + span > i,
+.health-enrollment-method > input:checked + span strong {
+    color: var(--brand);
+}
+
+.health-enrollment-note {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin-top: 12px;
+    padding: 10px 12px;
+    border: 1px solid #dbeafe;
+    border-radius: 9px;
+    background: #eff6ff;
+    color: #1e40af;
+    font-size: .7rem;
+    line-height: 1.45;
+}
+
+.health-enrollment-note i {
+    margin-top: 2px;
+}
+
+@media (max-width: 768px) {
+    .health-enrollment-toggle {
+        grid-template-columns: auto minmax(0, 1fr);
+        padding: 13px 14px;
+    }
+
+    .health-enrollment-icon {
+        display: none;
+    }
+
+    .health-enrollment-methods {
+        grid-template-columns: 1fr;
+    }
+
+    .health-enrollment-method > span {
+        min-height: 82px;
+    }
+}
