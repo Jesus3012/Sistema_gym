@@ -322,6 +322,7 @@ if (!function_exists('expediente_estado_etiqueta')) {
             'sin_observaciones' => 'Sin observaciones',
             'requiere_revision' => 'Requiere revisión',
             'documentacion_pendiente' => 'Documentación pendiente',
+            'rechazado_correccion' => 'Corrección requerida',
         ];
 
         return $mapa[$estado] ?? ucfirst(str_replace('_', ' ', $estado));

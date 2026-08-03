@@ -29,6 +29,15 @@ if (!function_exists('permisos_catalogo_base')) {
                 'tipo_acceso' => 'asignable',
                 'orden' => 15,
             ],
+            'expediente_salud' => [
+                'nombre' => 'Expediente de salud',
+                'descripcion' => 'Consulta de expedientes y seguimiento administrativo de los socios.',
+                'ruta' => 'expediente_salud.php',
+                'grupo' => 'Socios',
+                'icono' => 'fa-heart-pulse',
+                'tipo_acceso' => 'asignable',
+                'orden' => 18,
+            ],
             'inscripciones' => [
                 'nombre' => 'Inscripciones',
                 'descripcion' => 'Altas, renovaciones y administración de membresías.',
@@ -229,6 +238,8 @@ if (!function_exists('permisos_modulo_por_pagina')) {
         $mapa = [
             'dashboard.php' => 'dashboard',
             'socios.php' => 'socios',
+            'expediente_salud.php' => 'expediente_salud',
+            'expediente_salud_imprimir.php' => 'expediente_salud',
             'inscripciones.php' => 'inscripciones',
             'planes.php' => 'planes',
             'asistencias.php' => 'asistencias',
@@ -563,6 +574,15 @@ if (!function_exists('permisos_obtener_mapa_rol')) {
 
         $mapa = permisos_mapa_predeterminado($rol);
 
+        /*
+         * El expediente de salud solo puede asignarse a recepción.
+         * El entrenador conserva su agenda exclusiva aunque exista un
+         * permiso incorrecto o antiguo en la base de datos.
+         */
+        if ($rol === 'entrenador' && array_key_exists('expediente_salud', $mapa)) {
+            $mapa['expediente_salud'] = false;
+        }
+
         if (!permisos_tablas_disponibles($db)) {
             return $mapa;
         }
@@ -648,6 +668,11 @@ if (!function_exists('permisos_obtener_mapa_rol')) {
                 continue;
             }
 
+            if ($rol === 'entrenador' && $clave === 'expediente_salud') {
+                $mapa[$clave] = false;
+                continue;
+            }
+
             if ($tipo !== 'asignable') {
                 $mapa[$clave] = false;
                 continue;
@@ -720,12 +745,23 @@ if (!function_exists('permisos_validar_guardado')) {
 
         $asignables = permisos_modulos_asignables($db);
 
-        return array_values(
+        $seleccionValida = array_values(
             array_intersect(
                 array_keys($asignables),
                 array_map('strval', $seleccionados)
             )
         );
+
+        if ($rol === 'entrenador') {
+            $seleccionValida = array_values(array_filter(
+                $seleccionValida,
+                static function (string $clave): bool {
+                    return $clave !== 'expediente_salud';
+                }
+            ));
+        }
+
+        return $seleccionValida;
     }
 }
 

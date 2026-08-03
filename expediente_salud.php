@@ -6,12 +6,30 @@ require_once __DIR__ . '/includes/auth_guard.php';
 require_once __DIR__ . '/config/database.php';
 require_once __DIR__ . '/includes/super_admin_helper.php';
 require_once __DIR__ . '/includes/expediente_salud_helper.php';
+require_once __DIR__ . '/includes/correo_cola.php';
 
-if (!expediente_es_administrativo()) {
+$rolExpedienteSesion = rol_normalizar_sistema((string) (
+    $_SESSION['user_rol'] ?? ''
+));
+$rolExpedienteBase = rol_base_real_sesion();
+
+$esAdministradorExpediente =
+    rol_es_administrativo($rolExpedienteSesion)
+    || rol_es_administrativo($rolExpedienteBase);
+
+$esRecepcionistaExpediente =
+    $rolExpedienteSesion === 'recepcionista'
+    || $rolExpedienteBase === 'recepcionista';
+
+/*
+ * auth_guard.php ya validó el permiso asignado por sucursal.
+ * Esta segunda barrera evita que otros perfiles reutilicen la pantalla.
+ */
+if (!$esAdministradorExpediente && !$esRecepcionistaExpediente) {
     http_response_code(403);
     $_SESSION['alerta_acceso_denegado'] = [
         'titulo' => 'Acceso restringido',
-        'mensaje' => 'El expediente de salud contiene información sensible y solo puede ser administrado por personal administrativo autorizado.',
+        'mensaje' => 'Tu perfil no puede consultar expedientes de salud.',
         'rol' => (string) ($_SESSION['user_rol'] ?? 'Usuario'),
         'modulo' => 'Expediente de salud',
     ];
@@ -306,10 +324,24 @@ $usuarioNombre = trim((string) ($_SESSION['user_name'] ?? 'Administrador'));
 $sucursalActual = (int) ($_SESSION['sucursal_id'] ?? 0);
 $sucursalNombre = trim((string) ($_SESSION['sucursal_nombre'] ?? 'Sucursal'));
 $vista = strtolower(trim((string) ($_GET['vista'] ?? 'sucursal')));
-$vistaGlobal = $vista === 'global';
+
+/*
+ * Recepción solo consulta la sucursal activa. La vista global y la
+ * configuración del cuestionario permanecen reservadas a administración.
+ */
+$vistaGlobal = $esAdministradorExpediente && $vista === 'global';
 $tab = strtolower(trim((string) ($_GET['tab'] ?? 'expedientes')));
 
-if (!in_array($tab, ['expedientes', 'nuevo', 'configuracion'], true)) {
+/* Compatibilidad con enlaces anteriores: el alta y la gestión ahora viven en un solo panel. */
+if ($tab === 'nuevo') {
+    $tab = 'expedientes';
+}
+
+if (!in_array($tab, ['expedientes', 'configuracion'], true)) {
+    $tab = 'expedientes';
+}
+
+if (!$esAdministradorExpediente) {
     $tab = 'expedientes';
 }
 
@@ -360,6 +392,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $errorFormulario = 'La sesión del formulario venció. Recarga la página e inténtalo nuevamente.';
     } else {
         try {
+            /*
+             * Recepción puede consultar el expediente y registrar únicamente
+             * su seguimiento administrativo. No puede crear, corregir ni
+             * reconfigurar cuestionarios, aunque manipule el formulario.
+             */
+            if (
+                !$esAdministradorExpediente
+                && $accion !== 'resolver_revision_expediente'
+            ) {
+                throw new RuntimeException(
+                    'Tu perfil puede consultar expedientes y registrar seguimientos, pero no modificar el cuestionario ni sus respuestas.'
+                );
+            }
+
             if ($accion === 'guardar_configuracion') {
                 $nombreCuestionario = trim((string) ($_POST['nombre_cuestionario'] ?? ''));
                 $introduccion = trim((string) ($_POST['introduccion'] ?? ''));
@@ -650,25 +696,42 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 $decisionesPermitidas = [
                     'aprobar' => 'sin_observaciones',
-                    'mantener_revision' => 'requiere_revision',
                     'solicitar_documentacion' => 'documentacion_pendiente',
+                    'rechazar_correccion' => 'rechazado_correccion',
                 ];
 
                 if ($expedienteIdRevision <= 0 || !isset($decisionesPermitidas[$decisionRevision])) {
-                    throw new RuntimeException('No fue posible identificar la decisión de revisión.');
+                    throw new RuntimeException('No fue posible identificar la decisión administrativa.');
                 }
 
                 if (
-                    in_array($decisionRevision, ['mantener_revision', 'solicitar_documentacion'], true)
+                    in_array($decisionRevision, ['solicitar_documentacion', 'rechazar_correccion'], true)
                     && $comentarioRevision === ''
                 ) {
-                    throw new RuntimeException('Escribe una observación para indicar qué debe revisarse o qué documento se solicita.');
+                    throw new RuntimeException('Escribe la indicación que recibirá el socio.');
                 }
 
                 $stmt = $conn->prepare(
-                    "SELECT observaciones_admin
-                     FROM expedientes_salud
-                     WHERE id = ?
+                    "SELECT
+                        e.observaciones_admin,
+                        e.estado_seguimiento,
+                        e.cliente_id,
+                        c.nombre,
+                        c.apellido,
+                        c.email,
+                        s.nombre AS sucursal_nombre,
+                        (
+                            SELECT e2.id
+                            FROM expedientes_salud e2
+                            WHERE e2.cliente_id = e.cliente_id
+                            ORDER BY e2.fecha_aplicacion DESC, e2.id DESC
+                            LIMIT 1
+                        ) AS expediente_actual_id
+                     FROM expedientes_salud e
+                     INNER JOIN clientes c ON c.id = e.cliente_id
+                     INNER JOIN sucursales s ON s.id = e.sucursal_id
+                     WHERE e.id = ?
+                       AND (? = 1 OR e.sucursal_id = ?)
                      LIMIT 1"
                 );
 
@@ -676,7 +739,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     throw new RuntimeException('No fue posible consultar el expediente que deseas revisar.');
                 }
 
-                $stmt->bind_param('i', $expedienteIdRevision);
+                $banderaAdministradorExpediente =
+                    $esAdministradorExpediente ? 1 : 0;
+
+                $stmt->bind_param(
+                    'iii',
+                    $expedienteIdRevision,
+                    $banderaAdministradorExpediente,
+                    $sucursalActual
+                );
                 $stmt->execute();
                 $resultadoRevision = $stmt->get_result();
                 $expedienteRevision = $resultadoRevision
@@ -688,11 +759,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     throw new RuntimeException('El expediente seleccionado ya no existe.');
                 }
 
+                if ((int) ($expedienteRevision['expediente_actual_id'] ?? 0) !== $expedienteIdRevision) {
+                    throw new RuntimeException('Las versiones históricas son de solo lectura. Abre el expediente más reciente para registrar una decisión.');
+                }
+
+                if ((string) ($expedienteRevision['estado_seguimiento'] ?? '') === 'rechazado_correccion') {
+                    throw new RuntimeException('Este expediente ya está rechazado para corrección. Debes registrar la corrección antes de tomar otra decisión.');
+                }
+
                 $estadoNuevo = $decisionesPermitidas[$decisionRevision];
                 $etiquetaDecision = [
                     'aprobar' => 'Expediente revisado y aprobado',
-                    'mantener_revision' => 'Expediente mantenido en revisión',
                     'solicitar_documentacion' => 'Se solicitó documentación adicional',
+                    'rechazar_correccion' => 'Expediente rechazado para corrección',
                 ][$decisionRevision];
 
                 $registroRevision = '[' . date('d/m/Y H:i') . '] '
@@ -713,39 +792,66 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 );
 
                 if (!$stmt) {
-                    throw new RuntimeException('No fue posible preparar la actualización de la revisión.');
+                    throw new RuntimeException('No fue posible preparar la actualización del expediente.');
                 }
 
-                $stmt->bind_param(
-                    'ssi',
-                    $estadoNuevo,
-                    $observacionesNuevas,
-                    $expedienteIdRevision
-                );
-
+                $stmt->bind_param('ssi', $estadoNuevo, $observacionesNuevas, $expedienteIdRevision);
                 if (!$stmt->execute()) {
                     $detalle = $stmt->error;
                     $stmt->close();
-                    throw new RuntimeException('No fue posible guardar la revisión: ' . $detalle);
+                    throw new RuntimeException('No fue posible guardar la decisión: ' . $detalle);
                 }
-
                 $stmt->close();
+
+                $emailSocioRevision = trim((string) ($expedienteRevision['email'] ?? ''));
+                $nombreSocioRevision = trim(
+                    (string) ($expedienteRevision['nombre'] ?? '') . ' ' .
+                    (string) ($expedienteRevision['apellido'] ?? '')
+                );
+                $correoRevisionDetalle = '';
+
+                if ($emailSocioRevision !== '' && filter_var($emailSocioRevision, FILTER_VALIDATE_EMAIL)) {
+                    try {
+                        $trabajoCorreoRevision = correo_cola_encolar(
+                            $conn,
+                            'expediente_revision',
+                            [
+                                'expediente_id' => $expedienteIdRevision,
+                                'email' => $emailSocioRevision,
+                                'nombre' => $nombreSocioRevision,
+                                'decision' => $decisionRevision,
+                                'estado' => $estadoNuevo,
+                                'comentario' => $comentarioRevision,
+                                'sucursal' => (string) ($expedienteRevision['sucursal_nombre'] ?? ''),
+                                'administrador' => $usuarioNombre,
+                                'fecha_revision' => date('Y-m-d H:i:s'),
+                            ]
+                        );
+                        correo_cola_disparar_async((string) $trabajoCorreoRevision['token']);
+                        $correoRevisionDetalle = ' La notificación quedó preparada para enviarse a ' . $emailSocioRevision . '.';
+                    } catch (Throwable $correoRevisionError) {
+                        error_log('[Expediente revisión correo] ' . $correoRevisionError->getMessage());
+                        $correoRevisionDetalle = ' La decisión se guardó, pero la notificación por correo quedó pendiente.';
+                    }
+                } else {
+                    $correoRevisionDetalle = ' La decisión se guardó, pero el socio no tiene un correo válido.';
+                }
 
                 expediente_redirigir(
                     'expediente_salud.php?tab=expedientes&ver='
                     . $expedienteIdRevision
+                    . '&cliente_id='
+                    . (int) ($expedienteRevision['cliente_id'] ?? 0)
                     . '&vista='
                     . ($vistaGlobal ? 'global' : 'sucursal')
                     . '&tipo=success&mensaje='
-                    . rawurlencode($etiquetaDecision . '.')
-                    . '#detalleExpediente'
+                    . rawurlencode($etiquetaDecision . '.' . $correoRevisionDetalle)
+                    . '#panelSocio'
                 );
             }
 
             if ($accion === 'guardar_expediente') {
                 $clienteId = (int) ($_POST['cliente_id'] ?? 0);
-                $estadoSeguimiento = trim((string) ($_POST['estado_seguimiento'] ?? 'sin_observaciones'));
-                $observacionesAdmin = trim((string) ($_POST['observaciones_admin'] ?? ''));
                 $aceptaResponsabilidad = isset($_POST['acepta_responsabilidad']) ? 1 : 0;
                 $nombreFirmante = trim((string) ($_POST['nombre_firmante'] ?? ''));
                 $parentescoFirmante = trim((string) ($_POST['parentesco_firmante'] ?? 'Socio'));
@@ -760,8 +866,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     throw new RuntimeException('El socio seleccionado no existe o se encuentra inactivo.');
                 }
 
-                if (!in_array($estadoSeguimiento, ['sin_observaciones', 'requiere_revision', 'documentacion_pendiente'], true)) {
-                    $estadoSeguimiento = 'sin_observaciones';
+                $stmtActual = $conn->prepare(
+                    "SELECT id, estado_seguimiento, observaciones_admin
+                     FROM expedientes_salud
+                     WHERE cliente_id = ?
+                     ORDER BY fecha_aplicacion DESC, id DESC
+                     LIMIT 1"
+                );
+                if (!$stmtActual) {
+                    throw new RuntimeException('No fue posible verificar el expediente actual.');
+                }
+                $stmtActual->bind_param('i', $clienteId);
+                $stmtActual->execute();
+                $resultadoActual = $stmtActual->get_result();
+                $expedienteAnterior = $resultadoActual ? $resultadoActual->fetch_assoc() : null;
+                $stmtActual->close();
+
+                $expedienteAnteriorId = (int) ($expedienteAnterior['id'] ?? 0);
+                $esCorreccion = $expedienteAnteriorId > 0;
+
+                if (
+                    $esCorreccion
+                    && (string) ($expedienteAnterior['estado_seguimiento'] ?? '') !== 'rechazado_correccion'
+                ) {
+                    throw new RuntimeException(
+                        'El expediente está bloqueado. Para modificar respuestas primero debes usar “Rechazar para corrección” desde la revisión administrativa.'
+                    );
                 }
 
                 if (!$aceptaResponsabilidad || $nombreFirmante === '') {
@@ -794,7 +924,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                     $generaAlerta = expediente_respuesta_genera_alerta($pregunta, $respuesta) ? 1 : 0;
                     $alertas += $generaAlerta;
-
                     $respuestas[] = [
                         'pregunta' => $pregunta,
                         'respuesta' => $respuesta,
@@ -802,14 +931,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     ];
                 }
 
-                if ($alertas > 0 && $estadoSeguimiento === 'sin_observaciones') {
-                    $estadoSeguimiento = 'requiere_revision';
-                }
+                // El estado se calcula; ya no puede elegirse desde el formulario.
+                $estadoSeguimiento = $alertas > 0 ? 'requiere_revision' : 'sin_observaciones';
+                $registroCreacion = '[' . date('d/m/Y H:i') . '] ' . $usuarioNombre . ': '
+                    . ($esCorreccion
+                        ? 'Se registró una versión corregida del expediente #' . $expedienteAnteriorId . '.'
+                        : 'Se creó el expediente de salud.');
+                $observacionesAdmin = $registroCreacion;
 
                 $gimnasioNombre = $gimnasioNombreSistema;
-
-                $sucursalAplicacionId = $sucursalActual > 0 ? $sucursalActual : (int) $cliente['sucursal_registro_id'];
+                $sucursalAplicacionId = $sucursalActual > 0
+                    ? $sucursalActual
+                    : (int) $cliente['sucursal_registro_id'];
                 $sucursalAplicacionNombre = $sucursalNombre;
+
                 if ($sucursalAplicacionNombre === '' || $vistaGlobal) {
                     $stmtSucursal = $conn->prepare("SELECT nombre FROM sucursales WHERE id = ? LIMIT 1");
                     if ($stmtSucursal) {
@@ -897,8 +1032,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $expedienteId = (int) $conn->insert_id;
                     $stmt->close();
 
-                    $sqlRespuesta = "
-                        INSERT INTO expedientes_salud_respuestas (
+                    $stmtRespuesta = $conn->prepare(
+                        "INSERT INTO expedientes_salud_respuestas (
                             expediente_id,
                             pregunta_id,
                             seccion_snapshot,
@@ -908,9 +1043,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             respuesta_texto,
                             genera_alerta,
                             orden_snapshot
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ";
-                    $stmtRespuesta = $conn->prepare($sqlRespuesta);
+                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                    );
                     if (!$stmtRespuesta) {
                         throw new RuntimeException('No fue posible preparar las respuestas del cuestionario.');
                     }
@@ -962,13 +1096,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $stmtHash->execute();
                     $stmtHash->close();
 
+                    if ($esCorreccion) {
+                        $registroCierre = '[' . date('d/m/Y H:i') . '] ' . $usuarioNombre
+                            . ': La corrección fue registrada como expediente #' . $expedienteId . '.';
+                        $stmtAnterior = $conn->prepare(
+                            "UPDATE expedientes_salud
+                             SET observaciones_admin = CONCAT(
+                                 COALESCE(observaciones_admin, ''),
+                                 CASE WHEN COALESCE(observaciones_admin, '') = '' THEN '' ELSE '\n' END,
+                                 ?
+                             )
+                             WHERE id = ?"
+                        );
+                        if ($stmtAnterior) {
+                            $stmtAnterior->bind_param('si', $registroCierre, $expedienteAnteriorId);
+                            $stmtAnterior->execute();
+                            $stmtAnterior->close();
+                        }
+                    }
+
                     $conn->commit();
                 } catch (Throwable $e) {
                     $conn->rollback();
                     throw $e;
                 }
 
-                expediente_redirigir('expediente_salud.php?tab=expedientes&ver=' . $expedienteId . '&vista=' . ($vistaGlobal ? 'global' : 'sucursal') . '&tipo=success&mensaje=' . rawurlencode('Cuestionario médico y aceptación del documento guardados.'));
+                expediente_redirigir(
+                    'expediente_salud.php?tab=expedientes&cliente_id=' . $clienteId
+                    . '&ver=' . $expedienteId
+                    . '&vista=' . ($vistaGlobal ? 'global' : 'sucursal')
+                    . '&tipo=success&mensaje='
+                    . rawurlencode($esCorreccion
+                        ? 'Corrección registrada. La nueva versión quedó bloqueada y lista para revisión.'
+                        : 'Cuestionario y aceptación guardados. El expediente quedó bloqueado para proteger la información.')
+                    . '#panelSocio'
+                );
             }
         } catch (Throwable $e) {
             $errorFormulario = $e->getMessage();
@@ -987,7 +1149,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $clienteSeleccionadoId = (int) ($_GET['cliente_id'] ?? $_POST['cliente_id'] ?? 0);
-$clienteSeleccionado = $clienteSeleccionadoId > 0 ? expediente_cliente($conn, $clienteSeleccionadoId) : null;
+$clienteSeleccionado = $clienteSeleccionadoId > 0
+    ? expediente_cliente($conn, $clienteSeleccionadoId)
+    : null;
+
+if (
+    $clienteSeleccionado
+    && !$esAdministradorExpediente
+    && (int) ($clienteSeleccionado['sucursal_registro_id'] ?? 0)
+        !== $sucursalActual
+) {
+    $clienteSeleccionado = null;
+    $clienteSeleccionadoId = 0;
+    $errorFormulario =
+        'El socio solicitado no pertenece a la sucursal activa.';
+}
+
 $ultimoExpedienteCliente = null;
 $respuestasPreviasCliente = [];
 
@@ -1036,6 +1213,12 @@ if ($clienteSeleccionado) {
 }
 
 $expedienteVerId = (int) ($_GET['ver'] ?? 0);
+if ($expedienteVerId <= 0 && $ultimoExpedienteCliente) {
+    $expedienteVerId = (int) ($ultimoExpedienteCliente['id'] ?? 0);
+}
+if ($expedienteVerId <= 0 && $clienteSeleccionado && $ultimoExpedienteCliente) {
+    $expedienteVerId = (int) ($ultimoExpedienteCliente['id'] ?? 0);
+}
 $expedienteDetalle = null;
 $respuestasDetalle = [];
 $historialCliente = [];
@@ -1055,11 +1238,20 @@ if ($expedienteVerId > 0) {
         INNER JOIN sucursales s ON s.id = e.sucursal_id
         INNER JOIN usuarios u ON u.id = e.aplicado_por
         WHERE e.id = ?
+          AND (? = 1 OR e.sucursal_id = ?)
         LIMIT 1
     ";
     $stmt = $conn->prepare($sql);
     if ($stmt) {
-        $stmt->bind_param('i', $expedienteVerId);
+        $banderaAdministradorDetalle =
+            $esAdministradorExpediente ? 1 : 0;
+
+        $stmt->bind_param(
+            'iii',
+            $expedienteVerId,
+            $banderaAdministradorDetalle,
+            $sucursalActual
+        );
         $stmt->execute();
         $resultado = $stmt->get_result();
         $expedienteDetalle = $resultado ? $resultado->fetch_assoc() : null;
@@ -1196,7 +1388,7 @@ $sqlStats = "
     SELECT
         SUM(CASE WHEN e.id IS NOT NULL THEN 1 ELSE 0 END) AS con_expediente,
         SUM(CASE WHEN e.vigente_hasta >= CURDATE() THEN 1 ELSE 0 END) AS vigentes,
-        SUM(CASE WHEN e.estado_seguimiento = 'requiere_revision' THEN 1 ELSE 0 END) AS requieren_revision,
+        SUM(CASE WHEN e.estado_seguimiento IN ('requiere_revision', 'documentacion_pendiente', 'rechazado_correccion') THEN 1 ELSE 0 END) AS requieren_revision,
         SUM(CASE WHEN e.id IS NULL THEN 1 ELSE 0 END) AS sin_expediente
     FROM clientes c
     LEFT JOIN expedientes_salud e ON e.id = (
@@ -1269,6 +1461,7 @@ function expediente_url_paginacion_preguntas(int $paginaObjetivo, bool $vistaGlo
 
     return 'expediente_salud.php?' . http_build_query($params) . '#preguntasGuardadas';
 }
+$correoTokensAsync = correo_cola_extraer_tokens_async();
 ?>
 <!doctype html>
 <html lang="es">
@@ -1278,7 +1471,7 @@ function expediente_url_paginacion_preguntas(int $paginaObjetivo, bool $vistaGlo
     <title>Expediente de salud</title>
     <link rel="preconnect" href="https://cdnjs.cloudflare.com">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css">
-    <link rel="stylesheet" href="css/expediente_salud.css?v=1.3.0">
+    <link rel="stylesheet" href="css/expediente_salud.css?v=2.0.0">
     <style>
         .health-review-panel {
             margin-top: 20px;
@@ -1394,13 +1587,83 @@ function expediente_url_paginacion_preguntas(int $paginaObjetivo, bool $vistaGlo
         }
 
         .health-review-history {
-            margin-top: 14px;
-            padding-top: 14px;
+            margin-top: 16px;
+            overflow: hidden;
             border-top: 1px solid rgba(148, 163, 184, .25);
             color: #64748b;
-            font-size: .82rem;
-            white-space: pre-line;
-            line-height: 1.55;
+        }
+
+        .health-review-history summary {
+            display: flex;
+            min-height: 52px;
+            align-items: center;
+            justify-content: space-between;
+            gap: 14px;
+            padding: 12px 2px 0;
+            color: #425675;
+            cursor: pointer;
+            list-style: none;
+            user-select: none;
+        }
+
+        .health-review-history summary::-webkit-details-marker {
+            display: none;
+        }
+
+        .health-review-history-title {
+            display: flex;
+            min-width: 0;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .health-review-history-title > i {
+            display: grid;
+            flex: 0 0 34px;
+            width: 34px;
+            height: 34px;
+            place-items: center;
+            border-radius: 10px;
+            color: #1e3a8a;
+            background: #eef4ff;
+        }
+
+        .health-review-history-title strong,
+        .health-review-history-title small {
+            display: block;
+        }
+
+        .health-review-history-title strong {
+            color: #314563;
+            font-size: .79rem;
+        }
+
+        .health-review-history-title small {
+            margin-top: 2px;
+            color: #718096;
+            font-size: .67rem;
+            font-weight: 500;
+        }
+
+        .health-review-history-chevron {
+            flex: 0 0 auto;
+            transition: transform .2s ease;
+        }
+
+        .health-review-history[open] .health-review-history-chevron {
+            transform: rotate(180deg);
+        }
+
+        .health-review-history-content {
+            margin-top: 8px;
+            padding: 13px 14px;
+            border: 1px solid rgba(148, 163, 184, .22);
+            border-radius: 11px;
+            color: #5f6f85;
+            background: rgba(255, 255, 255, .72);
+            font-size: .76rem;
+            white-space: pre-wrap;
+            line-height: 1.65;
         }
 
         @media (max-width: 700px) {
@@ -1427,27 +1690,29 @@ function expediente_url_paginacion_preguntas(int $paginaObjetivo, bool $vistaGlo
         <div>
             <span class="health-kicker"><i class="fa-solid fa-shield-heart"></i> Información confidencial</span>
             <h1>Expediente de salud</h1>
-            <p>Registra el cuestionario médico del socio y conserva la aceptación del documento de responsabilidad de forma segura.</p>
+            <p>
+                <?php echo $esAdministradorExpediente
+                    ? 'Registra el cuestionario médico del socio y conserva la aceptación del documento de responsabilidad de forma segura.'
+                    : 'Consulta expedientes protegidos y registra el seguimiento administrativo autorizado de los socios de tu sucursal.'; ?>
+            </p>
         </div>
-        <a class="health-primary-button" href="expediente_salud.php?tab=nuevo&vista=<?php echo $vistaGlobal ? 'global' : 'sucursal'; ?>">
-            <i class="fa-solid fa-clipboard-check"></i>
-            Aplicar cuestionario
+        <a class="health-primary-button" href="#listadoSocios">
+            <i class="fa-solid fa-user-magnifying-glass"></i>
+            Buscar socio
         </a>
     </header>
 
-    <nav class="health-tabs" aria-label="Secciones del expediente">
+    <nav class="health-tabs health-tabs-unified" aria-label="Secciones del expediente">
         <a class="<?php echo $tab === 'expedientes' ? 'active' : ''; ?>" href="expediente_salud.php?tab=expedientes&vista=<?php echo $vistaGlobal ? 'global' : 'sucursal'; ?>">
-            <i class="fa-solid fa-folder-open"></i>
-            Expedientes
+            <i class="fa-solid fa-users-gear"></i>
+            Expedientes y seguimiento
         </a>
-        <a class="<?php echo $tab === 'nuevo' ? 'active' : ''; ?>" href="expediente_salud.php?tab=nuevo&vista=<?php echo $vistaGlobal ? 'global' : 'sucursal'; ?>">
-            <i class="fa-solid fa-notes-medical"></i>
-            Nuevo cuestionario
-        </a>
-        <a class="<?php echo $tab === 'configuracion' ? 'active' : ''; ?>" href="expediente_salud.php?tab=configuracion&vista=<?php echo $vistaGlobal ? 'global' : 'sucursal'; ?>">
-            <i class="fa-solid fa-sliders"></i>
-            Preguntas y documento
-        </a>
+        <?php if ($esAdministradorExpediente): ?>
+            <a class="<?php echo $tab === 'configuracion' ? 'active' : ''; ?>" href="expediente_salud.php?tab=configuracion&vista=<?php echo $vistaGlobal ? 'global' : 'sucursal'; ?>">
+                <i class="fa-solid fa-sliders"></i>
+                Preguntas y documento
+            </a>
+        <?php endif; ?>
     </nav>
 
     <?php if ($errorFormulario !== ''): ?>
@@ -1483,7 +1748,7 @@ function expediente_url_paginacion_preguntas(int $paginaObjetivo, bool $vistaGlo
                 <div class="health-stat-card-body">
                     <div class="health-stat-card-copy">
                         <strong><?php echo $estadisticas['requieren_revision']; ?></strong>
-                        <span>Requieren revisión</span>
+                        <span>Pendientes de revisión</span>
                     </div>
                     <i class="fa-solid fa-triangle-exclamation health-stat-card-icon" aria-hidden="true"></i>
                 </div>
@@ -1500,145 +1765,270 @@ function expediente_url_paginacion_preguntas(int $paginaObjetivo, bool $vistaGlo
             </article>
         </section>
 
-        <?php if ($expedienteDetalle): ?>
-            <section class="health-detail-card" id="detalleExpediente">
-                <div class="health-detail-top">
-                    <div>
-                        <span class="health-kicker">Expediente #<?php echo (int) $expedienteDetalle['id']; ?></span>
-                        <h2><?php echo expediente_h(trim($expedienteDetalle['nombre'] . ' ' . $expedienteDetalle['apellido'])); ?></h2>
-                        <p>Aplicado el <?php echo expediente_h(expediente_formatear_fecha($expedienteDetalle['fecha_aplicacion'], true)); ?> por <?php echo expediente_h($expedienteDetalle['administrador_nombre']); ?>.</p>
-                    </div>
-                    <div class="health-detail-actions">
-                        <a class="health-secondary-button" target="_blank" href="expediente_salud_imprimir.php?id=<?php echo (int) $expedienteDetalle['id']; ?>">
-                            <i class="fa-solid fa-print"></i> Imprimir / PDF
-                        </a>
-                        <a class="health-icon-button" href="expediente_salud.php?tab=expedientes&vista=<?php echo $vistaGlobal ? 'global' : 'sucursal'; ?>" aria-label="Cerrar detalle"><i class="fa-solid fa-xmark"></i></a>
-                    </div>
-                </div>
-
-                <div class="health-detail-meta">
-                    <span><i class="fa-solid fa-building"></i> <?php echo expediente_h($expedienteDetalle['sucursal_nombre']); ?></span>
-                    <span><i class="fa-solid fa-calendar-check"></i> Vigente hasta <?php echo expediente_h(expediente_formatear_fecha($expedienteDetalle['vigente_hasta'])); ?></span>
-                    <span class="status <?php echo expediente_h($expedienteDetalle['estado_seguimiento']); ?>"><?php echo expediente_h(expediente_estado_etiqueta($expedienteDetalle['estado_seguimiento'])); ?></span>
-                </div>
-
-                <div class="health-response-list">
-                    <?php $seccionAnterior = ''; ?>
-                    <?php foreach ($respuestasDetalle as $respuesta): ?>
-                        <?php if ($seccionAnterior !== $respuesta['seccion_snapshot']): ?>
-                            <?php $seccionAnterior = (string) $respuesta['seccion_snapshot']; ?>
-                            <h3><?php echo expediente_h($seccionAnterior); ?></h3>
-                        <?php endif; ?>
-                        <article class="<?php echo (int) $respuesta['genera_alerta'] === 1 ? 'has-alert' : ''; ?>">
-                            <div>
-                                <strong><?php echo expediente_h($respuesta['pregunta_snapshot']); ?></strong>
-                                <span><?php echo expediente_h(expediente_respuesta_visible($respuesta)); ?></span>
-                            </div>
-                            <?php if ((int) $respuesta['genera_alerta'] === 1): ?><i class="fa-solid fa-triangle-exclamation" title="Respuesta marcada para revisión"></i><?php endif; ?>
-                        </article>
-                    <?php endforeach; ?>
-                </div>
-
-                <?php
-                $estadoRevisionActual = (string) ($expedienteDetalle['estado_seguimiento'] ?? 'sin_observaciones');
-                $claseRevision = $estadoRevisionActual === 'requiere_revision'
-                    ? 'is-review'
-                    : ($estadoRevisionActual === 'documentacion_pendiente' ? 'is-pending' : 'is-approved');
-                ?>
-                <section class="health-review-panel <?php echo expediente_h($claseRevision); ?>">
-                    <div class="health-review-heading">
+        <?php if ($clienteSeleccionado): ?>
+            <?php
+            $tieneExpedientePanel = !empty($ultimoExpedienteCliente['id']);
+            $expedienteActualId = (int) ($ultimoExpedienteCliente['id'] ?? 0);
+            $estadoPanelSocio = (string) ($ultimoExpedienteCliente['estado_seguimiento'] ?? '');
+            $expedienteMostradoId = (int) ($expedienteDetalle['id'] ?? 0);
+            $esVersionActual = !$tieneExpedientePanel || $expedienteMostradoId === $expedienteActualId;
+            $modoCorreccion = $tieneExpedientePanel
+                && $esVersionActual
+                && $estadoPanelSocio === 'rechazado_correccion';
+            $mostrarFormulario = $esAdministradorExpediente && (!$tieneExpedientePanel || $modoCorreccion);
+            $aceptadoPanel = (int) ($ultimoExpedienteCliente['acepta_responsabilidad'] ?? 0) === 1;
+            $estadoPanelEtiqueta = !$tieneExpedientePanel
+                ? 'Sin expediente'
+                : expediente_estado_etiqueta($estadoPanelSocio);
+            $estadoPanelClase = !$tieneExpedientePanel ? 'pending' : $estadoPanelSocio;
+            $historialVisibleTexto = trim((string) ($expedienteDetalle['observaciones_admin'] ?? $ultimoExpedienteCliente['observaciones_admin'] ?? ''));
+            $historialEventos = $historialVisibleTexto !== ''
+                ? (preg_split('/\R/u', $historialVisibleTexto, -1, PREG_SPLIT_NO_EMPTY) ?: [])
+                : [];
+            ?>
+            <section class="health-case-workspace health-case-workspace-clean" id="panelSocio">
+                <header class="health-case-overview">
+                    <div class="health-case-identity">
+                        <span class="health-member-avatar large"><?php echo expediente_h(strtoupper(substr((string) $clienteSeleccionado['nombre'], 0, 1) . substr((string) $clienteSeleccionado['apellido'], 0, 1))); ?></span>
                         <div>
-                            <span class="health-kicker">Revisión administrativa</span>
-                            <h3>
-                                <?php echo $estadoRevisionActual === 'requiere_revision'
-                                    ? 'Este expediente necesita verificación'
-                                    : ($estadoRevisionActual === 'documentacion_pendiente'
-                                        ? 'Hay documentación pendiente'
-                                        : 'Expediente revisado sin observaciones'); ?>
-                            </h3>
+                            <span class="health-kicker">Expediente del socio</span>
+                            <h2><?php echo expediente_h(expediente_nombre_cliente($clienteSeleccionado)); ?></h2>
                             <p>
-                                Las alertas se generan automáticamente según las respuestas configuradas.
-                                Revisa la información y registra una decisión. Aprobar no elimina ni modifica
-                                las respuestas originales.
+                                <span><i class="fa-solid fa-phone"></i> <?php echo expediente_h($clienteSeleccionado['telefono'] ?: 'Sin teléfono'); ?></span>
+                                <span><i class="fa-solid fa-envelope"></i> <?php echo expediente_h($clienteSeleccionado['email'] ?: 'Sin correo'); ?></span>
+                                <span><i class="fa-solid fa-building"></i> <?php echo expediente_h($clienteSeleccionado['sucursal_registro'] ?: 'Sin sucursal'); ?></span>
                             </p>
                         </div>
-                        <span class="health-review-count">
-                            <?php echo (int) ($expedienteDetalle['total_alertas'] ?? 0); ?>
-                            alerta(s)
-                        </span>
                     </div>
-
-                    <form method="post" class="health-review-form">
-                        <input type="hidden" name="accion" value="resolver_revision_expediente">
-                        <input type="hidden" name="csrf" value="<?php echo expediente_h($csrf); ?>">
-                        <input type="hidden" name="expediente_id" value="<?php echo (int) $expedienteDetalle['id']; ?>">
-
-                        <textarea
-                            name="observaciones_revision"
-                            placeholder="Escribe el resultado de la revisión, indicaciones para el socio o documentos que debe presentar."
-                        ></textarea>
-
-                        <div class="health-review-actions">
-                            <button
-                                class="health-review-button documents"
-                                type="submit"
-                                name="decision_revision"
-                                value="solicitar_documentacion"
-                            >
-                                <i class="fa-solid fa-file-circle-exclamation"></i>
-                                Solicitar documentación
-                            </button>
-
-                            <button
-                                class="health-review-button review"
-                                type="submit"
-                                name="decision_revision"
-                                value="mantener_revision"
-                            >
-                                <i class="fa-solid fa-clock-rotate-left"></i>
-                                Mantener en revisión
-                            </button>
-
-                            <button
-                                class="health-review-button approve"
-                                type="submit"
-                                name="decision_revision"
-                                value="aprobar"
-                                onclick="return confirm('¿Confirmas que revisaste las respuestas y deseas aprobar este expediente?');"
-                            >
-                                <i class="fa-solid fa-circle-check"></i>
-                                Aprobar expediente
-                            </button>
-                        </div>
-                    </form>
-
-                    <?php if (trim((string) ($expedienteDetalle['observaciones_admin'] ?? '')) !== ''): ?>
-                        <div class="health-review-history"><strong>Historial y observaciones</strong>
-<?php echo expediente_h((string) $expedienteDetalle['observaciones_admin']); ?></div>
-                    <?php endif; ?>
-                </section>
-
-                <div class="health-responsibility-summary">
-                    <div>
-                        <span class="health-kicker">Aceptación registrada</span>
-                        <h3><?php echo expediente_h($expedienteDetalle['documento_titulo_snapshot']); ?></h3>
-                        <p>Aceptado por: <strong><?php echo expediente_h($expedienteDetalle['nombre_firmante']); ?></strong> · <?php echo expediente_h(expediente_parentesco_para_documento((string) $expedienteDetalle['parentesco_firmante'])); ?></p>
+                    <div class="health-case-overview-actions">
+                        <span class="status <?php echo expediente_h($estadoPanelClase); ?>"><?php echo expediente_h($estadoPanelEtiqueta); ?></span>
+                        <a class="health-icon-button" href="expediente_salud.php?tab=expedientes&vista=<?php echo $vistaGlobal ? 'global' : 'sucursal'; ?>#listadoSocios" title="Cerrar panel"><i class="fa-solid fa-xmark"></i></a>
                     </div>
-                    <span class="health-acceptance-badge"><i class="fa-solid fa-circle-check"></i> Documento aceptado</span>
+                </header>
+
+                <div class="health-case-metrics">
+                    <article>
+                        <i class="fa-solid fa-notes-medical"></i>
+                        <span>Último cuestionario</span>
+                        <strong><?php echo $tieneExpedientePanel ? expediente_h(expediente_formatear_fecha((string) $ultimoExpedienteCliente['fecha_aplicacion'], true)) : 'No aplicado'; ?></strong>
+                    </article>
+                    <article>
+                        <i class="fa-solid fa-calendar-check"></i>
+                        <span>Vigencia</span>
+                        <strong><?php echo $tieneExpedientePanel ? expediente_h(expediente_formatear_fecha((string) $ultimoExpedienteCliente['vigente_hasta'])) : 'Pendiente'; ?></strong>
+                    </article>
+                    <article class="<?php echo $aceptadoPanel ? 'is-ok' : 'is-pending'; ?>">
+                        <i class="fa-solid fa-file-signature"></i>
+                        <span>Aceptación</span>
+                        <strong><?php echo $aceptadoPanel ? 'Aceptado el ' . expediente_h(expediente_formatear_fecha((string) $ultimoExpedienteCliente['fecha_aplicacion'])) : 'No registrada'; ?></strong>
+                    </article>
+                    <article class="<?php echo !empty($clienteSeleccionado['email']) ? 'is-ok' : 'is-pending'; ?>">
+                        <i class="fa-solid fa-envelope-circle-check"></i>
+                        <span>Notificaciones</span>
+                        <strong><?php echo !empty($clienteSeleccionado['email']) ? 'Correo disponible' : 'Sin correo válido'; ?></strong>
+                    </article>
                 </div>
 
-                <?php if (count($historialCliente) > 1): ?>
-                    <div class="health-history-strip">
-                        <strong>Historial del socio</strong>
-                        <div>
-                            <?php foreach ($historialCliente as $registroHistorial): ?>
-                                <a class="<?php echo (int) $registroHistorial['id'] === $expedienteVerId ? 'active' : ''; ?>" href="expediente_salud.php?tab=expedientes&ver=<?php echo (int) $registroHistorial['id']; ?>&vista=<?php echo $vistaGlobal ? 'global' : 'sucursal'; ?>#detalleExpediente">
-                                    <span><?php echo expediente_h(expediente_formatear_fecha($registroHistorial['fecha_aplicacion'])); ?></span>
-                                    <small><?php echo (int) $registroHistorial['total_alertas']; ?> respuesta(s) para revisar</small>
-                                </a>
+                <?php if ($mostrarFormulario): ?>
+                    <section class="health-edit-mode <?php echo $modoCorreccion ? 'is-correction' : 'is-first'; ?>">
+                        <div class="health-edit-mode-heading">
+                            <span class="health-edit-mode-icon"><i class="fa-solid <?php echo $modoCorreccion ? 'fa-pen-to-square' : 'fa-clipboard-check'; ?>"></i></span>
+                            <div>
+                                <span class="health-kicker"><?php echo $modoCorreccion ? 'Edición habilitada por rechazo' : 'Primer registro'; ?></span>
+                                <h3><?php echo $modoCorreccion ? 'Corregir respuestas y aceptación' : 'Aplicar cuestionario y aceptación'; ?></h3>
+                                <p><?php echo $modoCorreccion
+                                    ? 'El expediente fue rechazado expresamente. Al guardar se creará una nueva versión y la anterior permanecerá intacta en el historial.'
+                                    : 'Al guardar, el expediente quedará bloqueado. Solo podrá corregirse si un administrador lo rechaza para corrección.'; ?></p>
+                            </div>
+                        </div>
+                    </section>
+
+                    <form method="post" class="health-questionnaire health-single-form" id="healthQuestionnaireForm">
+                        <input type="hidden" name="accion" value="guardar_expediente">
+                        <input type="hidden" name="csrf" value="<?php echo expediente_h($csrf); ?>">
+                        <input type="hidden" name="cliente_id" value="<?php echo (int) $clienteSeleccionado['id']; ?>">
+
+                        <section class="health-panel compact health-questionnaire-intro">
+                            <div class="health-panel-heading"><div><span class="health-kicker">Cuestionario vigente</span><h2><?php echo expediente_h($configuracion['nombre_cuestionario'] ?? 'Cuestionario médico'); ?></h2><p><?php echo expediente_h($configuracion['introduccion'] ?? ''); ?></p></div></div>
+                        </section>
+
+                        <?php $seccionActual = ''; ?>
+                        <?php foreach ($preguntasActivas as $indice => $pregunta): ?>
+                            <?php if ($seccionActual !== $pregunta['seccion']): ?>
+                                <?php $seccionActual = (string) $pregunta['seccion']; ?>
+                                <?php if ($indice > 0): ?></div></section><?php endif; ?>
+                                <section class="health-question-section"><div class="health-question-section-heading"><span><?php echo $indice + 1; ?></span><div><h2><?php echo expediente_h($seccionActual); ?></h2><p>Registra exactamente la respuesta proporcionada por el socio.</p></div></div><div class="health-question-list">
+                            <?php endif; ?>
+                            <?php
+                            $campo = 'pregunta_' . (int) $pregunta['id'];
+                            $preguntaIdActual = (int) $pregunta['id'];
+                            $tieneRespuestaPrevia = array_key_exists($preguntaIdActual, $respuestasPreviasCliente);
+                            $valorPrevio = (string) ($_POST[$campo] ?? ($respuestasPreviasCliente[$preguntaIdActual] ?? ''));
+                            ?>
+                            <article class="health-question-card <?php echo $tieneRespuestaPrevia ? 'is-prefilled' : ''; ?>">
+                                <label for="<?php echo expediente_h($campo); ?>">
+                                    <?php echo expediente_h($pregunta['pregunta']); ?>
+                                    <?php if ((int) $pregunta['obligatoria'] === 1): ?><span class="required">Obligatoria</span><?php endif; ?>
+                                    <?php if ($pregunta['dispara_alerta'] !== 'ninguna'): ?><span class="review"><i class="fa-solid fa-triangle-exclamation"></i> Puede generar revisión</span><?php endif; ?>
+                                </label>
+                                <?php if ((string) $pregunta['ayuda'] !== ''): ?><p><?php echo expediente_h($pregunta['ayuda']); ?></p><?php endif; ?>
+
+                                <?php if ($pregunta['tipo_respuesta'] === 'si_no'): ?>
+                                    <div class="health-choice-row">
+                                        <label><input type="radio" name="<?php echo expediente_h($campo); ?>" value="1" <?php echo $valorPrevio === '1' ? 'checked' : ''; ?> <?php echo (int) $pregunta['obligatoria'] === 1 ? 'required' : ''; ?>><span><i class="fa-solid fa-check"></i> Sí</span></label>
+                                        <label><input type="radio" name="<?php echo expediente_h($campo); ?>" value="0" <?php echo $valorPrevio === '0' ? 'checked' : ''; ?>><span><i class="fa-solid fa-xmark"></i> No</span></label>
+                                    </div>
+                                <?php elseif ($pregunta['tipo_respuesta'] === 'texto'): ?>
+                                    <textarea id="<?php echo expediente_h($campo); ?>" name="<?php echo expediente_h($campo); ?>" rows="3" <?php echo (int) $pregunta['obligatoria'] === 1 ? 'required' : ''; ?>><?php echo expediente_h($valorPrevio); ?></textarea>
+                                <?php elseif ($pregunta['tipo_respuesta'] === 'numero'): ?>
+                                    <input id="<?php echo expediente_h($campo); ?>" type="number" step="any" name="<?php echo expediente_h($campo); ?>" value="<?php echo expediente_h($valorPrevio); ?>" <?php echo (int) $pregunta['obligatoria'] === 1 ? 'required' : ''; ?>>
+                                <?php elseif ($pregunta['tipo_respuesta'] === 'fecha'): ?>
+                                    <input id="<?php echo expediente_h($campo); ?>" type="date" name="<?php echo expediente_h($campo); ?>" value="<?php echo expediente_h($valorPrevio); ?>" <?php echo (int) $pregunta['obligatoria'] === 1 ? 'required' : ''; ?>>
+                                <?php elseif ($pregunta['tipo_respuesta'] === 'seleccion'): ?>
+                                    <select id="<?php echo expediente_h($campo); ?>" name="<?php echo expediente_h($campo); ?>" <?php echo (int) $pregunta['obligatoria'] === 1 ? 'required' : ''; ?>><option value="">Selecciona una opción</option><?php foreach ($pregunta['opciones'] as $opcion): ?><option value="<?php echo expediente_h($opcion); ?>" <?php echo $valorPrevio === $opcion ? 'selected' : ''; ?>><?php echo expediente_h($opcion); ?></option><?php endforeach; ?></select>
+                                <?php endif; ?>
+                            </article>
+                        <?php endforeach; ?>
+                        <?php if ($preguntasActivas !== []): ?></div></section><?php endif; ?>
+
+                        <?php
+                        $nombreAceptanteActual = (string) (
+                            $_POST['nombre_firmante']
+                            ?? ($ultimoExpedienteCliente['nombre_firmante'] ?? expediente_nombre_cliente($clienteSeleccionado))
+                        );
+                        $parentescoAceptanteActual = (string) (
+                            $_POST['parentesco_firmante']
+                            ?? ($ultimoExpedienteCliente['parentesco_firmante'] ?? 'Socio')
+                        );
+                        $aceptacionYaMarcada = isset($_POST['acepta_responsabilidad'])
+                            || ((int) ($ultimoExpedienteCliente['acepta_responsabilidad'] ?? 0) === 1);
+                        ?>
+
+                        <section class="health-question-section responsibility">
+                            <div class="health-question-section-heading"><span><i class="fa-solid fa-file-circle-check"></i></span><div><h2><?php echo expediente_h($configuracion['documento_titulo'] ?? 'Documento de responsabilidad'); ?></h2><p>La aceptación se vinculará a esta nueva versión del expediente.</p></div></div>
+                            <div class="health-document-preview" id="healthDocumentPreview" data-template="<?php echo expediente_h(expediente_limpiar_repeticion_documento((string) ($configuracion['documento_texto'] ?? ''))); ?>"><?php echo nl2br(expediente_h(expediente_documento_con_datos((string) ($configuracion['documento_texto'] ?? ''), ['gimnasio' => $gimnasioNombreSistema, 'socio' => expediente_nombre_cliente($clienteSeleccionado), 'fecha' => date('d/m/Y'), 'sucursal' => $sucursalNombre, 'administrador' => $usuarioNombre, 'firmante' => $nombreAceptanteActual, 'parentesco' => $parentescoAceptanteActual]))); ?></div>
+                            <div class="health-acceptance-panel">
+                                <div class="health-acceptance-grid">
+                                    <label class="health-field"><span>Nombre de quien acepta</span><input id="healthAcceptingPerson" type="text" name="nombre_firmante" value="<?php echo expediente_h($nombreAceptanteActual); ?>" required></label>
+                                    <label class="health-field"><span>Relación con el socio</span><select id="healthAcceptingRelation" name="parentesco_firmante"><option value="Socio" data-document-label="socio" <?php echo $parentescoAceptanteActual === 'Socio' ? 'selected' : ''; ?>>Es el socio</option><option value="Madre/Padre/Tutor" data-document-label="madre, padre o tutor" <?php echo $parentescoAceptanteActual === 'Madre/Padre/Tutor' ? 'selected' : ''; ?>>Madre, padre o tutor</option><option value="Responsable legal" data-document-label="responsable legal" <?php echo $parentescoAceptanteActual === 'Responsable legal' ? 'selected' : ''; ?>>Responsable legal</option><option value="Otro" data-document-label="otro responsable" <?php echo $parentescoAceptanteActual === 'Otro' ? 'selected' : ''; ?>>Otro responsable</option></select></label>
+                                </div>
+                                <label class="health-acceptance-check prominent"><input type="checkbox" name="acepta_responsabilidad" value="1" required <?php echo $aceptacionYaMarcada ? 'checked' : ''; ?>><span><strong>Confirmo que el socio o responsable leyó y aceptó el documento.</strong><small>Al guardar, la nueva versión volverá a quedar bloqueada.</small></span><i class="fa-solid fa-circle-check health-acceptance-check-icon"></i></label>
+                            </div>
+                        </section>
+
+                        <footer class="health-form-footer health-form-footer-secure">
+                            <div><i class="fa-solid fa-lock"></i><span><?php echo $modoCorreccion ? 'La corrección creará una versión nueva; el expediente rechazado no será alterado.' : 'Después de guardar, las respuestas no podrán editarse directamente.'; ?></span></div>
+                            <button class="health-primary-button" type="submit"><i class="fa-solid fa-floppy-disk"></i> <?php echo $modoCorreccion ? 'Guardar corrección' : 'Crear expediente'; ?></button>
+                        </footer>
+                    </form>
+                <?php elseif (!$tieneExpedientePanel && !$esAdministradorExpediente): ?>
+                    <div class="health-readonly-notice">
+                        <i class="fa-solid fa-circle-info"></i>
+                        <span>
+                            Este socio todavía no tiene expediente de salud.
+                            La aplicación inicial del cuestionario debe realizarla
+                            un administrador.
+                        </span>
+                    </div>
+                <?php elseif ($expedienteDetalle): ?>
+                    <section class="health-record-readonly">
+                        <header class="health-record-toolbar">
+                            <div>
+                                <span class="health-kicker"><?php echo $esVersionActual ? 'Expediente actual' : 'Versión histórica · solo lectura'; ?></span>
+                                <h3>Expediente #<?php echo (int) $expedienteDetalle['id']; ?></h3>
+                                <p>Aplicado el <?php echo expediente_h(expediente_formatear_fecha((string) $expedienteDetalle['fecha_aplicacion'], true)); ?> por <?php echo expediente_h((string) $expedienteDetalle['administrador_nombre']); ?>.</p>
+                            </div>
+                            <a class="health-secondary-button" target="_blank" href="expediente_salud_imprimir.php?id=<?php echo (int) $expedienteDetalle['id']; ?>"><i class="fa-solid fa-print"></i> Imprimir / PDF</a>
+                        </header>
+
+                        <div class="health-readonly-notice"><i class="fa-solid fa-lock"></i><span>Las respuestas están protegidas. Solo se habilita una corrección cuando el expediente actual es rechazado expresamente.</span></div>
+
+                        <div class="health-response-list health-response-list-single">
+                            <?php $seccionAnterior = ''; ?>
+                            <?php foreach ($respuestasDetalle as $respuesta): ?>
+                                <?php if ($seccionAnterior !== $respuesta['seccion_snapshot']): ?>
+                                    <?php $seccionAnterior = (string) $respuesta['seccion_snapshot']; ?>
+                                    <h3><?php echo expediente_h($seccionAnterior); ?></h3>
+                                <?php endif; ?>
+                                <article class="<?php echo (int) $respuesta['genera_alerta'] === 1 ? 'has-alert' : ''; ?>">
+                                    <div><strong><?php echo expediente_h($respuesta['pregunta_snapshot']); ?></strong><span><?php echo expediente_h(expediente_respuesta_visible($respuesta)); ?></span></div>
+                                    <?php if ((int) $respuesta['genera_alerta'] === 1): ?><i class="fa-solid fa-triangle-exclamation" title="Respuesta marcada para revisión"></i><?php endif; ?>
+                                </article>
                             <?php endforeach; ?>
                         </div>
-                    </div>
+
+                        <div class="health-responsibility-summary">
+                            <div><span class="health-kicker">Aceptación registrada</span><h3><?php echo expediente_h($expedienteDetalle['documento_titulo_snapshot']); ?></h3><p>Aceptado por <strong><?php echo expediente_h($expedienteDetalle['nombre_firmante']); ?></strong> · <?php echo expediente_h(expediente_parentesco_para_documento((string) $expedienteDetalle['parentesco_firmante'])); ?> · <?php echo expediente_h(expediente_formatear_fecha((string) $expedienteDetalle['fecha_aplicacion'], true)); ?></p></div>
+                            <span class="health-acceptance-badge"><i class="fa-solid fa-circle-check"></i> Aceptado</span>
+                        </div>
+
+                        <?php if ($esVersionActual): ?>
+                            <?php
+                            $estadoRevisionActual = (string) ($expedienteDetalle['estado_seguimiento'] ?? 'sin_observaciones');
+                            $claseRevision = $estadoRevisionActual === 'requiere_revision'
+                                ? 'is-review'
+                                : ($estadoRevisionActual === 'documentacion_pendiente' ? 'is-pending' : 'is-approved');
+                            ?>
+                            <section class="health-review-panel health-review-panel-single <?php echo expediente_h($claseRevision); ?>">
+                                <div class="health-review-heading">
+                                    <div>
+                                        <span class="health-kicker">
+                                            <?php echo $esAdministradorExpediente
+                                                ? 'Decisión administrativa'
+                                                : 'Seguimiento de recepción'; ?>
+                                        </span>
+                                        <h3><?php echo expediente_h(expediente_estado_etiqueta($estadoRevisionActual)); ?></h3>
+                                        <p>
+                                            Solicitar documentos o rechazar envía una notificación al socio;
+                                            aprobar mantiene las respuestas bloqueadas. Ninguna de estas acciones
+                                            permite editar directamente el cuestionario.
+                                        </p>
+                                    </div>
+                                    <span class="health-review-count"><?php echo (int) ($expedienteDetalle['total_alertas'] ?? 0); ?> alerta(s)</span>
+                                </div>
+                                <form method="post" class="health-review-form" id="healthReviewForm">
+                                    <input type="hidden" name="accion" value="resolver_revision_expediente">
+                                    <input type="hidden" name="csrf" value="<?php echo expediente_h($csrf); ?>">
+                                    <input type="hidden" name="expediente_id" value="<?php echo (int) $expedienteDetalle['id']; ?>">
+                                    <textarea name="observaciones_revision" placeholder="Escribe la indicación para el socio o el motivo del rechazo."></textarea>
+                                    <div class="health-review-actions">
+                                        <button class="health-review-button documents" type="submit" name="decision_revision" value="solicitar_documentacion"><i class="fa-solid fa-file-circle-exclamation"></i> Solicitar documentación</button>
+                                        <button class="health-review-button reject" type="submit" name="decision_revision" value="rechazar_correccion" data-review-confirm="rechazar"><i class="fa-solid fa-pen-to-square"></i> Rechazar para corrección</button>
+                                        <button class="health-review-button approve" type="submit" name="decision_revision" value="aprobar" data-review-confirm="aprobar"><i class="fa-solid fa-circle-check"></i> Aprobar expediente</button>
+                                    </div>
+                                </form>
+                            </section>
+                        <?php else: ?>
+                            <div class="health-historical-notice"><i class="fa-solid fa-clock-rotate-left"></i><span>Estás consultando una versión histórica. No se permite cambiar su estado ni sus respuestas.</span></div>
+                        <?php endif; ?>
+                    </section>
+                <?php endif; ?>
+
+                <?php if ($tieneExpedientePanel): ?>
+                    <details class="health-unified-history">
+                        <summary>
+                            <span class="health-unified-history-icon"><i class="fa-solid fa-timeline"></i></span>
+                            <span><strong>Actividad e historial</strong><small><?php echo count($historialEventos); ?> evento(s) · <?php echo count($historialCliente); ?> versión(es)</small></span>
+                            <i class="fa-solid fa-chevron-down health-unified-history-arrow"></i>
+                        </summary>
+                        <div class="health-unified-history-body">
+                            <?php if ($historialEventos !== []): ?>
+                                <div class="health-unified-events">
+                                    <h4>Actividad de la versión seleccionada</h4>
+                                    <?php foreach ($historialEventos as $evento): ?><p><?php echo expediente_h((string) $evento); ?></p><?php endforeach; ?>
+                                </div>
+                            <?php endif; ?>
+                            <div class="health-unified-versions">
+                                <h4>Versiones del expediente</h4>
+                                <?php foreach ($historialCliente as $registroHistorial): ?>
+                                    <a class="<?php echo (int) $registroHistorial['id'] === $expedienteMostradoId ? 'active' : ''; ?>" href="expediente_salud.php?tab=expedientes&cliente_id=<?php echo (int) $clienteSeleccionado['id']; ?>&ver=<?php echo (int) $registroHistorial['id']; ?>&vista=<?php echo $vistaGlobal ? 'global' : 'sucursal'; ?>#panelSocio">
+                                        <span><strong>#<?php echo (int) $registroHistorial['id']; ?> · <?php echo expediente_h(expediente_formatear_fecha((string) $registroHistorial['fecha_aplicacion'], true)); ?></strong><small><?php echo expediente_h(expediente_estado_etiqueta((string) $registroHistorial['estado_seguimiento'])); ?> · <?php echo (int) $registroHistorial['total_alertas']; ?> alerta(s)</small></span>
+                                        <i class="fa-solid fa-chevron-right"></i>
+                                    </a>
+                                <?php endforeach; ?>
+                            </div>
+                        </div>
+                    </details>
                 <?php endif; ?>
             </section>
         <?php endif; ?>
@@ -1666,15 +2056,25 @@ function expediente_url_paginacion_preguntas(int $paginaObjetivo, bool $vistaGlo
                         <?php
                         $tieneExpediente = !empty($socio['expediente_id']);
                         $vigente = $tieneExpediente && (string) $socio['vigente_hasta'] >= $hoy;
-                        $requiereRevision = (string) ($socio['estado_seguimiento'] ?? '') === 'requiere_revision';
+                        $estadoExpedienteSocio = (string) ($socio['estado_seguimiento'] ?? '');
+                        $requiereRevision = $estadoExpedienteSocio === 'requiere_revision';
+                        $documentacionPendiente = $estadoExpedienteSocio === 'documentacion_pendiente';
+                        $rechazadoCorreccion = $estadoExpedienteSocio === 'rechazado_correccion';
+                        $claseEstadoTarjeta = $rechazadoCorreccion
+                            ? 'has-correction-rejected'
+                            : ($documentacionPendiente
+                                ? 'has-documentation-pending'
+                                : ($requiereRevision ? 'has-review-pending' : ''));
                         ?>
-                        <article class="health-member-card">
+                        <article class="health-member-card <?php echo expediente_h($claseEstadoTarjeta); ?>">
                             <div class="health-member-avatar"><?php echo expediente_h(strtoupper(substr((string) $socio['nombre'], 0, 1) . substr((string) $socio['apellido'], 0, 1))); ?></div>
                             <div class="health-member-copy">
                                 <div class="health-member-title">
                                     <h3><?php echo expediente_h(trim($socio['nombre'] . ' ' . $socio['apellido'])); ?></h3>
                                     <?php if (!$tieneExpediente): ?><span class="status pending">Sin expediente</span>
-                                    <?php elseif ($requiereRevision): ?><span class="status requiere_revision">Revisar</span>
+                                    <?php elseif ($rechazadoCorreccion): ?><span class="status rechazado_correccion">Corrección requerida</span>
+                                    <?php elseif ($documentacionPendiente): ?><span class="status documentacion_pendiente" title="El socio debe entregar documentación">Documentación pendiente</span>
+                                    <?php elseif ($requiereRevision): ?><span class="status requiere_revision">Requiere revisión</span>
                                     <?php elseif ($vigente): ?><span class="status vigente">Vigente</span>
                                     <?php else: ?><span class="status expired">Vencido</span><?php endif; ?>
                                 </div>
@@ -1683,12 +2083,9 @@ function expediente_url_paginacion_preguntas(int $paginaObjetivo, bool $vistaGlo
                                 <?php if ($tieneExpediente): ?><small>Última aplicación: <?php echo expediente_h(expediente_formatear_fecha($socio['fecha_aplicacion'])); ?></small><?php endif; ?>
                             </div>
                             <div class="health-member-actions">
-                                <a class="health-primary-small" href="expediente_salud.php?tab=nuevo&cliente_id=<?php echo (int) $socio['id']; ?>&vista=<?php echo $vistaGlobal ? 'global' : 'sucursal'; ?>">
-                                    <i class="fa-solid fa-clipboard-list"></i> <?php echo $tieneExpediente ? 'Actualizar' : 'Aplicar'; ?>
+                                <a class="health-primary-small health-manage-member" href="expediente_salud.php?tab=expedientes&cliente_id=<?php echo (int) $socio['id']; ?><?php echo $tieneExpediente ? '&ver=' . (int) $socio['expediente_id'] : ''; ?>&vista=<?php echo $vistaGlobal ? 'global' : 'sucursal'; ?>#panelSocio">
+                                    <i class="fa-solid fa-sliders"></i> Gestionar
                                 </a>
-                                <?php if ($tieneExpediente): ?>
-                                    <a class="health-icon-button" href="expediente_salud.php?tab=expedientes&ver=<?php echo (int) $socio['expediente_id']; ?>&vista=<?php echo $vistaGlobal ? 'global' : 'sucursal'; ?>#detalleExpediente" title="Ver expediente"><i class="fa-solid fa-eye"></i></a>
-                                <?php endif; ?>
                             </div>
                         </article>
                     <?php endforeach; ?>
@@ -1703,175 +2100,6 @@ function expediente_url_paginacion_preguntas(int $paginaObjetivo, bool $vistaGlo
                 <?php endif; ?>
             <?php endif; ?>
         </section>
-    <?php endif; ?>
-
-    <?php if ($tab === 'nuevo'): ?>
-        <?php if (!$clienteSeleccionado): ?>
-            <section class="health-panel">
-                <div class="health-panel-heading"><div><h2>Selecciona al socio</h2><p>Busca al socio al que se aplicará el cuestionario.</p></div></div>
-                <form class="health-search wide" method="get">
-                    <input type="hidden" name="tab" value="nuevo">
-                    <input type="hidden" name="vista" value="<?php echo $vistaGlobal ? 'global' : 'sucursal'; ?>">
-                    <i class="fa-solid fa-magnifying-glass"></i>
-                    <input type="search" name="q" value="<?php echo expediente_h($busqueda); ?>" placeholder="Escribe nombre, teléfono, correo o QR" autofocus>
-                </form>
-                <div class="health-select-list">
-                    <?php foreach ($socios as $socio): ?>
-                        <a href="expediente_salud.php?tab=nuevo&cliente_id=<?php echo (int) $socio['id']; ?>&vista=<?php echo $vistaGlobal ? 'global' : 'sucursal'; ?>">
-                            <span class="health-member-avatar small"><?php echo expediente_h(strtoupper(substr((string) $socio['nombre'], 0, 1) . substr((string) $socio['apellido'], 0, 1))); ?></span>
-                            <span class="health-select-member-copy">
-                                <strong><?php echo expediente_h(trim($socio['nombre'] . ' ' . $socio['apellido'])); ?></strong>
-                                <small><?php echo expediente_h($socio['telefono'] ?: 'Sin teléfono'); ?> · <?php echo expediente_h($socio['sucursal_registro'] ?? 'Sin sucursal'); ?></small>
-                                <?php if (!empty($socio['expediente_id'])): ?>
-                                    <em class="health-select-saved-status">
-                                        <i class="fa-solid fa-circle-check"></i>
-                                        Cuestionario aceptado el <?php echo expediente_h(expediente_formatear_fecha($socio['fecha_aplicacion'])); ?>
-                                    </em>
-                                <?php endif; ?>
-                            </span>
-                            <span class="health-select-arrow"><i class="fa-solid fa-chevron-right"></i></span>
-                        </a>
-                    <?php endforeach; ?>
-                </div>
-            </section>
-        <?php else: ?>
-            <form method="post" class="health-questionnaire" id="healthQuestionnaireForm">
-                <input type="hidden" name="accion" value="guardar_expediente">
-                <input type="hidden" name="csrf" value="<?php echo expediente_h($csrf); ?>">
-                <input type="hidden" name="cliente_id" value="<?php echo (int) $clienteSeleccionado['id']; ?>">
-
-                <section class="health-selected-member">
-                    <div class="health-member-avatar large"><?php echo expediente_h(strtoupper(substr((string) $clienteSeleccionado['nombre'], 0, 1) . substr((string) $clienteSeleccionado['apellido'], 0, 1))); ?></div>
-                    <div class="health-selected-member-copy">
-                        <span class="health-kicker">Socio seleccionado</span>
-                        <h2><?php echo expediente_h(expediente_nombre_cliente($clienteSeleccionado)); ?></h2>
-                        <p><?php echo expediente_h($clienteSeleccionado['telefono'] ?: 'Sin teléfono'); ?> · <?php echo expediente_h($clienteSeleccionado['sucursal_registro'] ?: 'Sin sucursal'); ?></p>
-                    </div>
-                    <?php if ($ultimoExpedienteCliente): ?>
-                        <span class="health-member-accepted-badge"><i class="fa-solid fa-circle-check"></i> Ya aceptó anteriormente</span>
-                    <?php endif; ?>
-                    <a class="health-secondary-button" href="expediente_salud.php?tab=nuevo&vista=<?php echo $vistaGlobal ? 'global' : 'sucursal'; ?>"><i class="fa-solid fa-repeat"></i> Cambiar socio</a>
-                </section>
-
-                <?php if ($ultimoExpedienteCliente): ?>
-                    <section class="health-previous-record-banner">
-                        <div class="health-previous-record-icon"><i class="fa-solid fa-clock-rotate-left"></i></div>
-                        <div class="health-previous-record-copy">
-                            <span class="health-kicker">Cuestionario anterior encontrado</span>
-                            <strong>Las respuestas y la aceptación anterior ya están cargadas.</strong>
-                            <p>Revisa cada respuesta, actualiza únicamente lo que haya cambiado y confirma nuevamente antes de guardar.</p>
-                        </div>
-                        <div class="health-previous-record-meta">
-                            <span><i class="fa-solid fa-calendar-check"></i> <?php echo expediente_h(expediente_formatear_fecha($ultimoExpedienteCliente['fecha_aplicacion'], true)); ?></span>
-                            <span><i class="fa-solid fa-file-circle-check"></i> Documento aceptado</span>
-                        </div>
-                    </section>
-                <?php endif; ?>
-
-                <section class="health-panel compact health-questionnaire-intro">
-                    <div class="health-panel-heading"><div><span class="health-kicker">Cuestionario vigente</span><h2><?php echo expediente_h($configuracion['nombre_cuestionario'] ?? 'Cuestionario médico'); ?></h2><p><?php echo expediente_h($configuracion['introduccion'] ?? ''); ?></p></div></div>
-                </section>
-
-                <?php $seccionActual = ''; ?>
-                <?php foreach ($preguntasActivas as $indice => $pregunta): ?>
-                    <?php if ($seccionActual !== $pregunta['seccion']): ?>
-                        <?php $seccionActual = (string) $pregunta['seccion']; ?>
-                        <?php if ($indice > 0): ?></div></section><?php endif; ?>
-                        <section class="health-question-section"><div class="health-question-section-heading"><span><?php echo $indice + 1; ?></span><div><h2><?php echo expediente_h($seccionActual); ?></h2><p>Registra exactamente la respuesta proporcionada por el socio.</p></div></div><div class="health-question-list">
-                    <?php endif; ?>
-                    <?php $campo = 'pregunta_' . (int) $pregunta['id']; $preguntaIdActual = (int) $pregunta['id']; $tieneRespuestaPrevia = array_key_exists($preguntaIdActual, $respuestasPreviasCliente); $valorPrevio = (string) ($_POST[$campo] ?? ($respuestasPreviasCliente[$preguntaIdActual] ?? '')); ?>
-                    <article class="health-question-card <?php echo $tieneRespuestaPrevia ? 'is-prefilled' : ''; ?>">
-                        <label for="<?php echo expediente_h($campo); ?>">
-                            <?php echo expediente_h($pregunta['pregunta']); ?>
-                            <?php if ((int) $pregunta['obligatoria'] === 1): ?><span class="required">Obligatoria</span><?php endif; ?>
-                            <?php if ($pregunta['dispara_alerta'] !== 'ninguna'): ?><span class="review"><i class="fa-solid fa-triangle-exclamation"></i> Puede requerir revisión</span><?php endif; ?>
-                            <?php if ($tieneRespuestaPrevia): ?><span class="health-saved-answer"><i class="fa-solid fa-clock-rotate-left"></i> Respuesta anterior cargada</span><?php endif; ?>
-                        </label>
-                        <?php if ((string) $pregunta['ayuda'] !== ''): ?><p><?php echo expediente_h($pregunta['ayuda']); ?></p><?php endif; ?>
-
-                        <?php if ($pregunta['tipo_respuesta'] === 'si_no'): ?>
-                            <div class="health-choice-row">
-                                <label><input type="radio" name="<?php echo expediente_h($campo); ?>" value="1" <?php echo $valorPrevio === '1' ? 'checked' : ''; ?> <?php echo (int) $pregunta['obligatoria'] === 1 ? 'required' : ''; ?>><span><i class="fa-solid fa-check"></i> Sí</span></label>
-                                <label><input type="radio" name="<?php echo expediente_h($campo); ?>" value="0" <?php echo $valorPrevio === '0' ? 'checked' : ''; ?>><span><i class="fa-solid fa-xmark"></i> No</span></label>
-                            </div>
-                        <?php elseif ($pregunta['tipo_respuesta'] === 'texto'): ?>
-                            <textarea id="<?php echo expediente_h($campo); ?>" name="<?php echo expediente_h($campo); ?>" rows="3" <?php echo (int) $pregunta['obligatoria'] === 1 ? 'required' : ''; ?> placeholder="Escribe la respuesta del socio"><?php echo expediente_h($valorPrevio); ?></textarea>
-                        <?php elseif ($pregunta['tipo_respuesta'] === 'numero'): ?>
-                            <input id="<?php echo expediente_h($campo); ?>" type="number" step="any" name="<?php echo expediente_h($campo); ?>" value="<?php echo expediente_h($valorPrevio); ?>" <?php echo (int) $pregunta['obligatoria'] === 1 ? 'required' : ''; ?>>
-                        <?php elseif ($pregunta['tipo_respuesta'] === 'fecha'): ?>
-                            <input id="<?php echo expediente_h($campo); ?>" type="date" name="<?php echo expediente_h($campo); ?>" value="<?php echo expediente_h($valorPrevio); ?>" <?php echo (int) $pregunta['obligatoria'] === 1 ? 'required' : ''; ?>>
-                        <?php elseif ($pregunta['tipo_respuesta'] === 'seleccion'): ?>
-                            <select id="<?php echo expediente_h($campo); ?>" name="<?php echo expediente_h($campo); ?>" <?php echo (int) $pregunta['obligatoria'] === 1 ? 'required' : ''; ?>><option value="">Selecciona una opción</option><?php foreach ($pregunta['opciones'] as $opcion): ?><option value="<?php echo expediente_h($opcion); ?>" <?php echo $valorPrevio === $opcion ? 'selected' : ''; ?>><?php echo expediente_h($opcion); ?></option><?php endforeach; ?></select>
-                        <?php endif; ?>
-                    </article>
-                <?php endforeach; ?>
-                <?php if ($preguntasActivas !== []): ?></div></section><?php endif; ?>
-
-                <?php
-                $nombreAceptanteActual = (string) (
-                    $_POST['nombre_firmante']
-                    ?? ($ultimoExpedienteCliente['nombre_firmante'] ?? expediente_nombre_cliente($clienteSeleccionado))
-                );
-                $parentescoAceptanteActual = (string) (
-                    $_POST['parentesco_firmante']
-                    ?? ($ultimoExpedienteCliente['parentesco_firmante'] ?? 'Socio')
-                );
-                $aceptacionYaMarcada = isset($_POST['acepta_responsabilidad'])
-                    || ((int) ($ultimoExpedienteCliente['acepta_responsabilidad'] ?? 0) === 1);
-                $estadoSeguimientoActual = (string) (
-                    $_POST['estado_seguimiento']
-                    ?? ($ultimoExpedienteCliente['estado_seguimiento'] ?? 'sin_observaciones')
-                );
-                ?>
-
-                <section class="health-question-section responsibility">
-                    <div class="health-question-section-heading"><span><i class="fa-solid fa-file-circle-check"></i></span><div><h2><?php echo expediente_h($configuracion['documento_titulo'] ?? 'Documento de responsabilidad'); ?></h2><p>Lee el documento al socio y registra únicamente su aceptación. El sistema no almacena una firma manuscrita.</p></div></div>
-                    <div
-                        class="health-document-preview"
-                        id="healthDocumentPreview"
-                        data-template="<?php echo expediente_h(expediente_limpiar_repeticion_documento((string) ($configuracion['documento_texto'] ?? ''))); ?>"
-                    ><?php echo nl2br(expediente_h(expediente_documento_con_datos((string) ($configuracion['documento_texto'] ?? ''), ['gimnasio' => $gimnasioNombreSistema, 'socio' => expediente_nombre_cliente($clienteSeleccionado), 'fecha' => date('d/m/Y'), 'sucursal' => $sucursalNombre, 'administrador' => $usuarioNombre, 'firmante' => $nombreAceptanteActual, 'parentesco' => $parentescoAceptanteActual]))); ?></div>
-
-                    <div class="health-acceptance-panel">
-                        <div class="health-acceptance-panel-heading">
-                            <div>
-                                <span class="health-kicker">Confirmación de aceptación</span>
-                                <h3>¿Quién acepta el documento?</h3>
-                                <p>Estos datos quedarán vinculados al contenido exacto mostrado arriba.</p>
-                            </div>
-                            <?php if ($ultimoExpedienteCliente && (int) ($ultimoExpedienteCliente['acepta_responsabilidad'] ?? 0) === 1): ?>
-                                <span class="health-previous-acceptance-badge"><i class="fa-solid fa-check"></i> Aceptado anteriormente</span>
-                            <?php endif; ?>
-                        </div>
-
-                        <div class="health-acceptance-grid">
-                            <label class="health-field"><span>Nombre de quien acepta el documento</span><input id="healthAcceptingPerson" type="text" name="nombre_firmante" value="<?php echo expediente_h($nombreAceptanteActual); ?>" required></label>
-                            <label class="health-field"><span>Relación con el socio</span><select id="healthAcceptingRelation" name="parentesco_firmante"><option value="Socio" data-document-label="socio" <?php echo $parentescoAceptanteActual === 'Socio' ? 'selected' : ''; ?>>Es el socio</option><option value="Madre/Padre/Tutor" data-document-label="madre, padre o tutor" <?php echo $parentescoAceptanteActual === 'Madre/Padre/Tutor' ? 'selected' : ''; ?>>Madre, padre o tutor</option><option value="Responsable legal" data-document-label="responsable legal" <?php echo $parentescoAceptanteActual === 'Responsable legal' ? 'selected' : ''; ?>>Responsable legal</option><option value="Otro" data-document-label="otro responsable" <?php echo $parentescoAceptanteActual === 'Otro' ? 'selected' : ''; ?>>Otro responsable</option></select></label>
-                        </div>
-
-                        <label class="health-acceptance-check prominent"><input type="checkbox" name="acepta_responsabilidad" value="1" required <?php echo $aceptacionYaMarcada ? 'checked' : ''; ?>><span><strong>Confirmo que el socio o responsable leyó y aceptó el documento.</strong><small><?php echo $ultimoExpedienteCliente ? 'La casilla se cargó con la aceptación anterior. Verifica el contenido y confirma nuevamente antes de guardar.' : 'Esta confirmación quedará vinculada al expediente y al contenido exacto mostrado en este momento.'; ?></small></span><i class="fa-solid fa-circle-check health-acceptance-check-icon"></i></label>
-
-                        <div class="health-acceptance-info compact">
-                            <i class="fa-solid fa-shield-halved"></i>
-                            <div><strong>Sin almacenamiento de firma manuscrita</strong><span>Solo se guardará el nombre, la relación con el socio, la fecha, la sucursal y el administrador.</span></div>
-                        </div>
-                    </div>
-                </section>
-
-                <section class="health-panel">
-                    <div class="health-panel-heading"><div><h2>Seguimiento administrativo</h2><p>Este resultado no sustituye una valoración médica; únicamente indica si el expediente necesita revisión o documentos adicionales.</p></div></div>
-                    <div class="health-followup-grid">
-                        <label class="health-field"><span>Estado del expediente</span><select name="estado_seguimiento"><option value="sin_observaciones" <?php echo $estadoSeguimientoActual === 'sin_observaciones' ? 'selected' : ''; ?>>Sin observaciones</option><option value="requiere_revision" <?php echo $estadoSeguimientoActual === 'requiere_revision' ? 'selected' : ''; ?>>Requiere revisión</option><option value="documentacion_pendiente" <?php echo $estadoSeguimientoActual === 'documentacion_pendiente' ? 'selected' : ''; ?>>Documentación pendiente</option></select></label>
-                        <label class="health-field full"><span>Observaciones internas</span><textarea name="observaciones_admin" rows="4" placeholder="Ejemplo: solicitar valoración médica antes de iniciar entrenamiento intenso."><?php echo expediente_h((string) ($_POST['observaciones_admin'] ?? ($ultimoExpedienteCliente['observaciones_admin'] ?? ''))); ?></textarea></label>
-                    </div>
-                </section>
-
-                <footer class="health-form-footer">
-                    <div><i class="fa-solid fa-lock"></i><span>La información quedará protegida y visible únicamente para personal administrativo autorizado.</span></div>
-                    <button class="health-primary-button" type="submit"><i class="fa-solid fa-floppy-disk"></i> Guardar expediente</button>
-                </footer>
-            </form>
-        <?php endif; ?>
     <?php endif; ?>
 
     <?php if ($tab === 'configuracion'): ?>
@@ -2120,6 +2348,83 @@ function expediente_url_paginacion_preguntas(int $paginaObjetivo, bool $vistaGlo
         });
     }
 
+    const reviewForm = document.getElementById('healthReviewForm');
+    if (reviewForm && typeof Swal !== 'undefined') {
+        reviewForm.addEventListener('submit', function (event) {
+            const submitter = event.submitter;
+            const decision = submitter
+                ? String(submitter.value || '')
+                : '';
+
+            if (reviewForm.dataset.swalConfirmed === '1') {
+                return;
+            }
+
+            const observation = reviewForm.querySelector(
+                'textarea[name="observaciones_revision"]'
+            );
+            const observationText = observation
+                ? observation.value.trim()
+                : '';
+
+            if (
+                ['solicitar_documentacion', 'rechazar_correccion'].includes(decision)
+                && observationText === ''
+            ) {
+                event.preventDefault();
+                Swal.fire({
+                    icon: 'warning',
+                    title: decision === 'rechazar_correccion'
+                        ? 'Escribe el motivo de la corrección'
+                        : 'Escribe qué documentación se necesita',
+                    text: decision === 'rechazar_correccion'
+                        ? 'Indica claramente qué información debe corregirse antes de habilitar una nueva versión.'
+                        : 'Agrega las indicaciones que recibirá el socio por correo.',
+                    confirmButtonText: 'Entendido',
+                    confirmButtonColor: '#244292'
+                }).then(function () {
+                    if (observation) {
+                        observation.focus();
+                    }
+                });
+                return;
+            }
+
+            if (!['rechazar_correccion', 'aprobar'].includes(decision)) {
+                return;
+            }
+
+            event.preventDefault();
+
+            const isReject = decision === 'rechazar_correccion';
+            Swal.fire({
+                icon: isReject ? 'warning' : 'question',
+                title: isReject
+                    ? '¿Habilitar una corrección?'
+                    : '¿Aprobar este expediente?',
+                html: isReject
+                    ? 'La versión actual quedará protegida en el historial y se habilitará una nueva corrección para el socio.<br><br><strong>Esta acción no elimina las respuestas anteriores.</strong>'
+                    : 'Confirma que revisaste las respuestas y que el expediente puede quedar aprobado.',
+                showCancelButton: true,
+                reverseButtons: true,
+                focusCancel: true,
+                confirmButtonText: isReject
+                    ? 'Sí, habilitar corrección'
+                    : 'Sí, aprobar expediente',
+                cancelButtonText: 'Cancelar',
+                confirmButtonColor: '#244292',
+                cancelButtonColor: '#64748b'
+            }).then(function (result) {
+                if (!result.isConfirmed) {
+                    return;
+                }
+
+                reviewForm.dataset.swalConfirmed = '1';
+                reviewForm.requestSubmit(submitter);
+            });
+        });
+    }
+
     const questionType = document.getElementById('questionType');
     const optionsField = document.getElementById('questionOptionsField');
     function syncOptionsField() {
@@ -2296,6 +2601,46 @@ Declaro que la información proporcionada es verdadera y acepto cumplir las regl
         updateAcceptancePreview();
     }
 
+})();
+</script>
+
+<script>
+(function () {
+    const tokens = <?php echo json_encode(
+        $correoTokensAsync,
+        JSON_UNESCAPED_SLASHES
+        | JSON_HEX_TAG
+        | JSON_HEX_APOS
+        | JSON_HEX_AMP
+        | JSON_HEX_QUOT
+    ); ?>;
+
+    function procesarCorreo(token) {
+        if (!/^[a-f0-9]{64}$/.test(String(token || ''))) {
+            return;
+        }
+
+        const body = 'token=' + encodeURIComponent(token);
+
+        fetch('api/correo/procesar_token.php', {
+            method: 'POST',
+            credentials: 'same-origin',
+            cache: 'no-store',
+            keepalive: true,
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8'
+            },
+            body: body
+        }).catch(function (error) {
+            console.error('La notificación del expediente quedó pendiente para reintento:', error);
+        });
+    }
+
+    tokens.forEach(function (token, index) {
+        window.setTimeout(function () {
+            procesarCorreo(token);
+        }, 500 + (index * 250));
+    });
 })();
 </script>
 </body>

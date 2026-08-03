@@ -264,3 +264,126 @@ function enviarCorreoExpedienteSaludCompletado(
         return false;
     }
 }
+
+
+/** @param array<string,mixed> $payload */
+function enviarCorreoRevisionExpedienteSalud(mysqli $conn, array $payload): bool
+{
+    $GLOBALS['ultimo_error_correo_expediente_salud'] = '';
+    $email = trim((string) ($payload['email'] ?? ''));
+    $nombre = trim((string) ($payload['nombre'] ?? 'Socio')) ?: 'Socio';
+    $decision = trim((string) ($payload['decision'] ?? ''));
+    $comentario = trim((string) ($payload['comentario'] ?? ''));
+    $sucursal = trim((string) ($payload['sucursal'] ?? ''));
+
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        expediente_correo_error('El correo del socio no es válido.');
+        return false;
+    }
+
+    $contenido = [
+        'aprobar' => [
+            'asunto' => 'Tu expediente de salud fue aprobado',
+            'titulo' => 'Expediente aprobado',
+            'mensaje' => 'La revisión administrativa terminó y tu expediente quedó aprobado. No necesitas corregir tus respuestas.',
+            'etiqueta' => 'Revisión completada',
+            'acento' => '#047857',
+            'fondo' => '#ecfdf5',
+            'borde' => '#a7f3d0',
+        ],
+        'solicitar_documentacion' => [
+            'asunto' => 'Documentación requerida para tu expediente',
+            'titulo' => 'Documentación pendiente',
+            'mensaje' => 'El gimnasio necesita documentación o información adicional para continuar con la revisión de tu expediente.',
+            'etiqueta' => 'Acción requerida',
+            'acento' => '#9a6700',
+            'fondo' => '#fffbeb',
+            'borde' => '#fde68a',
+        ],
+        'rechazar_correccion' => [
+            'asunto' => 'Se requiere corregir tu expediente de salud',
+            'titulo' => 'Corrección requerida',
+            'mensaje' => 'La revisión detectó información que debe corregirse. La versión anterior permanecerá protegida y el personal del gimnasio podrá registrar contigo una nueva versión.',
+            'etiqueta' => 'Actualización necesaria',
+            'acento' => '#244292',
+            'fondo' => '#edf2ff',
+            'borde' => '#c7d2fe',
+        ],
+    ][$decision] ?? null;
+
+    if (!$contenido) {
+        expediente_correo_error('La decisión del expediente no es válida.');
+        return false;
+    }
+
+    $paquete = correo_sistema_crear_mailer($conn, 6);
+    if (!$paquete || empty($paquete['mail'])) {
+        return false;
+    }
+
+    /** @var \PHPMailer\PHPMailer\PHPMailer $mail */
+    $mail = $paquete['mail'];
+    $gimnasio = trim((string) ($paquete['gimnasio'] ?? 'EGO')) ?: 'EGO';
+
+    try {
+        $mail->addAddress($email, $nombre);
+        $mail->Subject = $contenido['asunto'] . ' - ' . $gimnasio;
+
+        $indicacion = $comentario !== ''
+            ? '<div style="margin:20px 0;padding:16px 18px;border:1px solid #dfe5ee;border-radius:12px;background:#f8fafc">'
+                . '<div style="margin-bottom:7px;color:#244292;font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase">Indicaciones del gimnasio</div>'
+                . '<div style="color:#526075;font-size:14px;line-height:1.65">'
+                . nl2br(expediente_correo_h($comentario))
+                . '</div></div>'
+            : '';
+
+        $sucursalHtml = $sucursal !== ''
+            ? '<div style="margin-top:16px;color:#64748b;font-size:13px">Sucursal: <strong style="color:#172033">'
+                . expediente_correo_h($sucursal)
+                . '</strong></div>'
+            : '';
+
+        $mail->Body = '<!doctype html><html lang="es"><body style="margin:0;background:#f4f7fb;font-family:Arial,Helvetica,sans-serif;color:#172033">'
+            . '<div style="padding:30px 14px"><div style="max-width:660px;margin:0 auto;background:#ffffff;border:1px solid #dfe5ee;border-radius:18px;overflow:hidden;box-shadow:0 12px 30px rgba(15,39,71,.08)">'
+            . '<div style="padding:26px 30px;background:#244292;color:#ffffff">'
+            . '<div style="font-size:12px;letter-spacing:.08em;text-transform:uppercase;opacity:.86">'
+            . expediente_correo_h($gimnasio)
+            . '</div><h1 style="margin:8px 0 5px;font-size:26px;line-height:1.2">'
+            . expediente_correo_h($contenido['titulo'])
+            . '</h1><p style="margin:0;font-size:14px;line-height:1.5;opacity:.9">Actualización de tu expediente de salud</p></div>'
+            . '<div style="padding:28px 30px">'
+            . '<p style="margin:0 0 16px;font-size:16px">Hola <strong>'
+            . expediente_correo_h($nombre)
+            . '</strong>,</p>'
+            . '<p style="margin:0 0 18px;color:#526075;font-size:14px;line-height:1.7">'
+            . expediente_correo_h($contenido['mensaje'])
+            . '</p>'
+            . '<div style="margin:18px 0;padding:15px 17px;border:1px solid '
+            . $contenido['borde']
+            . ';border-radius:12px;background:'
+            . $contenido['fondo']
+            . '">'
+            . '<div style="color:'
+            . $contenido['acento']
+            . ';font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase">Estado del expediente</div>'
+            . '<div style="margin-top:5px;color:#172033;font-size:17px;font-weight:700">'
+            . expediente_correo_h($contenido['etiqueta'])
+            . '</div></div>'
+            . $indicacion
+            . $sucursalHtml
+            . '<div style="margin-top:22px;padding-top:18px;border-top:1px solid #e6eaf0;color:#7b8799;font-size:12px;line-height:1.55">'
+            . 'Este mensaje comunica únicamente el estado administrativo del expediente. No contiene tus respuestas ni información médica detallada.'
+            . '</div></div></div></div></body></html>';
+
+        $mail->AltBody = "Hola {$nombre}. {$contenido['mensaje']}"
+            . ($comentario !== '' ? "\n\nIndicaciones del gimnasio: {$comentario}" : '')
+            . ($sucursal !== '' ? "\nSucursal: {$sucursal}" : '')
+            . "\n\nEste mensaje solo comunica el estado administrativo de tu expediente.";
+
+        $mail->send();
+        return true;
+    } catch (Throwable $e) {
+        expediente_correo_error($e->getMessage());
+        return false;
+    }
+}

@@ -1188,7 +1188,7 @@ $sidebar_navbar_version = is_file($sidebar_navbar_css)
     <?php
     $puede_dashboard = $sidebar_puede('dashboard');
     $puede_socios = $sidebar_puede('socios');
-    $puede_expediente_salud = rol_es_administrativo($sidebar_user_rol_base);
+    $puede_expediente_salud = $sidebar_puede('expediente_salud');
     $puede_inscripciones = $sidebar_puede('inscripciones');
     $puede_planes = $sidebar_puede('planes');
     $puede_asistencias = $sidebar_puede('asistencias');
@@ -1313,6 +1313,22 @@ $sidebar_navbar_version = is_file($sidebar_navbar_css)
                         <i class="fas fa-chevron-down group-chevron"></i>
                     </button>
                     <ul class="nav-submenu">
+                        <?php if ($puede_inscripciones): ?>
+                            <li>
+                                <a href="inscripciones.php" class="nav-link <?php echo $active_module === 'inscriptions' ? 'active' : ''; ?>">
+                                    <i class="fas fa-id-card"></i>
+                                    <span class="nav-text">Inscripciones</span>
+                                </a>
+                            </li>
+                        <?php endif; ?>
+                        <?php if ($puede_asistencias): ?>
+                            <li>
+                                <a href="asistencias.php" class="nav-link <?php echo $active_module === 'assistance' ? 'active' : ''; ?>">
+                                    <i class="fas fa-fingerprint"></i>
+                                    <span class="nav-text">Asistencias</span>
+                                </a>
+                            </li>
+                        <?php endif; ?>
                         <?php if ($puede_socios): ?>
                             <li>
                                 <a href="socios.php" class="nav-link <?php echo $active_module === 'members' ? 'active' : ''; ?>">
@@ -1333,27 +1349,11 @@ $sidebar_navbar_version = is_file($sidebar_navbar_css)
                                 </a>
                             </li>
                         <?php endif; ?>
-                        <?php if ($puede_inscripciones): ?>
-                            <li>
-                                <a href="inscripciones.php" class="nav-link <?php echo $active_module === 'inscriptions' ? 'active' : ''; ?>">
-                                    <i class="fas fa-id-card"></i>
-                                    <span class="nav-text">Inscripciones</span>
-                                </a>
-                            </li>
-                        <?php endif; ?>
                         <?php if ($puede_planes): ?>
                             <li>
                                 <a href="planes.php" class="nav-link <?php echo $active_module === 'plans' ? 'active' : ''; ?>">
                                     <i class="fas fa-layer-group"></i>
                                     <span class="nav-text">Planes</span>
-                                </a>
-                            </li>
-                        <?php endif; ?>
-                        <?php if ($puede_asistencias): ?>
-                            <li>
-                                <a href="asistencias.php" class="nav-link <?php echo $active_module === 'assistance' ? 'active' : ''; ?>">
-                                    <i class="fas fa-fingerprint"></i>
-                                    <span class="nav-text">Asistencias</span>
                                 </a>
                             </li>
                         <?php endif; ?>

@@ -54,6 +54,7 @@ function correo_cola_encolar(mysqli $conn, string $tipo, array $payload): array
         'inscripcion_renovacion',
         'expediente_invitacion',
         'expediente_completado',
+        'expediente_revision',
     ];
 
     if (!in_array($tipo, $permitidos, true)) {
@@ -344,6 +345,9 @@ function correo_cola_procesar_fila(mysqli $conn, array $fila): array
             (string) ($payload['email'] ?? ''),
             (string) ($payload['nombre'] ?? '')
         );
+    } elseif ($tipo === 'expediente_revision') {
+        require_once __DIR__ . '/correo_expediente_salud.php';
+        $enviado = enviarCorreoRevisionExpedienteSalud($conn, $payload);
     }
 
     $error = correo_sistema_ultimo_error();

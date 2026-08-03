@@ -5,3 +5,6 @@
 [2026-07-31 14:25:55] {"id":9,"tipo":"expediente_invitacion","estado":"enviado","enviado":true,"error":""}
 [2026-07-31 15:03:14] {"id":10,"tipo":"expediente_invitacion","estado":"enviado","enviado":true,"error":""}
 [2026-07-31 15:04:21] {"id":11,"tipo":"expediente_completado","estado":"enviado","enviado":true,"error":""}
+[2026-08-01 19:27:11] {"id":1,"tipo":"expediente_revision","estado":"procesando","enviado":false,"error":""}
+[2026-08-01 20:02:02] {"id":2,"tipo":"expediente_revision","estado":"enviado","enviado":true,"error":""}
+[2026-08-01 20:08:12] {"id":3,"tipo":"expediente_revision","estado":"enviado","enviado":true,"error":""}
