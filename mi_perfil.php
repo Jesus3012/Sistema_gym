@@ -1,12 +1,10 @@
 <?php
-session_start();
 
-if (!isset($_SESSION['user_id'])) {
-    header('Location: login.php');
-    exit();
-}
+declare(strict_types=1);
 
-require_once 'config/database.php';
+require_once __DIR__ . '/includes/auth_guard.php';
+require_once __DIR__ . '/config/database.php';
+require_once __DIR__ . '/includes/two_factor_helper.php';
 
 $database = new Database();
 $conn = $database->getConnection();
@@ -43,9 +41,24 @@ function responderJson(bool $success, string $message, array $extra = []): void
 function obtenerUsuario(mysqli $conn, int $userId): ?array
 {
     $stmt = $conn->prepare(
-        'SELECT id, nombre, email, rol, foto_perfil, fecha_registro, ultimo_cambio_password
-         FROM usuarios
-         WHERE id = ?
+        'SELECT
+            u.id,
+            u.nombre,
+            u.email,
+            u.password,
+            u.rol,
+            u.foto_perfil,
+            u.fecha_registro,
+            u.ultimo_cambio_password,
+            COALESCE(u.auth_version, 1) AS auth_version,
+            COALESCE(u2.enabled, 0) AS two_factor_enabled,
+            u2.secret_encrypted,
+            u2.last_counter,
+            u2.confirmed_at,
+            u2.last_verified_at
+         FROM usuarios u
+         LEFT JOIN usuarios_2fa u2 ON u2.usuario_id = u.id
+         WHERE u.id = ?
          LIMIT 1'
     );
     $stmt->bind_param('i', $userId);
@@ -63,7 +76,60 @@ if (!$user) {
     exit();
 }
 
+if (empty($_SESSION['profile_csrf'])) {
+    $_SESSION['profile_csrf'] = bin2hex(random_bytes(32));
+}
+
+/**
+ * Confirma la contraseña actual y un código TOTP vigente antes de ejecutar
+ * una operación sensible de segundo factor.
+ */
+function perfilValidarSegundoFactor(
+    mysqli $conn,
+    array $user,
+    string $currentPassword,
+    string $code
+): void {
+    if (!password_verify($currentPassword, (string) ($user['password'] ?? ''))) {
+        throw new RuntimeException('La contraseña actual no es correcta.');
+    }
+
+    if (!two_factor_user_enabled($user)) {
+        throw new RuntimeException('La verificación en dos pasos todavía no está activa.');
+    }
+
+    $secret = two_factor_decrypt_secret((string) $user['secret_encrypted']);
+    $counter = two_factor_verify_totp(
+        $secret,
+        $code,
+        (int) ($user['last_counter'] ?? -1),
+        1
+    );
+
+    if ($counter === null) {
+        throw new RuntimeException('El código de la aplicación autenticadora no es válido.');
+    }
+
+    $stmt = $conn->prepare(
+        'UPDATE usuarios_2fa
+         SET last_counter = ?, last_verified_at = NOW(),
+             failed_attempts = 0, locked_until = NULL,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE usuario_id = ?'
+    );
+    $userId = (int) $user['id'];
+    $stmt->bind_param('ii', $counter, $userId);
+    $stmt->execute();
+    $stmt->close();
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $csrf = (string) ($_POST['csrf'] ?? '');
+    $csrfExpected = (string) ($_SESSION['profile_csrf'] ?? '');
+
+    if ($csrfExpected === '' || !hash_equals($csrfExpected, $csrf)) {
+        responderJson(false, 'La sesión de seguridad cambió. Recarga la página.');
+    }
     $action = trim((string) ($_POST['action'] ?? ''));
 
     if ($action === 'update_profile') {
@@ -107,11 +173,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if ($action === 'update_password') {
+        $currentPassword = (string) ($_POST['current_password'] ?? '');
         $newPassword = (string) ($_POST['new_password'] ?? '');
         $confirmPassword = (string) ($_POST['confirm_password'] ?? '');
 
-        if ($newPassword === '' || $confirmPassword === '') {
-            responderJson(false, 'Completa ambos campos de contraseña.');
+        if ($currentPassword === '' || $newPassword === '' || $confirmPassword === '') {
+            responderJson(false, 'Completa la contraseña actual y los dos campos nuevos.');
+        }
+
+        if (!password_verify($currentPassword, (string) ($user['password'] ?? ''))) {
+            responderJson(false, 'La contraseña actual no es correcta.');
         }
 
         if (strlen($newPassword) < 6) {
@@ -125,7 +196,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $hashedPassword = password_hash($newPassword, PASSWORD_DEFAULT);
         $update = $conn->prepare(
             'UPDATE usuarios
-             SET password = ?, password_change_required = 0, ultimo_cambio_password = NOW()
+             SET password = ?,
+                 password_change_required = 0,
+                 ultimo_cambio_password = NOW(),
+                 auth_version = auth_version + 1
              WHERE id = ?'
         );
         $update->bind_param('si', $hashedPassword, $userId);
@@ -134,7 +208,162 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             responderJson(false, 'No se pudo actualizar la contraseña.');
         }
 
-        responderJson(true, 'Contraseña actualizada correctamente.');
+        $versionResult = $conn->prepare(
+            'SELECT auth_version FROM usuarios WHERE id = ? LIMIT 1'
+        );
+        $versionResult->bind_param('i', $userId);
+        $versionResult->execute();
+        $versionRow = $versionResult->get_result()->fetch_assoc();
+        $versionResult->close();
+        $_SESSION['auth_version'] = (int) ($versionRow['auth_version'] ?? 1);
+
+        two_factor_revoke_devices($conn, $userId);
+        two_factor_forget_trusted_cookie();
+
+        two_factor_log_event(
+            $conn,
+            $userId,
+            'password_actualizado',
+            'Se cambió la contraseña y se invalidaron las demás sesiones.'
+        );
+
+        responderJson(true, 'Contraseña actualizada. Las demás sesiones y dispositivos confiables fueron revocados.');
+    }
+
+    if ($action === 'revoke_2fa_devices') {
+        try {
+            perfilValidarSegundoFactor(
+                $conn,
+                $user,
+                (string) ($_POST['current_password'] ?? ''),
+                (string) ($_POST['two_factor_code'] ?? '')
+            );
+
+            two_factor_revoke_devices($conn, $userId);
+            two_factor_forget_trusted_cookie();
+
+            $versionStmt = $conn->prepare(
+                'UPDATE usuarios
+                 SET auth_version = auth_version + 1
+                 WHERE id = ?'
+            );
+            $versionStmt->bind_param('i', $userId);
+            $versionStmt->execute();
+            $versionStmt->close();
+
+            $versionStmt = $conn->prepare(
+                'SELECT auth_version FROM usuarios WHERE id = ? LIMIT 1'
+            );
+            $versionStmt->bind_param('i', $userId);
+            $versionStmt->execute();
+            $newVersionRow = $versionStmt->get_result()->fetch_assoc();
+            $versionStmt->close();
+            $_SESSION['auth_version'] = (int) ($newVersionRow['auth_version'] ?? 1);
+
+            two_factor_log_event(
+                $conn,
+                $userId,
+                '2fa_dispositivos_revocados',
+                'Se revocaron dispositivos confiables y se cerraron las demás sesiones.'
+            );
+
+            responderJson(true, 'Los dispositivos confiables fueron revocados y las demás sesiones se cerraron.');
+        } catch (Throwable $errorSeguridad) {
+            responderJson(false, $errorSeguridad->getMessage());
+        }
+    }
+
+    if ($action === 'regenerate_recovery_codes') {
+        try {
+            perfilValidarSegundoFactor(
+                $conn,
+                $user,
+                (string) ($_POST['current_password'] ?? ''),
+                (string) ($_POST['two_factor_code'] ?? '')
+            );
+
+            $codes = two_factor_generate_recovery_codes(10);
+            $json = two_factor_hash_recovery_codes($codes);
+            $stmt = $conn->prepare(
+                'UPDATE usuarios_2fa
+                 SET recovery_codes_json = ?, updated_at = CURRENT_TIMESTAMP
+                 WHERE usuario_id = ?'
+            );
+            $stmt->bind_param('si', $json, $userId);
+            $stmt->execute();
+            $stmt->close();
+
+            two_factor_log_event(
+                $conn,
+                $userId,
+                '2fa_codigos_regenerados',
+                'Se regeneraron los códigos de recuperación.'
+            );
+
+            responderJson(true, 'Códigos de recuperación regenerados.', [
+                'codes' => $codes,
+            ]);
+        } catch (Throwable $errorSeguridad) {
+            responderJson(false, $errorSeguridad->getMessage());
+        }
+    }
+
+    if ($action === 'reconfigure_2fa') {
+        try {
+            perfilValidarSegundoFactor(
+                $conn,
+                $user,
+                (string) ($_POST['current_password'] ?? ''),
+                (string) ($_POST['two_factor_code'] ?? '')
+            );
+
+            $conn->begin_transaction();
+            try {
+                two_factor_revoke_devices($conn, $userId);
+
+                $delete = $conn->prepare(
+                    'DELETE FROM usuarios_2fa WHERE usuario_id = ?'
+                );
+                $delete->bind_param('i', $userId);
+                $delete->execute();
+                $delete->close();
+
+                $version = $conn->prepare(
+                    'UPDATE usuarios
+                     SET auth_version = auth_version + 1
+                     WHERE id = ?'
+                );
+                $version->bind_param('i', $userId);
+                $version->execute();
+                $version->close();
+
+                $conn->commit();
+            } catch (Throwable $transactionError) {
+                $conn->rollback();
+                throw $transactionError;
+            }
+
+            two_factor_forget_trusted_cookie();
+            two_factor_log_event(
+                $conn,
+                $userId,
+                '2fa_reconfiguracion_iniciada',
+                'Se eliminó la configuración anterior para vincular una nueva aplicación.'
+            );
+
+            $pendingUser = two_factor_get_user($conn, $userId);
+            if (!$pendingUser) {
+                throw new RuntimeException('No fue posible preparar la nueva configuración.');
+            }
+
+            two_factor_start_pending($pendingUser);
+
+            responderJson(true, 'La configuración anterior fue retirada.', [
+                'redirect' => 'configurar_2fa.php',
+            ]);
+        } catch (Throwable $errorSeguridad) {
+            responderJson(false, $errorSeguridad->getMessage());
+        }
     }
 
     if ($action === 'update_photo') {
@@ -198,6 +427,34 @@ $configResult = $conn->query('SELECT nombre FROM configuracion_gimnasio WHERE id
 $configGym = $configResult ? $configResult->fetch_assoc() : [];
 $gymNombre = trim((string) ($configGym['nombre'] ?? 'Ego Gym')) ?: 'Ego Gym';
 
+$config2fa = two_factor_get_config($conn);
+$twoFactorEnabled = two_factor_user_enabled($user);
+$twoFactorRequired = two_factor_role_required(
+    $config2fa,
+    (string) $user['rol']
+);
+
+$trustedDevices = 0;
+$stmtDevices = $conn->prepare(
+    'SELECT COUNT(*) AS total
+     FROM usuarios_2fa_dispositivos
+     WHERE usuario_id = ?
+       AND revoked_at IS NULL
+       AND expires_at > NOW()'
+);
+$stmtDevices->bind_param('i', $userId);
+$stmtDevices->execute();
+$deviceRow = $stmtDevices->get_result()->fetch_assoc();
+$stmtDevices->close();
+$trustedDevices = (int) ($deviceRow['total'] ?? 0);
+
+$twoFactorConfirmed = !empty($user['confirmed_at'])
+    ? date('d/m/Y H:i', strtotime((string) $user['confirmed_at']))
+    : 'Sin configurar';
+$twoFactorLastVerified = !empty($user['last_verified_at'])
+    ? date('d/m/Y H:i', strtotime((string) $user['last_verified_at']))
+    : 'Sin registro';
+
 $roles = [
     'admin' => 'Administrador',
     'recepcionista' => 'Recepcionista',
@@ -222,7 +479,7 @@ $avatarUrl = !empty($user['foto_perfil']) && is_file($user['foto_perfil'])
     <title>Mi perfil - <?php echo htmlspecialchars($gymNombre); ?></title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-    <link rel="stylesheet" href="css/mi_perfil.css?v=2.0.0">
+    <link rel="stylesheet" href="css/mi_perfil.css?v=3.0.0">
 </head>
 <body>
     <?php include 'includes/sidebar.php'; ?>
@@ -394,6 +651,17 @@ $avatarUrl = !empty($user['foto_perfil']) && is_file($user['foto_perfil'])
 
                         <form id="passwordForm" novalidate>
                             <div class="form-grid">
+                                <div class="form-field form-field-full">
+                                    <label for="current_password">Contraseña actual</label>
+                                    <div class="input-control password-control">
+                                        <i class="fas fa-lock" aria-hidden="true"></i>
+                                        <input type="password" id="current_password" name="current_password" autocomplete="current-password" required>
+                                        <button type="button" class="password-toggle" data-target="current_password" aria-label="Mostrar contraseña">
+                                            <i class="fas fa-eye" aria-hidden="true"></i>
+                                        </button>
+                                    </div>
+                                </div>
+
                                 <div class="form-field">
                                     <label for="new_password">Nueva contraseña</label>
                                     <div class="input-control password-control">
@@ -429,6 +697,71 @@ $avatarUrl = !empty($user['foto_perfil']) && is_file($user['foto_perfil'])
                                 </button>
                             </div>
                         </form>
+
+                        <section class="two-factor-profile-card" aria-labelledby="two-factor-profile-title">
+                            <div class="two-factor-profile-heading">
+                                <span class="two-factor-profile-icon">
+                                    <i class="fas fa-shield-halved" aria-hidden="true"></i>
+                                </span>
+                                <div>
+                                    <div class="two-factor-title-row">
+                                        <h2 id="two-factor-profile-title">Verificación en dos pasos</h2>
+                                        <span class="two-factor-status <?php echo $twoFactorEnabled ? 'active' : 'inactive'; ?>">
+                                            <i class="fas <?php echo $twoFactorEnabled ? 'fa-circle-check' : 'fa-circle-xmark'; ?>"></i>
+                                            <?php echo $twoFactorEnabled ? 'Activa' : 'Sin configurar'; ?>
+                                        </span>
+                                    </div>
+                                    <p>Protege tu cuenta con un código temporal generado en tu teléfono.</p>
+                                </div>
+                            </div>
+
+                            <?php if ($twoFactorEnabled): ?>
+                                <div class="two-factor-metrics">
+                                    <div>
+                                        <small>Activada</small>
+                                        <strong><?php echo htmlspecialchars($twoFactorConfirmed, ENT_QUOTES, 'UTF-8'); ?></strong>
+                                    </div>
+                                    <div>
+                                        <small>Última verificación</small>
+                                        <strong><?php echo htmlspecialchars($twoFactorLastVerified, ENT_QUOTES, 'UTF-8'); ?></strong>
+                                    </div>
+                                    <div>
+                                        <small>Dispositivos confiables</small>
+                                        <strong><?php echo (int) $trustedDevices; ?></strong>
+                                    </div>
+                                </div>
+
+                                <div class="two-factor-actions">
+                                    <button type="button" class="security-action-button" data-2fa-action="regenerate_recovery_codes">
+                                        <i class="fas fa-key"></i>
+                                        <span><strong>Nuevos códigos</strong><small>Invalida los códigos anteriores.</small></span>
+                                    </button>
+                                    <button type="button" class="security-action-button" data-2fa-action="revoke_2fa_devices">
+                                        <i class="fas fa-laptop-slash"></i>
+                                        <span><strong>Revocar dispositivos</strong><small>Solicitará el código en todos los equipos.</small></span>
+                                    </button>
+                                    <button type="button" class="security-action-button danger" data-2fa-action="reconfigure_2fa">
+                                        <i class="fas fa-rotate"></i>
+                                        <span><strong>Cambiar autenticador</strong><small>Retira la vinculación actual y crea una nueva.</small></span>
+                                    </button>
+                                </div>
+                            <?php else: ?>
+                                <div class="two-factor-empty">
+                                    <i class="fas fa-mobile-screen-button"></i>
+                                    <div>
+                                        <strong>La cuenta necesita vincular una aplicación autenticadora.</strong>
+                                        <span><?php echo $twoFactorRequired
+                                            ? 'La configuración es obligatoria para tu rol y se solicitará en el próximo inicio.'
+                                            : 'El administrador puede hacer obligatoria esta protección para tu rol.'; ?></span>
+                                    </div>
+                                </div>
+                            <?php endif; ?>
+
+                            <div class="two-factor-privacy-note">
+                                <i class="fas fa-lock"></i>
+                                <span>Los secretos se almacenan cifrados. Nunca se guarda el código de seis dígitos.</span>
+                            </div>
+                        </section>
                     </div>
                 </section>
             </div>
@@ -439,6 +772,7 @@ $avatarUrl = !empty($user['foto_perfil']) && is_file($user['foto_perfil'])
 
     <script>
     const profileEndpoint = 'mi_perfil.php';
+    const profileCsrf = <?php echo json_encode((string) $_SESSION['profile_csrf'], JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT); ?>;
 
     function escapeHtml(value) {
         return String(value ?? '').replace(/[&<>'"]/g, character => ({
@@ -451,6 +785,10 @@ $avatarUrl = !empty($user['foto_perfil']) && is_file($user['foto_perfil'])
     }
 
     async function enviarFormulario(formData) {
+        if (!formData.has('csrf')) {
+            formData.append('csrf', profileCsrf);
+        }
+
         const response = await fetch(profileEndpoint, {
             method: 'POST',
             body: formData,
@@ -654,9 +992,15 @@ $avatarUrl = !empty($user['foto_perfil']) && is_file($user['foto_perfil'])
             event.preventDefault();
 
             const form = event.currentTarget;
+            const currentPassword = document.getElementById('current_password')?.value || '';
             const password = newPassword ? newPassword.value : '';
             const confirm = confirmPassword ? confirmPassword.value : '';
             const button = document.getElementById('btnGuardarPassword');
+
+            if (!currentPassword) {
+                await mostrarError('Escribe tu contraseña actual.');
+                return;
+            }
 
             if (password.length < 6) {
                 await mostrarError('La contraseña debe tener al menos 6 caracteres.');
@@ -670,6 +1014,7 @@ $avatarUrl = !empty($user['foto_perfil']) && is_file($user['foto_perfil'])
 
             const formData = new FormData();
             formData.append('action', 'update_password');
+            formData.append('current_password', currentPassword);
             formData.append('new_password', password);
             formData.append('confirm_password', confirm);
 
@@ -692,6 +1037,104 @@ $avatarUrl = !empty($user['foto_perfil']) && is_file($user['foto_perfil'])
             }
         });
     }
+
+    async function solicitarCredenciales2fa(action) {
+        const labels = {
+            regenerate_recovery_codes: {
+                title: 'Generar nuevos códigos',
+                text: 'Los códigos anteriores dejarán de funcionar.'
+            },
+            revoke_2fa_devices: {
+                title: 'Revocar dispositivos confiables',
+                text: 'Los demás equipos deberán validar nuevamente el segundo factor.'
+            },
+            reconfigure_2fa: {
+                title: 'Cambiar aplicación autenticadora',
+                text: 'La configuración actual se eliminará y tendrás que vincular una nueva.'
+            }
+        };
+
+        const copy = labels[action] || labels.revoke_2fa_devices;
+        const result = await Swal.fire({
+            icon: action === 'reconfigure_2fa' ? 'warning' : 'question',
+            title: copy.title,
+            html:
+                '<p style="margin:0 0 16px;color:#667085;font-size:14px;">' +
+                escapeHtml(copy.text) +
+                '</p>' +
+                '<input id="swalCurrentPassword" type="password" class="swal2-input" placeholder="Contraseña actual" autocomplete="current-password">' +
+                '<input id="swalTwoFactorCode" type="text" class="swal2-input" placeholder="Código de 6 dígitos" inputmode="numeric" autocomplete="one-time-code" maxlength="6">',
+            showCancelButton: true,
+            confirmButtonText: action === 'reconfigure_2fa' ? 'Sí, reconfigurar' : 'Confirmar',
+            cancelButtonText: 'Cancelar',
+            confirmButtonColor: action === 'reconfigure_2fa' ? '#dc2626' : '#1e3a8a',
+            focusConfirm: false,
+            preConfirm: () => {
+                const password = document.getElementById('swalCurrentPassword').value;
+                const code = document.getElementById('swalTwoFactorCode').value.replace(/\D/g, '');
+
+                if (!password || code.length !== 6) {
+                    Swal.showValidationMessage('Escribe tu contraseña actual y un código válido de seis dígitos.');
+                    return false;
+                }
+
+                return { password, code };
+            }
+        });
+
+        if (!result.isConfirmed || !result.value) {
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append('action', action);
+        formData.append('current_password', result.value.password);
+        formData.append('two_factor_code', result.value.code);
+
+        Swal.fire({
+            title: 'Validando seguridad...',
+            allowOutsideClick: false,
+            didOpen: () => Swal.showLoading()
+        });
+
+        try {
+            const data = await enviarFormulario(formData);
+
+            if (Array.isArray(data.codes)) {
+                const codesHtml = data.codes
+                    .map(code => '<code class="swal-recovery-code">' + escapeHtml(code) + '</code>')
+                    .join('');
+
+                await Swal.fire({
+                    icon: 'success',
+                    title: 'Guarda los nuevos códigos',
+                    html:
+                        '<p style="color:#667085;font-size:14px;">Cada código funciona una sola vez. Los anteriores quedaron invalidados.</p>' +
+                        '<div class="swal-recovery-grid">' + codesHtml + '</div>',
+                    confirmButtonText: 'Ya los guardé',
+                    confirmButtonColor: '#1e3a8a',
+                    width: 600
+                });
+                return;
+            }
+
+            if (data.redirect) {
+                window.location.href = data.redirect;
+                return;
+            }
+
+            await mostrarExito(data.message);
+            window.location.reload();
+        } catch (error) {
+            await mostrarError(error.message);
+        }
+    }
+
+    document.querySelectorAll('[data-2fa-action]').forEach(button => {
+        button.addEventListener('click', () => {
+            solicitarCredenciales2fa(button.dataset.twoFactorAction);
+        });
+    });
 
     const fotoInput = document.getElementById('foto_input');
     const avatarImage = document.getElementById('avatar-img');

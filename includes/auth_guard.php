@@ -4,9 +4,8 @@
 
 declare(strict_types=1);
 
-if (session_status() !== PHP_SESSION_ACTIVE) {
-    session_start();
-}
+require_once __DIR__ . '/session_security.php';
+secure_session_start();
 
 function redirigirSeguramente(string $destino): void
 {
@@ -151,6 +150,7 @@ require_once __DIR__ . '/super_admin_helper.php';
 require_once __DIR__ . '/sucursal_context.php';
 require_once __DIR__ . '/permisos_helper.php';
 require_once __DIR__ . '/servicio_plataforma_helper.php';
+require_once __DIR__ . '/two_factor_helper.php';
 
 $databasePermisos = new Database();
 $connPermisos = $databasePermisos->getConnection();
@@ -164,6 +164,25 @@ if (!$connPermisos instanceof mysqli) {
 }
 
 $connPermisos->set_charset('utf8mb4');
+
+try {
+    if (!two_factor_session_is_verified($connPermisos)) {
+        throw new RuntimeException(
+            'La sesión no cuenta con una verificación en dos pasos válida.'
+        );
+    }
+} catch (Throwable $seguridadException) {
+    error_log(
+        '[Auth guard 2FA] '
+        . $seguridadException->getMessage()
+    );
+
+    destruirSesionProtegida();
+
+    redirigirSeguramente(
+        $loginUrl . '?error=sesion_seguridad'
+    );
+}
 
 try {
     $sucursalActual = sucursal_inicializar_sesion(

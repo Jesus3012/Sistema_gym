@@ -10,6 +10,37 @@ require_once __DIR__ . '/includes/auth_guard.php';
 require_once __DIR__ . '/config/database.php';
 require_once __DIR__ . '/includes/servicio_plataforma_helper.php';
 
+/*
+ * Reutiliza la misma integración Point del módulo de Inscripciones.
+ * Si la configuración no está disponible, el dashboard conserva efectivo
+ * y transferencia, pero no permite seleccionar tarjetas.
+ */
+$terminal_point_disponible_dashboard = false;
+$terminal_point_id_dashboard = '';
+
+try {
+    $mpInscripcionesDashboard =
+        __DIR__ . '/includes/mercadopago_inscripciones.php';
+
+    if (is_file($mpInscripcionesDashboard)) {
+        require_once $mpInscripcionesDashboard;
+    }
+
+    $terminal_point_id_dashboard = defined('MP_TERMINAL_ID')
+        ? trim((string) MP_TERMINAL_ID)
+        : '';
+
+    $terminal_point_disponible_dashboard =
+        defined('MP_ACCESS_TOKEN')
+        && trim((string) MP_ACCESS_TOKEN) !== ''
+        && $terminal_point_id_dashboard !== '';
+} catch (Throwable $pointDashboardError) {
+    error_log(
+        '[Dashboard visita Point] '
+        . $pointDashboardError->getMessage()
+    );
+}
+
 /* Permite limpiar cualquier salida previa antes de generar reportes PDF. */
 if (ob_get_level() === 0) {
     ob_start();
@@ -51,6 +82,26 @@ if (!$db instanceof mysqli) {
 }
 
 $db->set_charset('utf8mb4');
+
+/*
+ * Mantiene sincronizado el estado real de las membresías antes de construir
+ * las alertas del dashboard. Los planes de un día se conservan en su historial,
+ * pero no se incluyen en el seguimiento de renovaciones.
+ */
+try {
+    $db->query(
+        "UPDATE inscripciones
+         SET estado = 'vencida'
+         WHERE estado = 'activa'
+           AND fecha_fin IS NOT NULL
+           AND fecha_fin < CURDATE()"
+    );
+} catch (Throwable $estadoInscripcionesError) {
+    error_log(
+        '[Dashboard actualización de vencimientos] '
+        . $estadoInscripcionesError->getMessage()
+    );
+}
 
 /**
  * Ejecuta una consulta preparada y devuelve todas las filas.
@@ -204,6 +255,8 @@ $todos_productos = [];
 $productos_bajo_stock = [];
 $todas_inscripciones = [];
 $vencimientos_proximos = 0;
+$inscripciones_vencidas = 0;
+$vencimientos_en_7_dias = 0;
 $inscripciones_por_vencer = [];
 $todas_clases = [];
 $proximas_clases = [];
@@ -214,6 +267,56 @@ $datos = [];
 $esAdmin = $user_rol === 'admin';
 $esRecepcionista = $user_rol === 'recepcionista';
 $esEntrenador = $user_rol === 'entrenador';
+
+/*
+ * Registro rápido de visitas.
+ *
+ * Se utilizan únicamente planes activos de un día asignados a la sucursal
+ * operativa. El alta rápida conserva las mismas tablas de clientes,
+ * inscripciones, pagos e historial utilizadas por el módulo completo.
+ */
+$puede_registrar_visita_rapida = $esAdmin || $esRecepcionista;
+$planes_visita_rapida = [];
+$dashboard_visita_csrf = '';
+
+if ($puede_registrar_visita_rapida) {
+    if (
+        empty($_SESSION['dashboard_visita_csrf'])
+        || !is_string($_SESSION['dashboard_visita_csrf'])
+    ) {
+        $_SESSION['dashboard_visita_csrf'] = bin2hex(random_bytes(32));
+    }
+
+    $dashboard_visita_csrf = (string) $_SESSION['dashboard_visita_csrf'];
+
+    try {
+        $planes_visita_rapida = dashboardConsultarFilas(
+            $db,
+            "SELECT
+                p.id,
+                p.nombre,
+                p.descripcion,
+                p.duracion_dias,
+                ps.precio
+             FROM planes p
+             INNER JOIN planes_sucursales ps
+                ON ps.plan_id = p.id
+               AND ps.sucursal_id = ?
+             WHERE p.estado = 'activo'
+               AND ps.estado = 'activo'
+               AND p.duracion_dias = 1
+             ORDER BY p.nombre ASC",
+            'i',
+            [$sucursal_id]
+        );
+    } catch (Throwable $visitaPlanesError) {
+        error_log(
+            '[Dashboard planes de visita] '
+            . $visitaPlanesError->getMessage()
+        );
+        $planes_visita_rapida = [];
+    }
+}
 
 /*
  * La vista global se puede activar directamente con:
@@ -357,6 +460,7 @@ try {
             $db,
             "SELECT
                 i.id,
+                i.cliente_id,
                 c.nombre AS cliente_nombre,
                 c.apellido AS cliente_apellido,
                 p.nombre AS plan_nombre,
@@ -381,10 +485,13 @@ try {
         $vencimientos_proximos = (int) dashboardConsultarValor(
             $db,
             "SELECT COUNT(*) AS total
-             FROM inscripciones
-             WHERE estado = 'activa'
-               AND fecha_fin BETWEEN CURDATE()
-                   AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)",
+             FROM inscripciones i
+             INNER JOIN planes p
+                ON p.id = i.plan_id
+             WHERE i.estado IN ('activa', 'vencida')
+               AND p.duracion_dias > 1
+               AND i.fecha_fin IS NOT NULL
+               AND i.fecha_fin <= DATE_ADD(CURDATE(), INTERVAL 7 DAY)",
             'total'
         );
 
@@ -392,6 +499,7 @@ try {
             $db,
             "SELECT
                 i.id,
+                i.cliente_id,
                 c.nombre AS cliente_nombre,
                 c.apellido AS cliente_apellido,
                 c.telefono,
@@ -409,12 +517,16 @@ try {
                 ON p.id = i.plan_id
              LEFT JOIN sucursales suc
                 ON suc.id = i.sucursal_id
-             WHERE i.estado = 'activa'
-               AND i.fecha_fin BETWEEN CURDATE()
-                   AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)
-             ORDER BY i.fecha_fin ASC,
-                      c.nombre ASC,
-                      c.apellido ASC"
+             WHERE i.estado IN ('activa', 'vencida')
+               AND p.duracion_dias > 1
+               AND i.fecha_fin IS NOT NULL
+               AND i.fecha_fin <= DATE_ADD(CURDATE(), INTERVAL 7 DAY)
+             ORDER BY
+                CASE WHEN i.fecha_fin < CURDATE() THEN 0 ELSE 1 END ASC,
+                CASE WHEN i.fecha_fin < CURDATE() THEN i.fecha_fin END DESC,
+                i.fecha_fin ASC,
+                c.nombre ASC,
+                c.apellido ASC"
         );
 
         $asistencias_hoy = (int) dashboardConsultarValor(
@@ -576,10 +688,13 @@ try {
             $db,
             "SELECT COUNT(*) AS total
              FROM inscripciones i
+             INNER JOIN planes p
+                ON p.id = i.plan_id
              WHERE i.sucursal_id = ?
-               AND i.estado = 'activa'
-               AND i.fecha_fin BETWEEN CURDATE()
-                   AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)",
+               AND i.estado IN ('activa', 'vencida')
+               AND p.duracion_dias > 1
+               AND i.fecha_fin IS NOT NULL
+               AND i.fecha_fin <= DATE_ADD(CURDATE(), INTERVAL 7 DAY)",
             'total',
             'i',
             [$sucursal_id]
@@ -589,6 +704,7 @@ try {
             $db,
             "SELECT
                 i.id,
+                i.cliente_id,
                 c.nombre AS cliente_nombre,
                 c.apellido AS cliente_apellido,
                 c.telefono,
@@ -607,12 +723,16 @@ try {
              LEFT JOIN sucursales suc
                 ON suc.id = i.sucursal_id
              WHERE i.sucursal_id = ?
-               AND i.estado = 'activa'
-               AND i.fecha_fin BETWEEN CURDATE()
-                   AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)
-             ORDER BY i.fecha_fin ASC,
-                      c.nombre ASC,
-                      c.apellido ASC",
+               AND i.estado IN ('activa', 'vencida')
+               AND p.duracion_dias > 1
+               AND i.fecha_fin IS NOT NULL
+               AND i.fecha_fin <= DATE_ADD(CURDATE(), INTERVAL 7 DAY)
+             ORDER BY
+                CASE WHEN i.fecha_fin < CURDATE() THEN 0 ELSE 1 END ASC,
+                CASE WHEN i.fecha_fin < CURDATE() THEN i.fecha_fin END DESC,
+                i.fecha_fin ASC,
+                c.nombre ASC,
+                c.apellido ASC",
             'i',
             [$sucursal_id]
         );
@@ -804,8 +924,12 @@ foreach ($inscripciones_por_vencer as $inscripcionVencimiento) {
         $inscripcionVencimiento['dias_restantes'] ?? 0
     );
 
-    if ($diasVencimiento === 0) {
+    if ($diasVencimiento < 0) {
+        $inscripciones_vencidas++;
+    } elseif ($diasVencimiento === 0) {
         $vencimientos_hoy++;
+    } elseif ($diasVencimiento <= 7) {
+        $vencimientos_en_7_dias++;
     }
 
     if ($diasVencimiento >= 0 && $diasVencimiento <= 3) {
@@ -962,7 +1086,7 @@ if (
         $documento->Cell(
             $tituloAncho,
             7,
-            textoFpdfInscripciones('Inscripciones por vencer'),
+            textoFpdfInscripciones('Membresías vencidas y por vencer'),
             0,
             0,
             'L'
@@ -984,7 +1108,7 @@ if (
             $tituloAncho,
             6,
             textoFpdfInscripciones(
-                'Próximos 7 días · ' . $contexto
+                'Vencidas y próximos 7 días · ' . $contexto
             ),
             0,
             0,
@@ -1021,14 +1145,14 @@ if (
     $dibujarCabeceraTabla = static function (
         DashboardVencimientosPDF $documento
     ): void {
-        $anchos = [9, 47, 33, 29, 26, 16, 46, 60];
+        $anchos = [9, 47, 33, 29, 26, 24, 46, 52];
         $titulos = [
             '#',
             'Socio',
             'Plan',
             'Teléfono',
             'Vence',
-            'Días',
+            'Estado',
             'Sucursal',
             'Correo',
         ];
@@ -1068,14 +1192,14 @@ if (
             266,
             18,
             textoFpdfInscripciones(
-                'No hay inscripciones por vencer en los próximos 7 días.'
+                'No hay membresías vencidas ni próximas a vencer.'
             ),
             1,
             1,
             'C'
         );
     } else {
-        $anchos = [9, 47, 33, 29, 26, 16, 46, 60];
+        $anchos = [9, 47, 33, 29, 26, 24, 46, 52];
 
         foreach ($inscripciones_por_vencer as $indice => $inscripcionPdf) {
             if ($pdf->GetY() > 184) {
@@ -1096,6 +1220,9 @@ if (
                 . ' '
                 . (string) ($inscripcionPdf['cliente_apellido'] ?? '')
             );
+            $estadoDiasPdf = $diasPdf < 0
+                ? 'Vencida ' . abs($diasPdf) . 'd'
+                : ($diasPdf === 0 ? 'Vence hoy' : $diasPdf . ' días');
 
             $valores = [
                 (string) ($indice + 1),
@@ -1112,7 +1239,7 @@ if (
                     'd/m/Y',
                     strtotime((string) $inscripcionPdf['fecha_fin'])
                 ),
-                (string) $diasPdf,
+                $estadoDiasPdf,
                 recortarTextoFpdfInscripciones(
                     (string) ($inscripcionPdf['sucursal_nombre'] ?? $dashboard_contexto_nombre),
                     29
@@ -1155,7 +1282,7 @@ if (
         }
     }
 
-    $nombreArchivoPdf = 'inscripciones_por_vencer_'
+    $nombreArchivoPdf = 'membresias_pendientes_renovacion_'
         . date('Ymd_His')
         . '.pdf';
 
@@ -1182,6 +1309,11 @@ if (
     <!-- AdminLTE / Bootstrap -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/admin-lte@3.2/dist/css/adminlte.min.css">
     <link rel="stylesheet" href="css/dashboard.css">
+    <?php $modalVisitaFixCss = __DIR__ . '/css/dashboard_visita_modal_fix.css'; ?>
+    <link
+        rel="stylesheet"
+        href="css/dashboard_visita_modal_fix.css?v=<?php echo is_file($modalVisitaFixCss) ? (int) filemtime($modalVisitaFixCss) : time(); ?>"
+    >
     <link rel="stylesheet" href="css/servicio_plataforma_alerta.css?v=1">
 
     <style>
@@ -1290,6 +1422,112 @@ if (
                 </div>
             </div>
         </div>
+
+        <section class="dashboard-priority-actions" aria-label="Acciones rápidas">
+            <header class="dashboard-priority-actions__heading">
+                <div>
+                    <span>Acciones rápidas</span>
+                </div>
+            </header>
+        <?php if ($puede_registrar_visita_rapida): ?>
+        <section class="quick-visit-row" aria-label="Registro rápido de visitas">
+            <div class="quick-visit-card">
+                <span class="quick-visit-card__icon" aria-hidden="true">
+                    <i class="fas fa-person-walking-arrow-right"></i>
+                </span>
+
+                <div class="quick-visit-card__copy">
+                    <span class="quick-visit-card__kicker">Acceso de un día</span>
+                    <h2>Registrar visita rápidamente</h2>
+                    <p>
+                        Busca una persona registrada o captura solamente nombre y apellidos.
+                        El sistema reutiliza su información, genera el QR y registra el pago.
+                    </p>
+
+                    <div class="quick-visit-card__meta">
+                        <span>
+                            <i class="fas fa-building"></i>
+                            <?php echo htmlspecialchars(
+                                $sucursal_nombre,
+                                ENT_QUOTES,
+                                'UTF-8'
+                            ); ?>
+                        </span>
+                        <span>
+                            <i class="fas fa-layer-group"></i>
+                            <?php echo count($planes_visita_rapida); ?>
+                            <?php echo count($planes_visita_rapida) === 1
+                                ? 'plan de un día'
+                                : 'planes de un día'; ?>
+                        </span>
+                    </div>
+                </div>
+
+                <button
+                    type="button"
+                    class="quick-visit-card__action"
+                    onclick="abrirRegistroVisitaRapida()"
+                    <?php echo $planes_visita_rapida === [] ? 'disabled' : ''; ?>
+                    title="<?php echo $planes_visita_rapida === []
+                        ? 'Primero activa un plan con duración de un día en esta sucursal.'
+                        : 'Registrar una visita'; ?>"
+                >
+                    <i class="fas fa-bolt"></i>
+                    <?php echo $planes_visita_rapida === []
+                        ? 'Sin planes disponibles'
+                        : 'Registrar visita'; ?>
+                </button>
+            </div>
+        </section>
+        <?php endif; ?>
+
+        <!-- Alertas de Vencimientos (solo admin y recepcionista) -->
+        <?php if (($user_rol == 'admin' || $user_rol == 'recepcionista') && $vencimientos_proximos > 0): ?>
+        <div class="row expiry-alert-row">
+            <div class="col-12">
+                <div
+                    class="expiry-alert-card"
+                    role="button"
+                    tabindex="0"
+                    onclick="verInscripcionesPorVencer()"
+                    onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); verInscripcionesPorVencer(); }"
+                    aria-label="Ver membresías vencidas y próximas a vencer"
+                >
+                    <span class="expiry-alert-icon" aria-hidden="true">
+                        <i class="fas fa-calendar-exclamation"></i>
+                    </span>
+
+                    <div class="expiry-alert-copy">
+                        <span class="expiry-alert-kicker">Vencidas y próximos 7 días</span>
+                        <h3>Membresías por renovar</h3>
+                        <p>
+                            <strong>
+                                <?php echo number_format($vencimientos_proximos); ?>
+                                <?php echo $vencimientos_proximos === 1 ? 'membresía' : 'membresías'; ?>
+                            </strong>
+                            requieren seguimiento:
+                            <?php echo number_format($inscripciones_vencidas); ?> vencida(s) y
+                            <?php echo number_format($vencimientos_hoy + $vencimientos_en_7_dias); ?> próxima(s) a vencer.
+                        </p>
+                    </div>
+
+                    <div class="expiry-alert-meta">
+                        <span class="expiry-alert-count">
+                            <strong><?php echo number_format($vencimientos_proximos); ?></strong>
+                            <small>pendientes</small>
+                        </span>
+
+                        <span class="expiry-alert-action">
+                            Revisar y renovar
+                            <i class="fas fa-arrow-right"></i>
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <?php endif; ?>
+
+        </section>
 
         <?php if (
             $mostrar_aviso_servicio_dashboard
@@ -2039,50 +2277,6 @@ if (
         </div>
         <?php endif; ?>
 
-        <!-- Alertas de Vencimientos (solo admin y recepcionista) -->
-        <?php if (($user_rol == 'admin' || $user_rol == 'recepcionista') && $vencimientos_proximos > 0): ?>
-        <div class="row expiry-alert-row">
-            <div class="col-12">
-                <div
-                    class="expiry-alert-card"
-                    role="button"
-                    tabindex="0"
-                    onclick="verInscripcionesPorVencer()"
-                    onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); verInscripcionesPorVencer(); }"
-                    aria-label="Ver inscripciones por vencer"
-                >
-                    <span class="expiry-alert-icon" aria-hidden="true">
-                        <i class="fas fa-calendar-exclamation"></i>
-                    </span>
-
-                    <div class="expiry-alert-copy">
-                        <span class="expiry-alert-kicker">Próximos 7 días</span>
-                        <h3>Inscripciones por vencer</h3>
-                        <p>
-                            <strong>
-                                <?php echo number_format($vencimientos_proximos); ?>
-                                <?php echo $vencimientos_proximos === 1 ? 'inscripción' : 'inscripciones'; ?>
-                            </strong>
-                            requieren seguimiento antes de su fecha de vencimiento.
-                        </p>
-                    </div>
-
-                    <div class="expiry-alert-meta">
-                        <span class="expiry-alert-count">
-                            <strong><?php echo number_format($vencimientos_proximos); ?></strong>
-                            <small>por vencer</small>
-                        </span>
-
-                        <span class="expiry-alert-action">
-                            Revisar reporte
-                            <i class="fas fa-arrow-right"></i>
-                        </span>
-                    </div>
-                </div>
-            </div>
-        </div>
-        <?php endif; ?>
-
         <!-- Acciones Rápidas - ADMIN (tiene acceso a clases) -->
         <?php if ($user_rol == 'admin'): ?>
         <div class="row">
@@ -2220,6 +2414,288 @@ if (
     </div>
 
     <!-- MODALES (Socios, Productos, Inscripciones, Clases) -->
+    <?php if ($puede_registrar_visita_rapida): ?>
+    <div
+        class="modal fade"
+        id="modalVisitaRapida"
+        tabindex="-1"
+        role="dialog"
+        aria-labelledby="modalVisitaRapidaTitulo"
+        aria-hidden="true"
+    >
+        <div class="modal-dialog modal-lg quick-visit-modal-dialog" role="document">
+            <div class="modal-content quick-visit-modal-content">
+                <div class="modal-header quick-visit-modal-header">
+                    <div>
+                        <span class="quick-visit-modal-kicker">Acceso de un día</span>
+                        <h5 class="modal-title" id="modalVisitaRapidaTitulo">
+                            <i class="fas fa-person-walking-arrow-right"></i>
+                            Registro rápido de visita
+                        </h5>
+                        <p>
+                            Sucursal:
+                            <strong><?php echo htmlspecialchars(
+                                $sucursal_nombre,
+                                ENT_QUOTES,
+                                'UTF-8'
+                            ); ?></strong>
+                        </p>
+                    </div>
+
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Cerrar">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                </div>
+
+                <form id="formVisitaRapida" autocomplete="off">
+                    <input
+                        type="hidden"
+                        name="csrf"
+                        value="<?php echo htmlspecialchars(
+                            $dashboard_visita_csrf,
+                            ENT_QUOTES,
+                            'UTF-8'
+                        ); ?>"
+                    >
+                    <input type="hidden" name="cliente_id" id="visitaClienteId" value="">
+                    <input type="hidden" name="request_id" id="visitaRequestId" value="">
+                    <input type="hidden" name="mp_order_id" id="visitaMpOrderId" value="">
+                    <input type="hidden" name="mp_payment_id" id="visitaMpPaymentId" value="">
+                    <input type="hidden" name="mp_external_reference" id="visitaMpExternalReference" value="">
+                    <input type="hidden" name="mp_payment_reference_id" id="visitaMpPaymentReferenceId" value="">
+                    <input type="hidden" name="mp_installments" id="visitaMpInstallments" value="1">
+
+                    <div class="modal-body quick-visit-modal-body">
+                        <section class="quick-visit-step">
+                            <div class="quick-visit-step__heading">
+                                <span>1</span>
+                                <div>
+                                    <h3>Buscar o registrar persona</h3>
+                                    <p>Escribe nombre, teléfono, correo o código QR.</p>
+                                </div>
+                            </div>
+
+                            <label class="quick-visit-search" for="visitaBusqueda">
+                                <i class="fas fa-magnifying-glass"></i>
+                                <input
+                                    type="search"
+                                    id="visitaBusqueda"
+                                    placeholder="Ej. Juan Pérez, 222..., correo o QR"
+                                    autocomplete="off"
+                                >
+                                <span id="visitaBusquedaEstado">Escribe al menos 2 caracteres</span>
+                            </label>
+
+                            <div
+                                class="quick-visit-search-results"
+                                id="visitaResultados"
+                                aria-live="polite"
+                            ></div>
+
+                            <div
+                                class="quick-visit-selected"
+                                id="visitaSeleccionado"
+                                hidden
+                            >
+                                <span class="quick-visit-selected__avatar" id="visitaSeleccionadoAvatar">VP</span>
+                                <div>
+                                    <strong id="visitaSeleccionadoNombre">Persona seleccionada</strong>
+                                    <small id="visitaSeleccionadoDetalle">Datos registrados</small>
+                                </div>
+                                <button type="button" id="visitaLimpiarSeleccion">
+                                    Cambiar
+                                </button>
+                            </div>
+
+                            <div class="quick-visit-name-grid">
+                                <label>
+                                    <span>Nombre <strong>*</strong></span>
+                                    <input
+                                        type="text"
+                                        name="nombre"
+                                        id="visitaNombre"
+                                        maxlength="100"
+                                        required
+                                    >
+                                </label>
+                                <label>
+                                    <span>Apellidos <strong>*</strong></span>
+                                    <input
+                                        type="text"
+                                        name="apellido"
+                                        id="visitaApellido"
+                                        maxlength="100"
+                                        required
+                                    >
+                                </label>
+                            </div>
+
+                            <label class="quick-visit-extra-toggle">
+                                <input type="checkbox" id="visitaMostrarDatos">
+                                <span>
+                                    <strong>Capturar más datos</strong>
+                                    <small>Teléfono, correo y contacto de emergencia.</small>
+                                </span>
+                                <i class="fas fa-chevron-down"></i>
+                            </label>
+
+                            <div class="quick-visit-extra-fields" id="visitaDatosAdicionales" hidden>
+                                <label>
+                                    <span>Teléfono</span>
+                                    <input type="tel" name="telefono" id="visitaTelefono" maxlength="20">
+                                </label>
+                                <label>
+                                    <span>Correo electrónico</span>
+                                    <input type="email" name="email" id="visitaEmail" maxlength="100">
+                                </label>
+                                <label>
+                                    <span>Contacto de emergencia</span>
+                                    <input
+                                        type="text"
+                                        name="contacto_emergencia_nombre"
+                                        id="visitaEmergenciaNombre"
+                                        maxlength="150"
+                                    >
+                                </label>
+                                <label>
+                                    <span>Teléfono de emergencia</span>
+                                    <input
+                                        type="tel"
+                                        name="contacto_emergencia_telefono"
+                                        id="visitaEmergenciaTelefono"
+                                        maxlength="25"
+                                    >
+                                </label>
+                            </div>
+                        </section>
+
+                        <section class="quick-visit-step">
+                            <div class="quick-visit-step__heading">
+                                <span>2</span>
+                                <div>
+                                    <h3>Plan y pago</h3>
+                                    <p>Solo se muestran planes activos con duración de un día.</p>
+                                </div>
+                            </div>
+
+                            <div class="quick-visit-payment-grid">
+                                <label>
+                                    <span>Plan de visita <strong>*</strong></span>
+                                    <select name="plan_id" id="visitaPlanId" required>
+                                        <option value="" disabled>Selecciona un plan</option>
+                                        <?php foreach ($planes_visita_rapida as $indicePlanVisita => $planVisita): ?>
+                                            <option
+                                                value="<?php echo (int) $planVisita['id']; ?>"
+                                                <?php echo (int) $indicePlanVisita === 0 ? 'selected' : ''; ?>
+                                                data-precio="<?php echo htmlspecialchars(
+                                                    number_format(
+                                                        (float) $planVisita['precio'],
+                                                        2,
+                                                        '.',
+                                                        ''
+                                                    ),
+                                                    ENT_QUOTES,
+                                                    'UTF-8'
+                                                ); ?>"
+                                                data-nombre="<?php echo htmlspecialchars(
+                                                    (string) $planVisita['nombre'],
+                                                    ENT_QUOTES,
+                                                    'UTF-8'
+                                                ); ?>"
+                                            >
+                                                <?php echo htmlspecialchars(
+                                                    (string) $planVisita['nombre'],
+                                                    ENT_QUOTES,
+                                                    'UTF-8'
+                                                ); ?>
+                                                · $<?php echo number_format(
+                                                    (float) $planVisita['precio'],
+                                                    2
+                                                ); ?>
+                                            </option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </label>
+
+                                <label>
+                                    <span>Método de pago <strong>*</strong></span>
+                                    <select name="metodo_pago" id="visitaMetodoPago" required>
+                                        <option value="efectivo">Efectivo</option>
+                                        <?php if ($terminal_point_disponible_dashboard): ?>
+                                            <option value="tarjeta_debito">Tarjeta de débito · Point</option>
+                                            <option value="tarjeta_credito">Tarjeta de crédito · Point</option>
+                                        <?php else: ?>
+                                            <option value="" disabled>Point no configurada</option>
+                                        <?php endif; ?>
+                                        <option value="transferencia">Transferencia</option>
+                                    </select>
+                                </label>
+                            </div>
+
+                            <div
+                                class="quick-visit-point-help"
+                                id="visitaPointHelp"
+                                hidden
+                            >
+                                <i class="fas fa-credit-card"></i>
+                                <span id="visitaPointHelpText">
+                                    El cobro se enviará a la terminal Mercado Pago Point.
+                                </span>
+                            </div>
+
+                            <label
+                                class="quick-visit-reference"
+                                id="visitaReferenciaWrap"
+                                hidden
+                            >
+                                <span>Referencia de transferencia</span>
+                                <input
+                                    type="text"
+                                    name="referencia"
+                                    id="visitaReferencia"
+                                    maxlength="100"
+                                    placeholder="Opcional"
+                                >
+                            </label>
+
+                            <div class="quick-visit-summary">
+                                <div>
+                                    <small>Vigencia</small>
+                                    <strong>Hoy · acceso por un día</strong>
+                                </div>
+                                <div>
+                                    <small>Total</small>
+                                    <strong id="visitaPrecioResumen">$0.00</strong>
+                                </div>
+                            </div>
+                        </section>
+                    </div>
+
+                    <div class="modal-footer quick-visit-modal-footer">
+                        <p>
+                            <i class="fas fa-qrcode"></i>
+                            El QR se crea o recupera automáticamente y permanece asociado a la persona.
+                        </p>
+                        <div>
+                            <button type="button" class="btn-close-modal" data-dismiss="modal">
+                                Cancelar
+                            </button>
+                            <button
+                                type="submit"
+                                class="quick-visit-submit"
+                                id="visitaGuardar"
+                            >
+                                <i class="fas fa-bolt"></i>
+                                Registrar visita
+                            </button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    <?php endif; ?>
+
     <!-- Modal de inscripciones por vencer -->
     <?php if ($user_rol == 'admin' || $user_rol == 'recepcionista'): ?>
     <div class="modal fade" id="modalVencimientos" tabindex="-1" role="dialog" aria-hidden="true">
@@ -2227,10 +2703,10 @@ if (
             <div class="modal-content expiry-modal-content">
                 <div class="modal-header expiry-modal-header">
                     <div>
-                        <span class="expiry-modal-kicker">Próximos 7 días</span>
+                        <span class="expiry-modal-kicker">Vencidas y próximos 7 días</span>
                         <h5 class="modal-title">
                             <i class="fas fa-calendar-days"></i>
-                            Inscripciones por Vencer
+                            Membresías vencidas y por vencer
                         </h5>
                         <p><?php echo htmlspecialchars($dashboard_contexto_nombre, ENT_QUOTES, 'UTF-8'); ?></p>
                     </div>
@@ -2243,19 +2719,19 @@ if (
                 <div class="stats-bar expiry-stats-bar">
                     <div class="stat-box">
                         <div class="stat-number"><?php echo number_format($vencimientos_proximos); ?></div>
-                        <div class="stat-label">Por vencer</div>
+                        <div class="stat-label">Total pendientes</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-number"><?php echo number_format($inscripciones_vencidas); ?></div>
+                        <div class="stat-label">Ya vencidas</div>
                     </div>
                     <div class="stat-box">
                         <div class="stat-number"><?php echo number_format($vencimientos_hoy); ?></div>
                         <div class="stat-label">Vencen hoy</div>
                     </div>
                     <div class="stat-box">
-                        <div class="stat-number"><?php echo number_format($vencimientos_tres_dias); ?></div>
-                        <div class="stat-label">En 3 días o menos</div>
-                    </div>
-                    <div class="stat-box">
-                        <div class="stat-number">$<?php echo number_format($monto_vencimientos, 2); ?></div>
-                        <div class="stat-label">Valor de membresías</div>
+                        <div class="stat-number"><?php echo number_format($vencimientos_en_7_dias); ?></div>
+                        <div class="stat-label">Próximos 7 días</div>
                     </div>
                 </div>
 
@@ -2271,6 +2747,15 @@ if (
                         >
                     </label>
 
+                    <label class="expiry-sort-wrap" for="ordenVencimientos">
+                        <i class="fas fa-arrow-down-wide-short"></i>
+                        <span>Ordenar</span>
+                        <select id="ordenVencimientos" aria-label="Ordenar membresías por fecha de vencimiento">
+                            <option value="recent" selected>Más recientes</option>
+                            <option value="oldest">Más antiguas</option>
+                        </select>
+                    </label>
+
                     <a
                         href="<?php echo htmlspecialchars($pdf_vencimientos_url, ENT_QUOTES, 'UTF-8'); ?>"
                         target="_blank"
@@ -2284,7 +2769,7 @@ if (
 
                 <div class="modal-body expiry-modal-body">
                     <div class="expiry-grid" id="vencimientosGrid">
-                        <?php foreach ($inscripciones_por_vencer as $inscripcionVencer): ?>
+                        <?php foreach ($inscripciones_por_vencer as $indiceVencer => $inscripcionVencer): ?>
                             <?php
                             $diasRestantesVencer = (int) ($inscripcionVencer['dias_restantes'] ?? 0);
                             $nombreCompletoVencer = trim(
@@ -2292,13 +2777,18 @@ if (
                                 . ' '
                                 . (string) ($inscripcionVencer['cliente_apellido'] ?? '')
                             );
-                            $claseUrgenciaVencer = $diasRestantesVencer === 0
-                                ? 'expires-today'
-                                : ($diasRestantesVencer <= 3 ? 'expires-soon' : 'expires-week');
+                            $claseUrgenciaVencer = $diasRestantesVencer < 0
+                                ? 'is-expired'
+                                : ($diasRestantesVencer === 0
+                                    ? 'expires-today'
+                                    : ($diasRestantesVencer <= 3 ? 'expires-soon' : 'expires-week'));
                             ?>
                             <article
                                 class="expiry-member-card <?php echo $claseUrgenciaVencer; ?>"
                                 data-expiry-card
+                                data-expiry-timestamp="<?php echo (int) (strtotime((string) ($inscripcionVencer['fecha_fin'] ?? '')) ?: 0); ?>"
+                                data-expiry-days="<?php echo (int) $diasRestantesVencer; ?>"
+                                data-expiry-index="<?php echo (int) $indiceVencer; ?>"
                                 data-search="<?php echo htmlspecialchars(strtolower(
                                     $nombreCompletoVencer . ' '
                                     . (string) ($inscripcionVencer['plan_nombre'] ?? '') . ' '
@@ -2324,7 +2814,10 @@ if (
                                     </div>
 
                                     <span class="expiry-days-badge">
-                                        <?php if ($diasRestantesVencer === 0): ?>
+                                        <?php if ($diasRestantesVencer < 0): ?>
+                                            Vencida hace <?php echo abs($diasRestantesVencer); ?>
+                                            <?php echo abs($diasRestantesVencer) === 1 ? 'día' : 'días'; ?>
+                                        <?php elseif ($diasRestantesVencer === 0): ?>
                                             Vence hoy
                                         <?php elseif ($diasRestantesVencer === 1): ?>
                                             1 día
@@ -2376,6 +2869,42 @@ if (
                                         ); ?>
                                     </span>
                                 </div>
+
+                                <?php
+                                $fechaInicioSugerida = date(
+                                    'Y-m-d',
+                                    strtotime(
+                                        (string) $inscripcionVencer['fecha_fin']
+                                        . ' +1 day'
+                                    )
+                                );
+                                $fechaInicioRenovacion = $fechaInicioSugerida < date('Y-m-d')
+                                    ? date('Y-m-d')
+                                    : $fechaInicioSugerida;
+                                $urlRenovacionDashboard =
+                                    'inscripciones.php?'
+                                    . http_build_query([
+                                        'action' => 'renovar',
+                                        'inscripcion_id' => (int) $inscripcionVencer['id'],
+                                        'cliente_id' => (int) $inscripcionVencer['cliente_id'],
+                                        'fecha_inicio' => $fechaInicioRenovacion,
+                                        'origen' => 'dashboard',
+                                    ]);
+                                ?>
+                                <footer class="expiry-member-actions">
+                                    <a
+                                        href="<?php echo htmlspecialchars(
+                                            $urlRenovacionDashboard,
+                                            ENT_QUOTES,
+                                            'UTF-8'
+                                        ); ?>"
+                                        class="expiry-renew-button"
+                                        onclick="event.stopPropagation();"
+                                    >
+                                        <i class="fas fa-arrows-rotate"></i>
+                                        Renovar inscripción
+                                    </a>
+                                </footer>
                             </article>
                         <?php endforeach; ?>
                     </div>
@@ -2389,15 +2918,15 @@ if (
                     <?php if ($inscripciones_por_vencer === []): ?>
                         <div class="expiry-filter-empty is-initial-empty">
                             <i class="fas fa-circle-check"></i>
-                            <h3>No hay vencimientos próximos</h3>
-                            <p>No existen inscripciones activas que venzan durante los próximos 7 días.</p>
+                            <h3>No hay membresías pendientes de renovación</h3>
+                            <p>No existen membresías vencidas ni membresías que venzan durante los próximos 7 días.</p>
                         </div>
                     <?php endif; ?>
                 </div>
 
                 <div class="modal-footer expiry-modal-footer">
                     <span>
-                        El reporte PDF utiliza la sucursal o vista global seleccionada.
+                        El reporte incluye membresías vencidas y las que vencen durante los próximos 7 días.
                     </span>
 
                     <div>
@@ -3046,6 +3575,871 @@ if (
         });
     }
 
+
+    const visitaRapidaState = {
+        searchTimer: null,
+        searchController: null,
+        selected: null,
+        submitting: false,
+        autoFilledQuery: '',
+        pointOrderId: ''
+    };
+
+    function crearRequestIdVisita() {
+        if (window.crypto && typeof window.crypto.getRandomValues === 'function') {
+            const bytes = new Uint8Array(16);
+            window.crypto.getRandomValues(bytes);
+            return Array.from(bytes).map(function(byte) {
+                return byte.toString(16).padStart(2, '0');
+            }).join('');
+        }
+
+        return String(Date.now()) + Math.random().toString(16).slice(2);
+    }
+
+    function visitaEscaparHtml(value) {
+        const div = document.createElement('div');
+        div.textContent = String(value == null ? '' : value);
+        return div.innerHTML;
+    }
+
+    function visitaIniciales(nombre, apellido) {
+        const primera = String(nombre || '').trim().charAt(0);
+        const segunda = String(apellido || '').trim().charAt(0);
+        return (primera + segunda || 'VP').toUpperCase();
+    }
+
+    function visitaFormatearFecha(fecha) {
+        const valor = String(fecha || '').trim();
+        const partes = valor.split('-');
+
+        if (partes.length !== 3) return valor;
+        return partes[2] + '/' + partes[1] + '/' + partes[0];
+    }
+
+    function visitaAutocompletarIdentidadDesdeBusqueda(busqueda) {
+        if (visitaRapidaState.selected) return false;
+
+        const original = String(busqueda || '').trim();
+        if (original === '' || /[@0-9]/.test(original)) return false;
+
+        const limpio = original
+            .replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ'\- ,]+/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+
+        if (limpio.length < 2) return false;
+
+        let nombre = '';
+        let apellido = '';
+
+        if (limpio.includes(',')) {
+            const partesComa = limpio.split(',');
+            apellido = String(partesComa.shift() || '').trim();
+            nombre = partesComa.join(' ').trim();
+        } else {
+            const palabras = limpio.split(' ').filter(Boolean);
+            nombre = palabras.shift() || '';
+            apellido = palabras.join(' ');
+        }
+
+        const inputNombre = document.getElementById('visitaNombre');
+        const inputApellido = document.getElementById('visitaApellido');
+
+        if (!inputNombre || !inputApellido || nombre === '') return false;
+
+        inputNombre.value = nombre;
+        inputApellido.value = apellido;
+        visitaRapidaState.autoFilledQuery = original;
+
+        if (apellido === '') {
+            inputApellido.focus();
+        }
+
+        return true;
+    }
+
+    function visitaActualizarPrecio() {
+        const select = document.getElementById('visitaPlanId');
+        const resumen = document.getElementById('visitaPrecioResumen');
+
+        if (!select || !resumen) return;
+
+        const option = select.options[select.selectedIndex];
+        const precio = Number(option ? option.dataset.precio || 0 : 0);
+        resumen.textContent = precio.toLocaleString('es-MX', {
+            style: 'currency',
+            currency: 'MXN'
+        });
+    }
+
+    function visitaEsMetodoPoint(metodo) {
+        return metodo === 'tarjeta_debito'
+            || metodo === 'tarjeta_credito';
+    }
+
+    function visitaActualizarMetodoPago() {
+        const metodo = document.getElementById('visitaMetodoPago');
+        const wrap = document.getElementById('visitaReferenciaWrap');
+        const pointHelp = document.getElementById('visitaPointHelp');
+        const pointHelpText = document.getElementById('visitaPointHelpText');
+
+        if (!metodo || !wrap) return;
+
+        const esTransferencia = metodo.value === 'transferencia';
+        const esPoint = visitaEsMetodoPoint(metodo.value);
+
+        wrap.hidden = !esTransferencia;
+
+        if (pointHelp) {
+            pointHelp.hidden = !esPoint;
+        }
+
+        if (pointHelpText && esPoint) {
+            pointHelpText.textContent = metodo.value === 'tarjeta_credito'
+                ? 'El cobro se enviará a la Point. Las mensualidades disponibles se eligen directamente en la terminal.'
+                : 'El cobro se enviará como tarjeta de débito a la terminal Mercado Pago Point.';
+        }
+
+        if (!esPoint) {
+            visitaLimpiarDatosPoint();
+        }
+    }
+
+    function visitaLimpiarDatosPoint() {
+        visitaRapidaState.pointOrderId = '';
+
+        [
+            'visitaMpOrderId',
+            'visitaMpPaymentId',
+            'visitaMpExternalReference',
+            'visitaMpPaymentReferenceId'
+        ].forEach(function(id) {
+            const input = document.getElementById(id);
+            if (input) input.value = '';
+        });
+
+        const installments = document.getElementById('visitaMpInstallments');
+        if (installments) installments.value = '1';
+    }
+
+    function visitaAsignarDatosPoint(data) {
+        const valores = {
+            visitaMpOrderId: data.order_id || '',
+            visitaMpPaymentId: data.payment_id || '',
+            visitaMpExternalReference: data.external_reference || '',
+            visitaMpPaymentReferenceId: data.payment_reference_id || '',
+            visitaMpInstallments: String(data.installments || 1)
+        };
+
+        Object.keys(valores).forEach(function(id) {
+            const input = document.getElementById(id);
+            if (input) input.value = valores[id];
+        });
+
+        visitaRapidaState.pointOrderId = valores.visitaMpOrderId;
+    }
+
+    function visitaDormir(ms) {
+        return new Promise(function(resolve) {
+            window.setTimeout(resolve, ms);
+        });
+    }
+
+    async function visitaFetchJsonPoint(url, options) {
+        const response = await fetch(url, options || {});
+        const text = await response.text();
+        let data = null;
+
+        try {
+            data = JSON.parse(text);
+        } catch (error) {
+            console.error('Respuesta Point no JSON:', {
+                url: url,
+                status: response.status,
+                response: text
+            });
+            throw new Error(
+                'La integración Point devolvió una respuesta inválida. Revisa el log de PHP.'
+            );
+        }
+
+        if (!response.ok || !data.success) {
+            const pointError = new Error(
+                data.message || 'No fue posible comunicarse con Mercado Pago.'
+            );
+            pointError.code = data.code || '';
+            pointError.orderId = data.order_id || '';
+            pointError.requiresTerminal = Boolean(data.requires_terminal);
+            throw pointError;
+        }
+
+        return data;
+    }
+
+    async function visitaCrearOrdenPoint(form) {
+        const formData = new FormData(form);
+        const metodo = String(formData.get('metodo_pago') || '');
+        const plan = document.getElementById('visitaPlanId');
+        const option = plan ? plan.options[plan.selectedIndex] : null;
+        const total = Number(option ? option.dataset.precio || 0 : 0);
+        const paymentType = metodo === 'tarjeta_credito'
+            ? 'credit_card'
+            : 'debit_card';
+
+        return visitaFetchJsonPoint(
+            'api/mercadopago/crear_orden_visita.php',
+            {
+                method: 'POST',
+                credentials: 'same-origin',
+                cache: 'no-store',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    csrf: String(formData.get('csrf') || ''),
+                    plan_id: Number(formData.get('plan_id') || 0),
+                    total: total,
+                    payment_type: paymentType,
+                    cliente_id: Number(formData.get('cliente_id') || 0),
+                    nombre: String(formData.get('nombre') || ''),
+                    apellido: String(formData.get('apellido') || ''),
+                    telefono: String(formData.get('telefono') || ''),
+                    email: String(formData.get('email') || '')
+                })
+            }
+        );
+    }
+
+    function visitaConsultarOrdenPoint(orderId) {
+        return visitaFetchJsonPoint(
+            'api/mercadopago/consultar_orden_inscripcion.php',
+            {
+                method: 'POST',
+                credentials: 'same-origin',
+                cache: 'no-store',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({order_id: orderId})
+            }
+        );
+    }
+
+    function visitaCancelarOrdenPoint(orderId) {
+        return visitaFetchJsonPoint(
+            'api/mercadopago/cancelar_orden_inscripcion.php',
+            {
+                method: 'POST',
+                credentials: 'same-origin',
+                cache: 'no-store',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({order_id: orderId})
+            }
+        );
+    }
+
+    async function visitaEsperarPagoPoint(order) {
+        let terminado = false;
+        let consultando = true;
+        const inicio = Date.now();
+        const maximoEspera = 190000;
+
+        return new Promise(function(resolve, reject) {
+            function completar(data) {
+                if (terminado) return;
+                terminado = true;
+                consultando = false;
+                Swal.close();
+                resolve(data);
+            }
+
+            function fallar(error) {
+                if (terminado) return;
+                terminado = true;
+                consultando = false;
+                Swal.close();
+                reject(error);
+            }
+
+            Swal.fire({
+                title: 'Esperando pago en terminal',
+                html:
+                    '<p>Completa el cobro en la terminal Point. No cierres esta ventana.</p>'
+                    + '<div class="point-order-card">Orden: '
+                    + visitaEscaparHtml(order.order_id || '')
+                    + '</div>'
+                    + '<div id="visita-point-status" class="point-status-live">Estado: creada</div>',
+                showConfirmButton: false,
+                showCancelButton: true,
+                cancelButtonText: 'Cancelar cobro',
+                cancelButtonColor: '#dc2626',
+                allowOutsideClick: false,
+                allowEscapeKey: false,
+                didOpen: async function() {
+                    while (consultando && !terminado) {
+                        try {
+                            const latest = await visitaConsultarOrdenPoint(
+                                order.order_id
+                            );
+                            const status = document.getElementById(
+                                'visita-point-status'
+                            );
+
+                            if (status) {
+                                status.textContent =
+                                    'Orden: ' + (latest.order_status || '-')
+                                    + ' · Pago: '
+                                    + (latest.payment_status || '-');
+                            }
+
+                            if (latest.paid) {
+                                completar(latest);
+                                return;
+                            }
+
+                            if (latest.final_failure) {
+                                fallar(new Error(
+                                    'El pago terminó en estado '
+                                    + (latest.payment_status
+                                        || latest.order_status
+                                        || 'desconocido')
+                                    + '.'
+                                ));
+                                return;
+                            }
+                        } catch (error) {
+                            console.error('Consulta de Point:', error);
+                        }
+
+                        if (Date.now() - inicio >= maximoEspera) {
+                            fallar(new Error(
+                                'Terminó el tiempo de espera para completar el pago.'
+                            ));
+                            return;
+                        }
+
+                        await visitaDormir(2200);
+                    }
+                }
+            }).then(async function(result) {
+                if (terminado || result.isConfirmed) return;
+
+                consultando = false;
+
+                try {
+                    const cancelada = await visitaCancelarOrdenPoint(
+                        order.order_id
+                    );
+
+                    if (cancelada.requires_terminal) {
+                        await Swal.fire({
+                            icon: 'warning',
+                            title: 'Cancela en la terminal',
+                            text: cancelada.message
+                                || 'La orden debe cancelarse desde la Point.',
+                            confirmButtonColor: '#1e3a8a'
+                        });
+                    }
+
+                    fallar(new Error('El cobro fue cancelado.'));
+                } catch (error) {
+                    fallar(error);
+                }
+            });
+        });
+    }
+
+    function visitaMostrarDatosAdicionales(mostrar) {
+        const checkbox = document.getElementById('visitaMostrarDatos');
+        const fields = document.getElementById('visitaDatosAdicionales');
+
+        if (checkbox) checkbox.checked = Boolean(mostrar);
+        if (fields) fields.hidden = !mostrar;
+    }
+
+    function visitaBloquearIdentidad(bloquear) {
+        ['visitaNombre', 'visitaApellido'].forEach(function(id) {
+            const input = document.getElementById(id);
+            if (input) input.readOnly = Boolean(bloquear);
+        });
+    }
+
+    function visitaLimpiarResultados() {
+        const resultados = document.getElementById('visitaResultados');
+        if (resultados) resultados.innerHTML = '';
+    }
+
+    function visitaSeleccionarPersona(persona) {
+        if (persona && persona.tiene_membresia_activa) {
+            const plan = persona.membresia_activa_plan || 'membresía activa';
+            const vence = visitaFormatearFecha(
+                persona.membresia_activa_fecha_fin
+            );
+
+            Swal.fire({
+                icon: 'info',
+                title: 'Ya tiene acceso vigente',
+                html: '<p>Esta persona tiene el plan <strong>'
+                    + visitaEscaparHtml(plan)
+                    + '</strong> vigente hasta <strong>'
+                    + visitaEscaparHtml(vence)
+                    + '</strong>.</p><p>La visita de un día solamente puede registrarse cuando esa membresía haya vencido.</p>',
+                confirmButtonText: 'Entendido',
+                confirmButtonColor: '#1e3a8a'
+            });
+            return;
+        }
+
+        visitaRapidaState.selected = persona;
+        visitaRapidaState.autoFilledQuery = '';
+
+        document.getElementById('visitaClienteId').value = persona.id || '';
+        document.getElementById('visitaNombre').value = persona.nombre || '';
+        document.getElementById('visitaApellido').value = persona.apellido || '';
+        document.getElementById('visitaTelefono').value = persona.telefono || '';
+        document.getElementById('visitaEmail').value = persona.email || '';
+        document.getElementById('visitaEmergenciaNombre').value =
+            persona.contacto_emergencia_nombre || '';
+        document.getElementById('visitaEmergenciaTelefono').value =
+            persona.contacto_emergencia_telefono || '';
+
+        const selected = document.getElementById('visitaSeleccionado');
+        selected.hidden = false;
+        document.getElementById('visitaSeleccionadoAvatar').textContent =
+            visitaIniciales(persona.nombre, persona.apellido);
+        document.getElementById('visitaSeleccionadoNombre').textContent =
+            (persona.nombre + ' ' + persona.apellido).trim();
+
+        const estadoAcceso = persona.ultima_membresia_vencida
+            ? 'Membresía vencida el '
+                + visitaFormatearFecha(persona.ultima_membresia_vencida)
+            : 'Sin membresía vigente';
+        const detalles = [
+            persona.telefono || 'Sin teléfono',
+            estadoAcceso,
+            persona.codigo_qr ? 'QR ' + persona.codigo_qr : 'QR por generar'
+        ];
+        document.getElementById('visitaSeleccionadoDetalle').textContent =
+            detalles.join(' · ');
+
+        visitaBloquearIdentidad(true);
+        visitaLimpiarResultados();
+        document.getElementById('visitaBusqueda').value = '';
+        document.getElementById('visitaBusquedaEstado').textContent =
+            'Persona registrada seleccionada y disponible para visita';
+    }
+
+    function visitaQuitarSeleccion() {
+        visitaRapidaState.selected = null;
+        document.getElementById('visitaClienteId').value = '';
+        document.getElementById('visitaSeleccionado').hidden = true;
+        visitaBloquearIdentidad(false);
+
+        [
+            'visitaNombre',
+            'visitaApellido',
+            'visitaTelefono',
+            'visitaEmail',
+            'visitaEmergenciaNombre',
+            'visitaEmergenciaTelefono'
+        ].forEach(function(id) {
+            const input = document.getElementById(id);
+            if (input) input.value = '';
+        });
+
+        visitaMostrarDatosAdicionales(false);
+        const search = document.getElementById('visitaBusqueda');
+        if (search) search.focus();
+    }
+
+    function visitaRenderizarResultados(personas, busqueda) {
+        const resultados = document.getElementById('visitaResultados');
+        const estado = document.getElementById('visitaBusquedaEstado');
+
+        if (!resultados || !estado) return;
+
+        if (!Array.isArray(personas) || personas.length === 0) {
+            const autocompletado =
+                visitaAutocompletarIdentidadDesdeBusqueda(busqueda);
+
+            resultados.innerHTML = `
+                <div class="quick-visit-search-empty">
+                    <i class="fas fa-user-plus"></i>
+                    <span>${autocompletado
+                        ? 'No encontramos coincidencias. Pasamos la búsqueda a Nombre y Apellidos; revisa los datos y continúa.'
+                        : 'No encontramos coincidencias. Captura nombre y apellidos para registrarlo.'}</span>
+                </div>
+            `;
+            estado.textContent = autocompletado
+                ? 'Nueva persona preparada'
+                : 'Sin coincidencias';
+            return;
+        }
+
+        let bloqueadas = 0;
+
+        resultados.innerHTML = personas.map(function(persona, index) {
+            const fullName = (persona.nombre + ' ' + persona.apellido).trim();
+            const accesoActivo = Boolean(persona.tiene_membresia_activa);
+            if (accesoActivo) bloqueadas++;
+
+            let estadoMembresia = 'Sin membresía vigente';
+            if (accesoActivo) {
+                estadoMembresia = (persona.membresia_activa_plan || 'Plan activo')
+                    + ' hasta '
+                    + visitaFormatearFecha(persona.membresia_activa_fecha_fin);
+            } else if (persona.ultima_membresia_vencida) {
+                estadoMembresia = 'Venció el '
+                    + visitaFormatearFecha(persona.ultima_membresia_vencida);
+            }
+
+            const detail = [
+                persona.telefono || 'Sin teléfono',
+                persona.sucursal || 'Sin sucursal',
+                estadoMembresia
+            ].join(' · ');
+
+            return `
+                <button
+                    type="button"
+                    class="quick-visit-search-result${accesoActivo ? ' is-blocked' : ''}"
+                    data-visita-index="${index}"
+                    ${accesoActivo ? 'disabled aria-disabled="true"' : ''}
+                >
+                    <span>${visitaEscaparHtml(
+                        visitaIniciales(persona.nombre, persona.apellido)
+                    )}</span>
+                    <div>
+                        <strong>${visitaEscaparHtml(fullName)}</strong>
+                        <small>${visitaEscaparHtml(detail)}</small>
+                    </div>
+                    ${accesoActivo
+                        ? '<em class="quick-visit-result-status is-active"><i class="fas fa-lock"></i> Acceso vigente</em>'
+                        : '<i class="fas fa-chevron-right"></i>'}
+                </button>
+            `;
+        }).join('');
+
+        Array.from(
+            resultados.querySelectorAll('[data-visita-index]:not(:disabled)')
+        ).forEach(function(button) {
+            button.addEventListener('click', function() {
+                const index = Number(button.dataset.visitaIndex || -1);
+                if (personas[index]) visitaSeleccionarPersona(personas[index]);
+            });
+        });
+
+        const disponibles = personas.length - bloqueadas;
+        estado.textContent = personas.length + ' coincidencia(s) · '
+            + disponibles + ' disponible(s) para visita';
+    }
+
+    async function visitaBuscarPersonas() {
+        const input = document.getElementById('visitaBusqueda');
+        const estado = document.getElementById('visitaBusquedaEstado');
+        const q = String(input ? input.value : '').trim();
+
+        if (!estado) return;
+
+        if (q.length < 2) {
+            visitaLimpiarResultados();
+            estado.textContent = 'Escribe al menos 2 caracteres';
+            return;
+        }
+
+        if (visitaRapidaState.searchController) {
+            visitaRapidaState.searchController.abort();
+        }
+
+        visitaRapidaState.searchController = new AbortController();
+        estado.textContent = 'Buscando...';
+
+        try {
+            const response = await fetch(
+                'api/dashboard/buscar_visitantes.php?q='
+                + encodeURIComponent(q),
+                {
+                    method: 'GET',
+                    credentials: 'same-origin',
+                    cache: 'no-store',
+                    signal: visitaRapidaState.searchController.signal
+                }
+            );
+
+            const data = await response.json();
+
+            if (!response.ok || !data.success) {
+                throw new Error(data.message || 'No fue posible buscar personas.');
+            }
+
+            visitaRenderizarResultados(data.personas || [], q);
+        } catch (error) {
+            if (error && error.name === 'AbortError') return;
+            estado.textContent = 'No fue posible buscar';
+            console.error('Búsqueda de visitas:', error);
+        }
+    }
+
+    function visitaResetearFormulario() {
+        const form = document.getElementById('formVisitaRapida');
+        if (!form) return;
+
+        form.reset();
+
+        /*
+         * El primer plan de un día disponible queda seleccionado de forma
+         * predeterminada cada vez que se abre o reinicia el registro rápido.
+         */
+        const planPredeterminado = document.getElementById('visitaPlanId');
+        if (
+            planPredeterminado
+            && !planPredeterminado.value
+            && planPredeterminado.options.length > 1
+        ) {
+            planPredeterminado.selectedIndex = 1;
+        }
+
+        visitaRapidaState.selected = null;
+        visitaRapidaState.submitting = false;
+        visitaRapidaState.autoFilledQuery = '';
+        document.getElementById('visitaClienteId').value = '';
+        document.getElementById('visitaRequestId').value =
+            crearRequestIdVisita();
+        document.getElementById('visitaSeleccionado').hidden = true;
+        document.getElementById('visitaBusquedaEstado').textContent =
+            'Escribe al menos 2 caracteres';
+        visitaBloquearIdentidad(false);
+        visitaMostrarDatosAdicionales(false);
+        visitaLimpiarResultados();
+        visitaActualizarPrecio();
+        visitaActualizarMetodoPago();
+
+        const button = document.getElementById('visitaGuardar');
+        if (button) {
+            button.disabled = false;
+            button.innerHTML =
+                '<i class="fas fa-bolt"></i> Registrar visita';
+        }
+    }
+
+    function abrirRegistroVisitaRapida() {
+        const modal = document.getElementById('modalVisitaRapida');
+        if (!modal) {
+            Swal.fire({
+                icon: 'info',
+                title: 'Registro no disponible',
+                text: 'No hay planes de un día disponibles en esta sucursal.',
+                confirmButtonColor: '#1e3a8a'
+            });
+            return;
+        }
+
+        visitaResetearFormulario();
+        $('#modalVisitaRapida').modal('show');
+
+        window.setTimeout(function() {
+            const search = document.getElementById('visitaBusqueda');
+            if (search) search.focus();
+        }, 180);
+    }
+
+    async function visitaEnviarFormulario(event) {
+        event.preventDefault();
+
+        if (visitaRapidaState.submitting) return false;
+
+        const form = event.currentTarget;
+        const button = document.getElementById('visitaGuardar');
+
+        if (!form.reportValidity()) return false;
+
+        visitaRapidaState.submitting = true;
+        button.disabled = true;
+        button.innerHTML =
+            '<i class="fas fa-spinner fa-spin"></i> Registrando...';
+
+        try {
+            const metodo = String(
+                new FormData(form).get('metodo_pago') || ''
+            );
+
+            if (visitaEsMetodoPoint(metodo)) {
+                visitaLimpiarDatosPoint();
+                button.innerHTML =
+                    '<i class="fas fa-spinner fa-spin"></i> Enviando a Point...';
+
+                const order = await visitaCrearOrdenPoint(form);
+                visitaRapidaState.pointOrderId = order.order_id || '';
+
+                const paid = await visitaEsperarPagoPoint(order);
+
+                if (!paid || !paid.paid) {
+                    throw new Error(
+                        'Mercado Pago no confirmó el cobro.'
+                    );
+                }
+
+                visitaAsignarDatosPoint(
+                    Object.assign({}, order, paid)
+                );
+            }
+
+            button.innerHTML =
+                '<i class="fas fa-spinner fa-spin"></i> Guardando visita...';
+
+            const response = await fetch(
+                'api/dashboard/registrar_visita.php',
+                {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    cache: 'no-store',
+                    headers: {
+                        'X-Requested-With': 'XMLHttpRequest'
+                    },
+                    body: new FormData(form)
+                }
+            );
+
+            const responseText = await response.text();
+            let data = null;
+
+            try {
+                data = JSON.parse(responseText);
+            } catch (parseError) {
+                console.error('Registro de visita no JSON:', {
+                    status: response.status,
+                    response: responseText
+                });
+                throw new Error(
+                    'El servidor devolvió una respuesta inválida al guardar la visita.'
+                );
+            }
+
+            if (!response.ok || !data.success) {
+                const registroError = new Error(
+                    data.message || 'No fue posible registrar la visita.'
+                );
+                registroError.orderId = data.order_id
+                    || visitaRapidaState.pointOrderId
+                    || '';
+                throw registroError;
+            }
+
+            $('#modalVisitaRapida').modal('hide');
+
+            const reusedText = data.cliente_reutilizado
+                ? 'Se reutilizó la información registrada de la persona.'
+                : 'Se creó el registro de la persona.';
+
+            const result = await Swal.fire({
+                icon: 'success',
+                title: 'Visita registrada',
+                html:
+                    '<p class="quick-visit-success-name">'
+                    + visitaEscaparHtml(data.nombre || '')
+                    + '</p>'
+                    + '<p>'
+                    + visitaEscaparHtml(data.plan || '')
+                    + ' · '
+                    + visitaEscaparHtml(data.total_formateado || '')
+                    + '</p>'
+                    + '<p class="quick-visit-success-note">'
+                    + visitaEscaparHtml(reusedText)
+                    + '</p>'
+                    + (
+                        data.qr_url
+                            ? '<img class="quick-visit-success-qr" src="'
+                                + visitaEscaparHtml(data.qr_url)
+                                + '" alt="Código QR de la persona">'
+                            : ''
+                    )
+                    + '<p><strong>QR:</strong> '
+                    + visitaEscaparHtml(data.codigo_qr || '')
+                    + '</p>'
+                    + (
+                        data.point_order_id
+                            ? '<p class="quick-visit-success-note"><strong>Point:</strong> '
+                                + visitaEscaparHtml(data.point_order_id)
+                                + '</p>'
+                            : ''
+                    ),
+                showCancelButton: true,
+                confirmButtonText: 'Registrar otra visita',
+                cancelButtonText: 'Cerrar',
+                confirmButtonColor: '#1e3a8a',
+                cancelButtonColor: '#64748b'
+            });
+
+            if (result.isConfirmed) {
+                abrirRegistroVisitaRapida();
+            }
+        } catch (error) {
+            await Swal.fire({
+                icon: 'error',
+                title: 'No se registró la visita',
+                text: error.message || 'Ocurrió un error inesperado.',
+                confirmButtonColor: '#1e3a8a'
+            });
+        } finally {
+            visitaRapidaState.submitting = false;
+            button.disabled = false;
+            button.innerHTML =
+                '<i class="fas fa-bolt"></i> Registrar visita';
+        }
+
+        return false;
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        const search = document.getElementById('visitaBusqueda');
+        const extras = document.getElementById('visitaMostrarDatos');
+        const clear = document.getElementById('visitaLimpiarSeleccion');
+        const plan = document.getElementById('visitaPlanId');
+        const method = document.getElementById('visitaMetodoPago');
+        const form = document.getElementById('formVisitaRapida');
+
+        if (search) {
+            search.addEventListener('input', function() {
+                window.clearTimeout(visitaRapidaState.searchTimer);
+                visitaRapidaState.searchTimer =
+                    window.setTimeout(visitaBuscarPersonas, 280);
+            });
+        }
+
+        if (extras) {
+            extras.addEventListener('change', function() {
+                visitaMostrarDatosAdicionales(extras.checked);
+            });
+        }
+
+        if (clear) clear.addEventListener('click', visitaQuitarSeleccion);
+        if (plan) plan.addEventListener('change', visitaActualizarPrecio);
+        if (method) method.addEventListener('change', visitaActualizarMetodoPago);
+        if (form) form.addEventListener('submit', visitaEnviarFormulario);
+
+        $('#modalVisitaRapida')
+            .on('show.bs.modal', function() {
+                document.documentElement.classList.add(
+                    'quick-visit-modal-open'
+                );
+                document.body.classList.add(
+                    'quick-visit-modal-open'
+                );
+            })
+            .on('hidden.bs.modal', function() {
+                document.documentElement.classList.remove(
+                    'quick-visit-modal-open'
+                );
+                document.body.classList.remove(
+                    'quick-visit-modal-open'
+                );
+                visitaResetearFormulario();
+            });
+    });
+
     let alertaMostrada = false;
     let tiempoRestanteInterval;
     
@@ -3082,7 +4476,16 @@ if (
 
             if (searchVencimientos) {
                 searchVencimientos.value = '';
-                filtrarVencimientos();
+            }
+
+            const ordenVencimientos = document.getElementById('ordenVencimientos');
+            if (ordenVencimientos) {
+                ordenVencimientos.value = 'recent';
+            }
+
+            ordenarVencimientos();
+
+            if (searchVencimientos) {
                 searchVencimientos.focus();
             }
         }, 120);
@@ -3146,6 +4549,58 @@ if (
         });
     }
     
+    function ordenarVencimientos() {
+        const grid = document.getElementById('vencimientosGrid');
+        const selector = document.getElementById('ordenVencimientos');
+
+        if (!grid) {
+            return;
+        }
+
+        const modo = selector ? selector.value : 'recent';
+        const cards = Array.from(
+            grid.querySelectorAll('[data-expiry-card]')
+        );
+
+        cards.sort(function(cardA, cardB) {
+            const diasA = Number(cardA.dataset.expiryDays || 0);
+            const diasB = Number(cardB.dataset.expiryDays || 0);
+            const fechaA = Number(cardA.dataset.expiryTimestamp || 0);
+            const fechaB = Number(cardB.dataset.expiryTimestamp || 0);
+            const indiceA = Number(cardA.dataset.expiryIndex || 0);
+            const indiceB = Number(cardB.dataset.expiryIndex || 0);
+            const vencidaA = diasA < 0;
+            const vencidaB = diasB < 0;
+
+            /*
+             * Las membresías ya vencidas permanecen arriba. El selector
+             * cambia el orden entre ellas; las próximas conservan primero
+             * la fecha más urgente para no perder renovaciones cercanas.
+             */
+            if (vencidaA !== vencidaB) {
+                return vencidaA ? -1 : 1;
+            }
+
+            if (vencidaA && vencidaB) {
+                if (fechaA !== fechaB) {
+                    return modo === 'oldest'
+                        ? fechaA - fechaB
+                        : fechaB - fechaA;
+                }
+            } else if (fechaA !== fechaB) {
+                return fechaA - fechaB;
+            }
+
+            return indiceA - indiceB;
+        });
+
+        cards.forEach(function(card) {
+            grid.appendChild(card);
+        });
+
+        filtrarVencimientos();
+    }
+
     function filtrarVencimientos() {
         const input = document.getElementById('searchVencimientos');
         const empty = document.getElementById('vencimientosFilterEmpty');
@@ -3220,6 +4675,11 @@ if (
                     450
                 );
             });
+        }
+
+        const ordenVencimientos = document.getElementById('ordenVencimientos');
+        if (ordenVencimientos) {
+            ordenVencimientos.addEventListener('change', ordenarVencimientos);
         }
         
         const searchClases = document.getElementById('searchClases');

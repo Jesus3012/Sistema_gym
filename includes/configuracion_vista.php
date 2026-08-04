@@ -44,6 +44,19 @@ $sucursalNombreConfiguracion = (string) (
 $seccion = (string) (
     $configuracionVista['seccion'] ?? 'clientes'
 );
+$esSuperAdministradorActual = (bool) (
+    $configuracionVista['es_super_administrador'] ?? false
+);
+$configSecurityCsrf = (string) (
+    $configuracionVista['security_csrf'] ?? ''
+);
+
+/** @var array<string, mixed>|null $config_2fa */
+$config_2fa = is_array(
+    $configuracionVista['config_2fa'] ?? null
+)
+    ? $configuracionVista['config_2fa']
+    : null;
 
 /** @var array<string, mixed> $config_gimnasio */
 $config_gimnasio = is_array(
@@ -263,6 +276,22 @@ $entrenadoresSucursal = is_array(
                             Correo
                         </a>
                     </li>
+
+                    <?php if ($esSuperAdministradorActual): ?>
+                        <li>
+                            <a
+                                href="<?php echo configuracion_h(
+                                    configuracion_url('seguridad', true)
+                                ); ?>"
+                                class="<?php echo $seccion === 'seguridad'
+                                    ? 'active'
+                                    : ''; ?>"
+                            >
+                                <i class="fas fa-shield-halved"></i>
+                                Seguridad
+                            </a>
+                        </li>
+                    <?php endif; ?>
                 <?php endif; ?>
                 <li><a href="<?php echo configuracion_h(configuracion_url('clientes', $vistaGlobalConfiguracion)); ?>" class="<?php echo $seccion === 'clientes' ? 'active' : ''; ?>"><i class="fas fa-users"></i> Socios</a></li>
                 <li><a href="<?php echo configuracion_h(configuracion_url('planes', $vistaGlobalConfiguracion)); ?>" class="<?php echo $seccion === 'planes' ? 'active' : ''; ?>"><i class="fas fa-tags"></i> Planes</a></li>
@@ -695,6 +724,121 @@ $entrenadoresSucursal = is_array(
                         >
                             <i class="fas fa-save"></i>
                             Guardar configuración
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        <?php endif; ?>
+
+        <?php if ($seccion === 'seguridad' && $esSuperAdministradorActual): ?>
+        <div class="card config-security-card">
+            <div class="card-header">
+                <h3 class="card-title">
+                    <i class="fas fa-shield-halved"></i>
+                    Verificación en dos pasos
+                </h3>
+                <span class="mail-config-status <?php echo !empty($config_2fa['activo']) ? 'ready' : 'missing'; ?>">
+                    <i class="fas <?php echo !empty($config_2fa['activo']) ? 'fa-circle-check' : 'fa-circle-pause'; ?>"></i>
+                    <?php echo !empty($config_2fa['activo']) ? 'Protección activa' : 'Protección pausada'; ?>
+                </span>
+            </div>
+
+            <div class="card-body">
+                <div class="config-inline-notice">
+                    <i class="fas fa-mobile-screen-button"></i>
+                    <div>
+                        <strong>Códigos desde una aplicación autenticadora</strong>
+                        <span>Los usuarios validan su acceso con Google Authenticator, Microsoft Authenticator, Authy u otra aplicación TOTP. El correo no interviene en el inicio de sesión.</span>
+                    </div>
+                </div>
+
+                <form id="formSeguridad2fa">
+                    <input type="hidden" name="security_csrf" value="<?php echo configuracion_h($configSecurityCsrf); ?>">
+                    <div class="config-security-toggle-main">
+                        <label>
+                            <input type="checkbox" name="activo" <?php echo !empty($config_2fa['activo']) ? 'checked' : ''; ?>>
+                            <span>
+                                <strong>Activar verificación en dos pasos</strong>
+                                <small>Al desactivarla, las cuentas conservarán su configuración, pero el acceso no la exigirá.</small>
+                            </span>
+                        </label>
+                    </div>
+
+                    <div class="config-security-section">
+                        <div class="config-security-section-heading">
+                            <h4>Roles obligatorios</h4>
+                            <p>La cuenta deberá configurar el autenticador antes de completar su acceso.</p>
+                        </div>
+
+                        <div class="config-role-security-grid">
+                            <?php
+                            $roles2fa = array(
+                                'requerir_super_administrador' => array('Superadministrador', 'fa-user-shield'),
+                                'requerir_admin' => array('Administrador', 'fa-user-gear'),
+                                'requerir_recepcionista' => array('Recepcionista', 'fa-user-check'),
+                                'requerir_entrenador' => array('Entrenador', 'fa-dumbbell')
+                            );
+                            foreach ($roles2fa as $campo2fa => $datosRol2fa):
+                            ?>
+                                <label class="config-role-security-option">
+                                    <input
+                                        type="checkbox"
+                                        name="<?php echo configuracion_h($campo2fa); ?>"
+                                        <?php echo !empty($config_2fa[$campo2fa]) ? 'checked' : ''; ?>
+                                    >
+                                    <span class="config-role-security-icon">
+                                        <i class="fas <?php echo configuracion_h($datosRol2fa[1]); ?>"></i>
+                                    </span>
+                                    <span>
+                                        <strong><?php echo configuracion_h($datosRol2fa[0]); ?></strong>
+                                        <small>Exigir segundo factor al iniciar sesión</small>
+                                    </span>
+                                </label>
+                            <?php endforeach; ?>
+                        </div>
+                    </div>
+
+                    <div class="config-security-section">
+                        <div class="config-security-section-heading">
+                            <h4>Dispositivos confiables y bloqueos</h4>
+                            <p>Controla la comodidad del acceso sin reducir la protección ante intentos repetidos.</p>
+                        </div>
+
+                        <div class="config-form-modern">
+                            <div class="form-group full-width">
+                                <label class="config-security-inline-check">
+                                    <input type="checkbox" name="permitir_dispositivo_confiable" <?php echo !empty($config_2fa['permitir_dispositivo_confiable']) ? 'checked' : ''; ?>>
+                                    <span>Permitir confiar en un dispositivo</span>
+                                </label>
+                            </div>
+
+                            <div class="form-group">
+                                <label>Días de confianza</label>
+                                <input type="number" class="form-control" name="dias_dispositivo_confiable" min="1" max="90" value="<?php echo (int) ($config_2fa['dias_dispositivo_confiable'] ?? 30); ?>">
+                            </div>
+
+                            <div class="form-group">
+                                <label>Intentos antes del bloqueo</label>
+                                <input type="number" class="form-control" name="max_intentos" min="3" max="10" value="<?php echo (int) ($config_2fa['max_intentos'] ?? 5); ?>">
+                            </div>
+
+                            <div class="form-group">
+                                <label>Minutos de bloqueo</label>
+                                <input type="number" class="form-control" name="minutos_bloqueo" min="1" max="120" value="<?php echo (int) ($config_2fa['minutos_bloqueo'] ?? 15); ?>">
+                            </div>
+
+                            <div class="form-group">
+                                <label>Nombre mostrado en el autenticador</label>
+                                <input type="text" class="form-control" name="emisor" maxlength="120" value="<?php echo configuracion_h($config_2fa['emisor'] ?? 'Gym System'); ?>">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="config-form-actions-modern">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-save"></i>
+                            Guardar política de seguridad
                         </button>
                     </div>
                 </form>
@@ -1316,7 +1460,7 @@ $entrenadoresSucursal = is_array(
                         <tbody>
                             <?php
                             // El listado ya fue preparado con el alcance multisucursal.
-                            $roles_map = ['admin' => 'Administrador', 'recepcionista' => 'Recepcionista', 'entrenador' => 'Entrenador'];
+                            $roles_map = ['super_administrador' => 'Superadministrador', 'admin' => 'Administrador', 'recepcionista' => 'Recepcionista', 'entrenador' => 'Entrenador'];
                             while($user = $usuarios->fetch_assoc()):
                             ?>
                             <tr>
@@ -1356,19 +1500,31 @@ $entrenadoresSucursal = is_array(
                                     </span>
                                 </td>
                                 <td data-label="Acceso">
-                                    <?php if ($user['estado'] !== 'activo'): ?>
-                                        <span class="badge badge-secondary">
-                                            <i class="fas fa-ban"></i> Sin acceso
-                                        </span>
-                                    <?php elseif ((int) $user['password_change_required'] === 1): ?>
-                                        <span class="badge badge-warning">
-                                            <i class="fas fa-clock"></i> Debe cambiar contraseña
-                                        </span>
-                                    <?php else: ?>
-                                        <span class="badge badge-success">
-                                            <i class="fas fa-check-circle"></i> Normal
-                                        </span>
-                                    <?php endif; ?>
+                                    <div class="config-access-statuses">
+                                        <?php if ($user['estado'] !== 'activo'): ?>
+                                            <span class="badge badge-secondary">
+                                                <i class="fas fa-ban"></i> Sin acceso
+                                            </span>
+                                        <?php elseif ((int) $user['password_change_required'] === 1): ?>
+                                            <span class="badge badge-warning">
+                                                <i class="fas fa-clock"></i> Debe cambiar contraseña
+                                            </span>
+                                        <?php else: ?>
+                                            <span class="badge badge-success">
+                                                <i class="fas fa-check-circle"></i> Contraseña lista
+                                            </span>
+                                        <?php endif; ?>
+
+                                        <?php if ((int) ($user['two_factor_enabled'] ?? 0) === 1): ?>
+                                            <span class="badge badge-2fa-active">
+                                                <i class="fas fa-shield-halved"></i> 2FA activo
+                                            </span>
+                                        <?php else: ?>
+                                            <span class="badge badge-2fa-pending">
+                                                <i class="fas fa-mobile-screen-button"></i> Configurar 2FA
+                                            </span>
+                                        <?php endif; ?>
+                                    </div>
                                 </td>
                                 <td data-label="Fecha registro">
                                     <?php echo date(
@@ -1435,6 +1591,27 @@ $entrenadoresSucursal = is_array(
                                         <i class="fas <?php echo $restablecimientoPendiente ? 'fa-clock' : 'fa-key'; ?>"></i>
                                         <?php echo $restablecimientoPendiente ? 'Pendiente' : 'Restablecer'; ?>
                                     </button>
+
+                                    <?php if (
+                                        (int) ($user['two_factor_enabled'] ?? 0) === 1
+                                        && (int) $user['id'] !== $usuario_id
+                                    ): ?>
+                                        <button
+                                            class="btn btn-info btn-sm"
+                                            onclick='restablecerDosPasos(
+                                                <?php echo (int) $user["id"]; ?>,
+                                                <?php echo htmlspecialchars(
+                                                    json_encode($user["nombre"]),
+                                                    ENT_QUOTES,
+                                                    "UTF-8"
+                                                ); ?>
+                                            )'
+                                            title="Restablecer verificación en dos pasos"
+                                        >
+                                            <i class="fas fa-shield-halved"></i>
+                                            Restablecer 2FA
+                                        </button>
+                                    <?php endif; ?>
                                     </div>
                                 </td>
                             </tr>
@@ -1513,6 +1690,7 @@ $entrenadoresSucursal = is_array(
     <script>
         const CONFIG_VISTA_GLOBAL = <?php echo $vistaGlobalConfiguracion ? 'true' : 'false'; ?>;
         const CONFIG_SUCURSAL_NOMBRE = <?php echo json_encode($sucursalNombreConfiguracion, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT); ?>;
+        const CONFIG_SECURITY_CSRF = <?php echo json_encode($configSecurityCsrf, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT); ?>;
 
         // Funciones de Modal
         function abrirModal(modalId) {
@@ -1956,7 +2134,8 @@ $entrenadoresSucursal = is_array(
                     dataType: 'json',
                     data: {
                         action: 'cambiar_password',
-                        id: id
+                        id: id,
+                        security_csrf: CONFIG_SECURITY_CSRF
                     },
                     success: function(response) {
                         if (!response.success) {
@@ -2017,6 +2196,75 @@ $entrenadoresSucursal = is_array(
                             title: 'Error',
                             text:
                                 'No se pudo restablecer la contraseña.',
+                            target: document.body
+                        });
+                    }
+                });
+            });
+        }
+
+        function restablecerDosPasos(id, nombre) {
+            Swal.fire({
+                icon: 'warning',
+                title: '¿Restablecer verificación en dos pasos?',
+                html:
+                    '<p>La configuración de <strong>' +
+                    $('<div>').text(nombre).html() +
+                    '</strong> será eliminada.</p>' +
+                    '<p style="margin-bottom:0;color:#667085;font-size:13px;">' +
+                    'Se cerrarán sus sesiones actuales, se revocarán los ' +
+                    'dispositivos confiables y deberá vincular una nueva ' +
+                    'aplicación en el próximo acceso.</p>',
+                showCancelButton: true,
+                confirmButtonText: 'Sí, restablecer 2FA',
+                cancelButtonText: 'Cancelar',
+                confirmButtonColor: '#dc2626',
+                target: document.body
+            }).then((result) => {
+                if (!result.isConfirmed) {
+                    return;
+                }
+
+                Swal.fire({
+                    title: 'Restableciendo seguridad...',
+                    allowOutsideClick: false,
+                    didOpen: () => Swal.showLoading(),
+                    target: document.body
+                });
+
+                $.ajax({
+                    url: 'configuracion.php',
+                    method: 'POST',
+                    dataType: 'json',
+                    data: {
+                        action: 'reset_2fa',
+                        id: id,
+                        security_csrf: CONFIG_SECURITY_CSRF
+                    },
+                    success: function(response) {
+                        if (!response.success) {
+                            Swal.fire({
+                                icon: 'error',
+                                title: 'No se pudo restablecer',
+                                text: response.message || 'Ocurrió un error.',
+                                target: document.body
+                            });
+                            return;
+                        }
+
+                        Swal.fire({
+                            icon: 'success',
+                            title: '2FA restablecido',
+                            text: response.message,
+                            confirmButtonText: 'Aceptar',
+                            target: document.body
+                        }).then(() => location.reload());
+                    },
+                    error: function(xhr) {
+                        Swal.fire({
+                            icon: 'error',
+                            title: 'No se pudo restablecer',
+                            text: xhr.responseJSON?.message || 'Ocurrió un error al restablecer la seguridad.',
                             target: document.body
                         });
                     }
@@ -2273,6 +2521,7 @@ $entrenadoresSucursal = is_array(
             renderQrMiniaturas();
             inicializarListadosPaginados();
             inicializarCorreo();
+            inicializarSeguridad2fa();
         });
 
         function inicializarListadosPaginados() {
@@ -2563,6 +2812,62 @@ $entrenadoresSucursal = is_array(
                 );
 
                 renderLista();
+            });
+        }
+
+        function inicializarSeguridad2fa() {
+            const $form = $('#formSeguridad2fa');
+
+            if (!$form.length) {
+                return;
+            }
+
+            $form.on('submit', function(event) {
+                event.preventDefault();
+
+                const data = $form.serialize() + '&action=save_2fa_config';
+
+                Swal.fire({
+                    title: 'Guardando política de seguridad...',
+                    allowOutsideClick: false,
+                    didOpen: () => Swal.showLoading(),
+                    target: document.body
+                });
+
+                $.ajax({
+                    url: 'configuracion.php',
+                    method: 'POST',
+                    data: data,
+                    dataType: 'json',
+                    success: function(response) {
+                        if (!response.success) {
+                            Swal.fire({
+                                icon: 'error',
+                                title: 'No se pudo guardar',
+                                text: response.message || 'Ocurrió un error.',
+                                target: document.body
+                            });
+                            return;
+                        }
+
+                        Swal.fire({
+                            icon: 'success',
+                            title: 'Política actualizada',
+                            text: response.message,
+                            timer: 1700,
+                            showConfirmButton: false,
+                            target: document.body
+                        }).then(() => location.reload());
+                    },
+                    error: function(xhr) {
+                        Swal.fire({
+                            icon: 'error',
+                            title: 'No se pudo guardar',
+                            text: xhr.responseJSON?.message || 'Ocurrió un error al guardar la política.',
+                            target: document.body
+                        });
+                    }
+                });
             });
         }
 

@@ -1696,10 +1696,6 @@ $correoTokensAsync = correo_cola_extraer_tokens_async();
                     : 'Consulta expedientes protegidos y registra el seguimiento administrativo autorizado de los socios de tu sucursal.'; ?>
             </p>
         </div>
-        <a class="health-primary-button" href="#listadoSocios">
-            <i class="fa-solid fa-user-magnifying-glass"></i>
-            Buscar socio
-        </a>
     </header>
 
     <nav class="health-tabs health-tabs-unified" aria-label="Secciones del expediente">

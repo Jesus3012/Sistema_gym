@@ -4,6 +4,7 @@ require_once __DIR__ . '/config/database.php';
 require_once __DIR__ . '/includes/sucursal_context.php';
 require_once __DIR__ . '/includes/super_admin_helper.php';
 require_once __DIR__ . '/includes/configuracion_context.php';
+require_once __DIR__ . '/includes/two_factor_helper.php';
 require_once __DIR__ . '/PHPMailer/PHPMailer.php';
 require_once __DIR__ . '/PHPMailer/SMTP.php';
 require_once __DIR__ . '/PHPMailer/Exception.php';
@@ -22,6 +23,11 @@ $conn->set_charset('utf8mb4');
 
 $usuario_id = (int) ($_SESSION['user_id'] ?? 0);
 $usuario_nombre = (string) ($_SESSION['user_name'] ?? 'Usuario');
+
+if (empty($_SESSION['config_security_csrf'])) {
+    $_SESSION['config_security_csrf'] = bin2hex(random_bytes(32));
+}
+$configSecurityCsrf = (string) $_SESSION['config_security_csrf'];
 
 /*
  * Se conserva el rol real para las acciones exclusivas del
@@ -446,6 +452,11 @@ $seccionesGlobales = array(
     'clases',
     'usuarios'
 );
+
+if ($esSuperAdministradorActual) {
+    array_splice($seccionesGlobales, 2, 0, array('seguridad'));
+}
+
 $seccionesSucursal = array(
     'clientes',
     'planes',
@@ -516,6 +527,7 @@ if (!$config_gimnasio) {
 }
 
 $config_correo = obtenerConfiguracionCorreo($conn);
+$config_2fa = two_factor_get_config($conn);
 
 // Datos corporativos usados como respaldo visual del logo de una sede.
 $config_corporativa = configuracion_fila(
@@ -805,6 +817,68 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             configuracion_json(array(
                 'success' => true,
                 'message' => 'Configuración de correo guardada.'
+            ));
+        }
+
+        if ($action === 'save_2fa_config') {
+            $csrfSeguridad = (string) ($_POST['security_csrf'] ?? '');
+            if ($csrfSeguridad === '' || !hash_equals($configSecurityCsrf, $csrfSeguridad)) {
+                throw new RuntimeException('La sesión de seguridad cambió. Recarga la página.');
+            }
+
+            if (!$vistaGlobalConfiguracion || !$esSuperAdministradorActual) {
+                throw new RuntimeException(
+                    'Solo el superadministrador puede modificar la política de verificación en dos pasos.'
+                );
+            }
+
+            $activo2fa = isset($_POST['activo']) ? 1 : 0;
+            $requerirSuper = isset($_POST['requerir_super_administrador']) ? 1 : 0;
+            $requerirAdmin = isset($_POST['requerir_admin']) ? 1 : 0;
+            $requerirRecepcion = isset($_POST['requerir_recepcionista']) ? 1 : 0;
+            $requerirEntrenador = isset($_POST['requerir_entrenador']) ? 1 : 0;
+            $permitirConfiable = isset($_POST['permitir_dispositivo_confiable']) ? 1 : 0;
+            $diasConfiable = max(1, min(90, (int) ($_POST['dias_dispositivo_confiable'] ?? 30)));
+            $maxIntentos = max(3, min(10, (int) ($_POST['max_intentos'] ?? 5)));
+            $minutosBloqueo = max(1, min(120, (int) ($_POST['minutos_bloqueo'] ?? 15)));
+            $emisor = trim((string) ($_POST['emisor'] ?? ''));
+
+            if ($emisor === '') {
+                $emisor = trim((string) ($config_corporativa['nombre'] ?? 'Gym System'));
+            }
+
+            configuracion_ejecutar(
+                $conn,
+                "UPDATE configuracion_2fa
+                 SET activo = ?,
+                     requerir_super_administrador = ?,
+                     requerir_admin = ?,
+                     requerir_recepcionista = ?,
+                     requerir_entrenador = ?,
+                     permitir_dispositivo_confiable = ?,
+                     dias_dispositivo_confiable = ?,
+                     max_intentos = ?,
+                     minutos_bloqueo = ?,
+                     emisor = ?
+                 WHERE id = 1",
+                'iiiiiiiiis',
+                array(
+                    $activo2fa,
+                    $requerirSuper,
+                    $requerirAdmin,
+                    $requerirRecepcion,
+                    $requerirEntrenador,
+                    $permitirConfiable,
+                    $diasConfiable,
+                    $maxIntentos,
+                    $minutosBloqueo,
+                    $emisor
+                )
+            );
+
+            configuracion_json(array(
+                'success' => true,
+                'message' => 'La política de verificación en dos pasos fue actualizada.'
             ));
         }
 
@@ -2103,7 +2177,106 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             configuracion_json(array('success' => true, 'message' => $mensaje));
         }
 
+        if ($action === 'reset_2fa') {
+            $csrfSeguridad = (string) ($_POST['security_csrf'] ?? '');
+            if ($csrfSeguridad === '' || !hash_equals($configSecurityCsrf, $csrfSeguridad)) {
+                throw new RuntimeException('La sesión de seguridad cambió. Recarga la página.');
+            }
+
+            $id = (int) ($_POST['id'] ?? 0);
+
+            if ($id <= 0) {
+                throw new RuntimeException('El usuario seleccionado no es válido.');
+            }
+
+            if ($id === $usuario_id) {
+                throw new RuntimeException(
+                    'Para cambiar tu propio autenticador utiliza Mi perfil > Seguridad.'
+                );
+            }
+
+            if (
+                !$vistaGlobalConfiguracion
+                && !configuracion_usuario_en_sucursal(
+                    $conn,
+                    $id,
+                    $sucursalIdConfiguracion
+                )
+            ) {
+                throw new RuntimeException(
+                    'El usuario no pertenece a la sucursal activa.'
+                );
+            }
+
+            $usuario2faReset = configuracion_fila(
+                $conn,
+                "SELECT id, nombre, email, rol, estado
+                 FROM usuarios
+                 WHERE id = ?
+                 LIMIT 1",
+                'i',
+                array($id)
+            );
+
+            if (!$usuario2faReset) {
+                throw new RuntimeException('No se encontró el usuario.');
+            }
+
+            if (
+                rol_normalizar_sistema((string) $usuario2faReset['rol'])
+                    === 'super_administrador'
+                && !$esSuperAdministradorActual
+            ) {
+                throw new RuntimeException(
+                    'Solo el superadministrador puede restablecer la seguridad de esa cuenta.'
+                );
+            }
+
+            $conn->begin_transaction();
+            try {
+                two_factor_revoke_devices($conn, $id);
+
+                configuracion_ejecutar(
+                    $conn,
+                    "DELETE FROM usuarios_2fa WHERE usuario_id = ?",
+                    'i',
+                    array($id)
+                );
+
+                configuracion_ejecutar(
+                    $conn,
+                    "UPDATE usuarios
+                     SET auth_version = auth_version + 1
+                     WHERE id = ?",
+                    'i',
+                    array($id)
+                );
+
+                $conn->commit();
+            } catch (Throwable $errorReset2fa) {
+                $conn->rollback();
+                throw $errorReset2fa;
+            }
+
+            two_factor_log_event(
+                $conn,
+                $id,
+                '2fa_restaurado_admin',
+                'La configuración 2FA fue restablecida por ' . $usuario_nombre . '.'
+            );
+
+            configuracion_json(array(
+                'success' => true,
+                'message' => 'La verificación en dos pasos fue restablecida. El usuario deberá configurarla en su próximo acceso.'
+            ));
+        }
+
         if ($action === 'cambiar_password') {
+            $csrfSeguridad = (string) ($_POST['security_csrf'] ?? '');
+            if ($csrfSeguridad === '' || !hash_equals($configSecurityCsrf, $csrfSeguridad)) {
+                throw new RuntimeException('La sesión de seguridad cambió. Recarga la página.');
+            }
+
             $id = (int) ($_POST['id'] ?? 0);
 
             if (
@@ -2138,11 +2311,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             configuracion_ejecutar(
                 $conn,
                 "UPDATE usuarios
-                 SET password = ?, password_change_required = 1,
-                     ultimo_cambio_password = NOW()
+                 SET password = ?,
+                     password_change_required = 1,
+                     ultimo_cambio_password = NOW(),
+                     auth_version = auth_version + 1
                  WHERE id = ?",
                 'si',
                 array($password, $id)
+            );
+
+            two_factor_revoke_devices($conn, $id);
+            two_factor_log_event(
+                $conn,
+                $id,
+                'password_restaurado_admin',
+                'Un administrador restableció la contraseña y revocó los dispositivos confiables.'
             );
 
             $correo = enviarCredencialesAcceso(
@@ -2404,13 +2587,16 @@ if ($vistaGlobalConfiguracion) {
     $usuarios = $conn->query(
         "SELECT
             u.*,
+            COALESCE(u2.enabled, 0) AS two_factor_enabled,
+            u2.confirmed_at AS two_factor_confirmed_at,
             (
                 SELECT COUNT(*)
                 FROM usuarios_sucursales us
                 WHERE us.usuario_id = u.id
                   AND us.estado = 'activo'
             ) AS sedes_activas
-         FROM usuarios u"
+         FROM usuarios u
+         LEFT JOIN usuarios_2fa u2 ON u2.usuario_id = u.id"
          . $filtroSuperAdministradoresGlobalAlias
          . " ORDER BY
                 FIELD(
@@ -2586,11 +2772,14 @@ if ($vistaGlobalConfiguracion) {
             u.estado AS estado_global,
             u.password_change_required,
             u.fecha_registro,
+            COALESCE(u2.enabled, 0) AS two_factor_enabled,
+            u2.confirmed_at AS two_factor_confirmed_at,
             us.es_principal,
             us.puede_operar_caja,
             1 AS sedes_activas
          FROM usuarios_sucursales us
          INNER JOIN usuarios u ON u.id = us.usuario_id
+         LEFT JOIN usuarios_2fa u2 ON u2.usuario_id = u.id
          WHERE us.sucursal_id = ?
            AND u.rol <> 'super_administrador'
          ORDER BY u.nombre",
@@ -2696,6 +2885,9 @@ $configuracionVista = array(
     'seccion' => $seccion,
     'config_gimnasio' => $config_gimnasio,
     'config_correo' => $config_correo,
+    'config_2fa' => $config_2fa,
+    'es_super_administrador' => $esSuperAdministradorActual,
+    'security_csrf' => $configSecurityCsrf,
     'logo_path' => $logo_path,
     'logo_es_propio' => $logo_es_propio,
     'ultima_actualizacion' => $ultima_actualizacion,

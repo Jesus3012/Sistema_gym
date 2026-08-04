@@ -1,10 +1,12 @@
 <?php
-session_start();
+require_once __DIR__ . '/includes/session_security.php';
+secure_session_start();
 header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 header('Pragma: no-cache');
 require_once 'config/database.php';
 require_once 'includes/super_admin_helper.php';
 require_once 'includes/sucursal_context.php';
+require_once 'includes/two_factor_helper.php';
 
 $error = trim((string) ($_GET['error'] ?? ''));
 $email_value = '';
@@ -16,6 +18,9 @@ $db = $database->getConnection();
 if ($db instanceof mysqli) {
     $db->set_charset('utf8mb4');
 }
+
+$twoFactorReady = $db instanceof mysqli
+    && two_factor_schema_ready($db);
 
 function login_limpiar_sesion(): void
 {
@@ -37,6 +42,10 @@ function login_limpiar_sesion(): void
 
     session_destroy();
     session_start();
+}
+
+if (isset($_GET['reiniciar']) && (string) $_GET['reiniciar'] === '1') {
+    login_limpiar_sesion();
 }
 
 function login_destino_segun_rol(): string
@@ -68,6 +77,12 @@ if (isset($_SESSION['user_id'], $_SESSION['login_time'])) {
         $error = 'sesion_expirada';
     } elseif ($db instanceof mysqli) {
         try {
+            if (!$twoFactorReady || !two_factor_session_is_verified($db)) {
+                throw new RuntimeException(
+                    'La sesión no tiene una verificación en dos pasos válida.'
+                );
+            }
+
             sucursal_inicializar_sesion($db);
             $_SESSION['last_activity'] = time();
 
@@ -134,12 +149,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $password = (string) ($_POST['password'] ?? '');
     $email_value = $email;
 
-    if ($email === '' || $password === '') {
+    if (!$twoFactorReady) {
+        $error = '2fa_no_instalado';
+    } elseif ($email === '' || $password === '') {
         $error = 'campos_vacios';
     } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
         $error = 'email_invalido';
     } else {
-        $query = 'SELECT id, nombre, email, password, rol, estado FROM usuarios WHERE email = ? LIMIT 1';
+        $query = 'SELECT id, nombre, email, password, rol, estado, password_change_required, COALESCE(auth_version, 1) AS auth_version FROM usuarios WHERE email = ? LIMIT 1';
         $stmt = $db->prepare($query);
 
         if (!$stmt) {
@@ -162,32 +179,76 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     // Por seguridad, solo las cuentas expresamente activas pueden entrar.
                     $error = 'usuario_inactivo';
                 } elseif (password_verify($password, (string) $user['password'])) {
-                    session_regenerate_id(true);
-
-                    $_SESSION['user_id'] = (int) $user['id'];
-                    $_SESSION['user_name'] = (string) $user['nombre'];
-                    $_SESSION['user_email'] = (string) $user['email'];
-                    $_SESSION['user_rol_base'] = (string) $user['rol'];
-                    $_SESSION['user_rol'] = (string) $user['rol'];
-                    $_SESSION['login_time'] = time();
-                    $_SESSION['last_activity'] = time();
-
                     try {
-                        /*
-                         * Selecciona la sucursal principal del usuario y
-                         * guarda en sesión el rol efectivo de esa sede.
-                         */
-                        sucursal_inicializar_sesion($db);
+                        $config2fa = two_factor_get_config($db);
+                        $usuario2fa = two_factor_get_user(
+                            $db,
+                            (int) $user['id']
+                        );
 
-                        header('Location: ' . login_destino_segun_rol());
+                        if (!$usuario2fa) {
+                            throw new RuntimeException(
+                                'No fue posible cargar la seguridad de la cuenta.'
+                            );
+                        }
+
+                        two_factor_start_pending($usuario2fa);
+
+                        $proteccion2faActiva =
+                            (int) ($config2fa['activo'] ?? 0) === 1;
+                        $requiere2fa = two_factor_role_required(
+                            $config2fa,
+                            (string) $usuario2fa['rol']
+                        );
+                        $tiene2fa = two_factor_user_enabled($usuario2fa);
+
+                        if (
+                            $proteccion2faActiva
+                            && $tiene2fa
+                            && (int) ($config2fa['permitir_dispositivo_confiable'] ?? 0) === 1
+                            && two_factor_trusted_device_valid(
+                                $db,
+                                (int) $usuario2fa['id']
+                            )
+                        ) {
+                            two_factor_log_event(
+                                $db,
+                                (int) $usuario2fa['id'],
+                                '2fa_dispositivo_confiable',
+                                'Acceso autorizado mediante dispositivo confiable.'
+                            );
+
+                            $destino = two_factor_complete_login(
+                                $db,
+                                $usuario2fa
+                            );
+                            header('Location: ' . $destino);
+                            exit();
+                        }
+
+                        if ($requiere2fa && !$tiene2fa) {
+                            header('Location: configurar_2fa.php');
+                            exit();
+                        }
+
+                        if ($proteccion2faActiva && $tiene2fa) {
+                            header('Location: verificar_2fa.php');
+                            exit();
+                        }
+
+                        $destino = two_factor_complete_login(
+                            $db,
+                            $usuario2fa
+                        );
+                        header('Location: ' . $destino);
                         exit();
                     } catch (Throwable $sucursalException) {
                         error_log(
-                            '[Login sucursal] '
+                            '[Login 2FA/sucursal] '
                             . $sucursalException->getMessage()
                         );
 
-                        // No se permite una sesión autenticada sin sede.
+                        two_factor_clear_pending();
                         $_SESSION = [];
                         session_regenerate_id(true);
 
@@ -195,12 +256,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             $sucursalException->getMessage()
                         );
 
-                        $error = strpos(
-                            $mensajeSucursal,
-                            'no tiene una sucursal'
-                        ) !== false
-                            ? 'sin_sucursal_asignada'
-                            : 'error_sucursal';
+                        if (strpos($mensajeSucursal, 'no tiene una sucursal') !== false) {
+                            $error = 'sin_sucursal_asignada';
+                        } elseif (strpos($mensajeSucursal, 'dos pasos') !== false) {
+                            $error = '2fa_no_instalado';
+                        } else {
+                            $error = 'error_sucursal';
+                        }
                     }
                 } else {
                     $error = 'password_incorrecta';
@@ -304,6 +366,24 @@ $errores = [
         'message' => 'Tu sesión expiró después de 12 horas. Inicia sesión nuevamente.',
         'icon' => 'info',
         'timer' => 5000,
+    ],
+    'sesion_seguridad' => [
+        'title' => 'Verifica nuevamente tu identidad',
+        'message' => 'La sesión de seguridad cambió o fue revocada. Inicia sesión otra vez.',
+        'icon' => 'info',
+        'timer' => 6000,
+    ],
+    'sesion_2fa_expirada' => [
+        'title' => 'Verificación expirada',
+        'message' => 'La verificación en dos pasos tardó demasiado. Ingresa nuevamente tu correo y contraseña.',
+        'icon' => 'info',
+        'timer' => 6000,
+    ],
+    '2fa_no_instalado' => [
+        'title' => 'Seguridad pendiente de instalar',
+        'message' => 'Ejecuta database/instalar_verificacion_dos_pasos.sql antes de iniciar sesión.',
+        'icon' => 'error',
+        'timer' => 7000,
     ],
     'error_sistema' => [
         'title' => 'No fue posible iniciar sesión',

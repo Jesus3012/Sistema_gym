@@ -642,3 +642,250 @@ button {
         transition: none !important;
     }
 }
+/* =========================================================
+   VERIFICACIÓN EN DOS PASOS
+   ========================================================= */
+.two-factor-profile-card {
+    margin-top: 28px;
+    padding-top: 26px;
+    border-top: 1px solid var(--profile-border);
+}
+
+.two-factor-profile-heading {
+    display: flex;
+    align-items: flex-start;
+    gap: 13px;
+}
+
+.two-factor-profile-icon {
+    width: 44px;
+    height: 44px;
+    flex: 0 0 44px;
+    display: grid;
+    place-items: center;
+    border-radius: 12px;
+    color: var(--profile-primary);
+    background: var(--profile-soft);
+    font-size: 1rem;
+}
+
+.two-factor-profile-heading > div {
+    min-width: 0;
+    flex: 1 1 auto;
+}
+
+.two-factor-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.two-factor-title-row h2 {
+    margin: 0;
+    color: #172033;
+    font-size: 1.12rem;
+}
+
+.two-factor-profile-heading p {
+    margin: 5px 0 0;
+    color: var(--profile-muted);
+    font-size: .8rem;
+    line-height: 1.45;
+}
+
+.two-factor-status {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 9px;
+    border-radius: 999px;
+    font-size: .68rem;
+    font-weight: 800;
+}
+
+.two-factor-status.active {
+    color: #047857;
+    background: #e7f8f0;
+}
+
+.two-factor-status.inactive {
+    color: #9f2634;
+    background: #fdecef;
+}
+
+.two-factor-metrics {
+    margin-top: 20px;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.two-factor-metrics > div {
+    min-width: 0;
+    padding: 13px;
+    border: 1px solid #e1e7ef;
+    border-radius: 11px;
+    background: #f8fafc;
+}
+
+.two-factor-metrics small,
+.two-factor-metrics strong {
+    display: block;
+}
+
+.two-factor-metrics small {
+    margin-bottom: 4px;
+    color: #7b8798;
+    font-size: .65rem;
+    font-weight: 750;
+}
+
+.two-factor-metrics strong {
+    overflow-wrap: anywhere;
+    color: #27364c;
+    font-size: .78rem;
+}
+
+.two-factor-actions {
+    margin-top: 13px;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.security-action-button {
+    min-width: 0;
+    min-height: 78px;
+    padding: 12px;
+    display: grid;
+    grid-template-columns: 30px minmax(0, 1fr);
+    align-items: start;
+    gap: 9px;
+    border: 1px solid #d9e2ee;
+    border-radius: 11px;
+    color: #344054;
+    background: #fff;
+    text-align: left;
+    cursor: pointer;
+    transition: border-color .18s ease, background .18s ease, transform .18s ease;
+}
+
+.security-action-button:hover {
+    transform: translateY(-1px);
+    border-color: #9fb5d8;
+    background: #f8fbff;
+}
+
+.security-action-button > i {
+    width: 30px;
+    height: 30px;
+    display: grid;
+    place-items: center;
+    border-radius: 8px;
+    color: var(--profile-primary);
+    background: var(--profile-soft);
+}
+
+.security-action-button strong,
+.security-action-button small {
+    display: block;
+}
+
+.security-action-button strong {
+    font-size: .76rem;
+}
+
+.security-action-button small {
+    margin-top: 3px;
+    color: #7b8798;
+    font-size: .65rem;
+    line-height: 1.35;
+}
+
+.security-action-button.danger > i {
+    color: #b42318;
+    background: #fff0f0;
+}
+
+.two-factor-empty,
+.two-factor-privacy-note {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin-top: 18px;
+    padding: 13px;
+    border: 1px solid #dce5f1;
+    border-radius: 11px;
+    color: #526176;
+    background: #f8fbff;
+    font-size: .74rem;
+    line-height: 1.45;
+}
+
+.two-factor-empty > i {
+    margin-top: 2px;
+    color: var(--profile-primary);
+}
+
+.two-factor-empty strong,
+.two-factor-empty span {
+    display: block;
+}
+
+.two-factor-empty span {
+    margin-top: 3px;
+    color: #7b8798;
+}
+
+.two-factor-privacy-note {
+    margin-top: 13px;
+    border-style: dashed;
+    background: #fff;
+    font-size: .69rem;
+}
+
+.two-factor-privacy-note i {
+    margin-top: 2px;
+    color: #6f7f96;
+}
+
+.swal-recovery-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin-top: 14px;
+}
+
+.swal-recovery-code {
+    padding: 9px;
+    border: 1px solid #dce4ee;
+    border-radius: 8px;
+    color: #1e3a8a;
+    background: #f8fafc;
+    font-size: .8rem;
+    font-weight: 800;
+}
+
+@media (max-width: 820px) {
+    .two-factor-metrics,
+    .two-factor-actions {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 575.98px) {
+    .two-factor-title-row {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .two-factor-status {
+        align-self: flex-start;
+    }
+
+    .swal-recovery-grid {
+        grid-template-columns: 1fr;
+    }
+}

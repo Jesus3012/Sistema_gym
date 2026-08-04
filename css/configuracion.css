@@ -2236,3 +2236,182 @@ body.configuracion-page.modal-open {
         width: 100%;
     }
 }
+/* =========================================================
+   USUARIOS: ESTADO Y ACCIONES DE VERIFICACIÓN EN DOS PASOS
+   ========================================================= */
+.configuracion-page .config-access-statuses {
+    display: flex;
+    align-items: flex-start;
+    gap: 5px;
+    flex-direction: column;
+}
+
+.configuracion-page .badge-2fa-active {
+    color: #145b43;
+    background: #dff4e8;
+}
+
+.configuracion-page .badge-2fa-pending {
+    color: #7a5207;
+    background: #fff0bf;
+}
+
+.configuracion-page .config-access-statuses .badge {
+    width: fit-content;
+    max-width: 100%;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    white-space: normal;
+}
+
+@media (max-width: 768px) {
+    .configuracion-page .config-access-statuses {
+        align-items: flex-start;
+    }
+
+    .configuracion-page .config-access-statuses .badge {
+        width: 100%;
+        justify-content: center;
+    }
+}
+
+/* =========================================================
+   CONFIGURACIÓN GLOBAL DE SEGURIDAD 2FA
+   ========================================================= */
+.configuracion-page .config-security-toggle-main {
+    margin-bottom: 18px;
+    padding: 14px;
+    border: 1px solid #cddcf0;
+    border-radius: 11px;
+    background: #f8fbff;
+}
+
+.configuracion-page .config-security-toggle-main label,
+.configuracion-page .config-security-inline-check {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin: 0;
+    cursor: pointer;
+}
+
+.configuracion-page .config-security-toggle-main input,
+.configuracion-page .config-security-inline-check input,
+.configuracion-page .config-role-security-option input {
+    width: 18px;
+    height: 18px;
+    flex: 0 0 18px;
+    margin-top: 2px;
+    accent-color: var(--cfg-blue);
+}
+
+.configuracion-page .config-security-toggle-main strong,
+.configuracion-page .config-security-toggle-main small {
+    display: block;
+}
+
+.configuracion-page .config-security-toggle-main strong {
+    color: #183657;
+    font-size: .82rem;
+}
+
+.configuracion-page .config-security-toggle-main small {
+    margin-top: 3px;
+    color: #6f7d90;
+    font-size: .68rem;
+    line-height: 1.4;
+}
+
+.configuracion-page .config-security-section {
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid #e6ebf1;
+}
+
+.configuracion-page .config-security-section-heading {
+    margin-bottom: 12px;
+}
+
+.configuracion-page .config-security-section-heading h4 {
+    margin: 0;
+    color: var(--cfg-primary);
+    font-size: .92rem;
+    font-weight: 750;
+}
+
+.configuracion-page .config-security-section-heading p {
+    margin: 4px 0 0;
+    color: var(--cfg-muted);
+    font-size: .7rem;
+}
+
+.configuracion-page .config-role-security-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.configuracion-page .config-role-security-option {
+    min-width: 0;
+    padding: 12px;
+    display: grid;
+    grid-template-columns: 18px 34px minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+    border: 1px solid #dce4ed;
+    border-radius: 10px;
+    background: #ffffff;
+    cursor: pointer;
+}
+
+.configuracion-page .config-role-security-icon {
+    width: 34px;
+    height: 34px;
+    display: grid;
+    place-items: center;
+    border-radius: 9px;
+    color: var(--cfg-blue);
+    background: var(--cfg-blue-soft);
+}
+
+.configuracion-page .config-role-security-option strong,
+.configuracion-page .config-role-security-option small {
+    display: block;
+}
+
+.configuracion-page .config-role-security-option strong {
+    color: #334155;
+    font-size: .72rem;
+}
+
+.configuracion-page .config-role-security-option small {
+    margin-top: 2px;
+    color: #7b8797;
+    font-size: .6rem;
+    line-height: 1.3;
+}
+
+.configuracion-page .config-security-inline-check {
+    align-items: center;
+    min-height: 42px;
+    padding: 10px 12px;
+    border: 1px solid #dce4ed;
+    border-radius: 9px;
+    color: #475569;
+    background: #f8fafc;
+    font-size: .75rem;
+    font-weight: 750;
+}
+
+@media (max-width: 1080px) {
+    .configuracion-page .config-role-security-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 575px) {
+    .configuracion-page .config-role-security-grid {
+        grid-template-columns: 1fr;
+    }
+}

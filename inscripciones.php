@@ -115,6 +115,37 @@ $error = '';
 // Verificar si se debe abrir el modal automáticamente
 $abrir_modal_nuevo = isset($_GET['action']) && $_GET['action'] == 'nuevo_cliente';
 
+/*
+ * Permite llegar desde el dashboard directamente al formulario de renovación.
+ * Los datos únicamente se utilizan para abrir la interfaz; el servidor vuelve
+ * a validar la inscripción, el socio, la sucursal y las fechas al guardar.
+ */
+$abrir_modal_renovar_dashboard =
+    strtolower(trim((string) ($_GET['action'] ?? ''))) === 'renovar'
+    && (int) ($_GET['inscripcion_id'] ?? 0) > 0
+    && (int) ($_GET['cliente_id'] ?? 0) > 0;
+
+$renovar_dashboard_inscripcion_id = (int) (
+    $_GET['inscripcion_id'] ?? 0
+);
+$renovar_dashboard_cliente_id = (int) (
+    $_GET['cliente_id'] ?? 0
+);
+$renovar_dashboard_fecha_inicio = trim((string) (
+    $_GET['fecha_inicio'] ?? ''
+));
+
+if (
+    $renovar_dashboard_fecha_inicio !== ''
+    && preg_match(
+        '/^\d{4}-\d{2}-\d{2}$/',
+        $renovar_dashboard_fecha_inicio
+    ) !== 1
+) {
+    $renovar_dashboard_fecha_inicio = '';
+}
+
+
 
 // Crear nuevo cliente e inscripción
 
@@ -980,22 +1011,50 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
             throw new Exception('No se puede renovar una inscripción cancelada.');
         }
         
-        // VERIFICACIÓN: Solo permitir renovar si la inscripción está VENCIDA o es un plan de 1 día VENCIDO
-        if ($inscripcion_actual['estado'] == 'activa') {
-            // Para planes de 1 día, verificar si ya pasó la fecha
-            if ($inscripcion_actual['duracion_actual'] == 1) {
-                $fecha_fin_actual = $inscripcion_actual['fecha_fin'];
-                $hoy = new DateTime();
-                $hoy->setTime(0, 0, 0);
-                $fecha_fin_obj = new DateTime($fecha_fin_actual);
-                $fecha_fin_obj->setTime(0, 0, 0);
-                
-                if ($hoy <= $fecha_fin_obj) {
-                    throw new Exception('No se puede renovar un plan de 1 día mientras está activo el día de hoy. Espere hasta mañana.');
+        /*
+         * RENOVACIÓN ANTICIPADA.
+         *
+         * Los planes normales pueden renovarse durante sus últimos siete días.
+         * El periodo nuevo comienza al día siguiente del vencimiento actual,
+         * por lo que el socio no pierde los días que ya pagó. La fecha inicial
+         * histórica de la inscripción se conserva y únicamente se extiende el
+         * final de la membresía.
+         */
+        $fecha_inicio_periodo = $fecha_inicio;
+        $fecha_inicio_inscripcion = $fecha_inicio;
+
+        if ($inscripcion_actual['estado'] === 'activa') {
+            $hoyRenovacion = new DateTime('today');
+            $fechaFinActual = new DateTime(
+                (string) $inscripcion_actual['fecha_fin']
+            );
+            $fechaFinActual->setTime(0, 0, 0);
+            $diasParaVencer = (int) $hoyRenovacion
+                ->diff($fechaFinActual)
+                ->format('%r%a');
+
+            if ((int) $inscripcion_actual['duracion_actual'] === 1) {
+                if ($diasParaVencer >= 0) {
+                    throw new Exception(
+                        'El plan de un día todavía está vigente. Registra la siguiente visita cuando termine el día actual.'
+                    );
                 }
-            } else {
-                // Para planes normales, NO permitir renovar mientras esté activo
-                throw new Exception('No se puede renovar mientras la inscripción está activa. Espere a que venza.');
+            } elseif ($diasParaVencer >= 0) {
+                if ($diasParaVencer > 7) {
+                    throw new Exception(
+                        'Esta inscripción todavía no puede renovarse. La renovación se habilita durante sus últimos 7 días.'
+                    );
+                }
+
+                $fechaInicioSiguiente = clone $fechaFinActual;
+                $fechaInicioSiguiente->modify('+1 day');
+                $fecha_inicio_periodo =
+                    $fechaInicioSiguiente->format('Y-m-d');
+                $fecha_inicio = $fecha_inicio_periodo;
+                $fecha_inicio_inscripcion = (string) (
+                    $inscripcion_actual['fecha_inicio']
+                    ?? $fecha_inicio_periodo
+                );
             }
         }
         
@@ -1048,7 +1107,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
         $stmt->bind_param(
             "issdi",
             $plan_id,
-            $fecha_inicio,
+            $fecha_inicio_inscripcion,
             $fecha_fin,
             $precio_pagado,
             $inscripcion_id
@@ -3070,7 +3129,13 @@ $correo_tokens_async = correo_cola_extraer_tokens_async();
             $('#renovar_precio_pagado').val('');
         });
         
-        function abrirRenovar(inscripcionId, clienteId, isDisabled, message) {
+        function abrirRenovar(
+            inscripcionId,
+            clienteId,
+            isDisabled,
+            message,
+            fechaInicioSugerida
+        ) {
             if (isDisabled === true || isDisabled === 'true') {
                 Swal.fire({
                     title: 'No se puede renovar',
@@ -3080,6 +3145,17 @@ $correo_tokens_async = correo_cola_extraer_tokens_async();
                 });
                 return;
             }
+
+            const obtenerFechaLocal = function() {
+                const fecha = new Date();
+                const year = fecha.getFullYear();
+                const month = String(fecha.getMonth() + 1).padStart(2, '0');
+                const day = String(fecha.getDate()).padStart(2, '0');
+                return year + '-' + month + '-' + day;
+            };
+
+            const fechaSugeridaValida = /^\d{4}-\d{2}-\d{2}$/
+                .test(String(fechaInicioSugerida || ''));
             
             $.ajax({
                 url: 'includes/obtener_cliente.php',
@@ -3091,7 +3167,10 @@ $correo_tokens_async = correo_cola_extraer_tokens_async();
                         document.getElementById('renovar_inscripcion_id').value = inscripcionId;
                         document.getElementById('renovar_cliente_id').value = clienteId;
                         document.getElementById('renovar_cliente_nombre').value = data.nombre;
-                        document.getElementById('renovar_fecha_inicio').value = new Date().toISOString().split('T')[0];
+                        document.getElementById('renovar_fecha_inicio').value =
+                            fechaSugeridaValida
+                                ? fechaInicioSugerida
+                                : obtenerFechaLocal();
                         $('#modalRenovar').modal('show');
                     } else {
                         Swal.fire('Error', 'No se pudo obtener los datos del cliente', 'error');
@@ -3477,6 +3556,41 @@ $correo_tokens_async = correo_cola_extraer_tokens_async();
                 url.searchParams.delete('action');
                 window.history.replaceState({}, document.title, url.pathname + url.search);
             }
+        });
+        <?php endif; ?>
+
+
+        <?php if ($abrir_modal_renovar_dashboard): ?>
+        $(document).ready(function() {
+            abrirRenovar(
+                <?php echo (int) $renovar_dashboard_inscripcion_id; ?>,
+                <?php echo (int) $renovar_dashboard_cliente_id; ?>,
+                false,
+                '',
+                <?php echo json_encode(
+                    $renovar_dashboard_fecha_inicio,
+                    JSON_HEX_TAG
+                    | JSON_HEX_APOS
+                    | JSON_HEX_AMP
+                    | JSON_HEX_QUOT
+                ); ?>
+            );
+
+            const url = new URL(window.location.href);
+            [
+                'action',
+                'inscripcion_id',
+                'cliente_id',
+                'fecha_inicio',
+                'origen'
+            ].forEach(function(parametro) {
+                url.searchParams.delete(parametro);
+            });
+            window.history.replaceState(
+                {},
+                document.title,
+                url.pathname + url.search
+            );
         });
         <?php endif; ?>
     </script>
