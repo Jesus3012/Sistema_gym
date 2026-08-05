@@ -10,6 +10,7 @@ require_once __DIR__ . '/config/database.php';
 require_once __DIR__ . '/includes/super_admin_helper.php';
 require_once __DIR__ . '/includes/notificaciones_context.php';
 require_once __DIR__ . '/includes/notificaciones_mailer.php';
+require_once __DIR__ . '/includes/notificaciones_vencimiento_service.php';
 
 $database = new Database();
 $db = $database->getConnection();
@@ -652,191 +653,6 @@ function notif_search_auto(
     ];
 }
 
-function notif_process_expirations(
-    mysqli $db,
-    array $context
-): array {
-    /*
-     * Se procesa la sucursal que vendió la inscripción. Una membresía
-     * multi-sede recibe un solo aviso, no uno por cada sede de acceso.
-     */
-    $types = '';
-    $params = [];
-
-    $scope = notif_scope(
-        'i.sucursal_id',
-        $context,
-        false,
-        $types,
-        $params
-    );
-
-    $sql = "
-        SELECT
-            i.id,
-            i.sucursal_id,
-            i.cliente_id,
-            i.fecha_fin,
-            c.nombre,
-            c.apellido,
-            c.email,
-            p.nombre AS plan_nombre,
-            s.nombre AS sucursal_nombre,
-            DATEDIFF(i.fecha_fin, CURDATE()) AS dias_restantes
-        FROM inscripciones i
-        INNER JOIN clientes c ON c.id = i.cliente_id
-        INNER JOIN planes p ON p.id = i.plan_id
-        INNER JOIN sucursales s ON s.id = i.sucursal_id
-        WHERE i.estado = 'activa'
-          AND $scope
-          AND DATEDIFF(i.fecha_fin, CURDATE()) IN (3, 0)
-          AND LOWER(TRIM(p.nombre)) <> 'visita'
-          AND c.estado = 'activo'
-          AND c.email IS NOT NULL
-          AND TRIM(c.email) <> ''
-        ORDER BY i.fecha_fin ASC, i.id ASC
-    ";
-
-    $stmt = $db->prepare($sql);
-
-    if (!$stmt) {
-        throw new RuntimeException(
-            'No fue posible preparar las membresías por vencer: '
-            . $db->error
-        );
-    }
-
-    notif_bind($stmt, $types, $params);
-    $stmt->execute();
-    $result = $stmt->get_result();
-
-    $checkStmt = $db->prepare(
-        "SELECT id
-         FROM notificaciones_vencimiento_historial
-         WHERE inscripcion_id = ?
-           AND tipo_notificacion = ?
-           AND estado = 'enviado'
-         LIMIT 1"
-    );
-
-    $insertStmt = $db->prepare(
-        "INSERT INTO notificaciones_vencimiento_historial (
-            sucursal_id,
-            inscripcion_id,
-            cliente_id,
-            cliente_nombre,
-            cliente_email,
-            plan_nombre,
-            tipo_notificacion,
-            dias_restantes,
-            fecha_vencimiento,
-            fecha_envio,
-            estado
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-    );
-
-    if (!$checkStmt || !$insertStmt) {
-        throw new RuntimeException(
-            'No fue posible preparar el historial de vencimientos.'
-        );
-    }
-
-    $summary = [
-        'encontradas' => 0,
-        'omitidas_ya_enviadas' => 0,
-        'enviados_3_dias' => 0,
-        'enviados_vencidos' => 0,
-        'errores' => 0,
-        'errores_detalle' => [],
-    ];
-
-    while ($row = $result->fetch_assoc()) {
-        $summary['encontradas']++;
-
-        $days = (int) $row['dias_restantes'];
-        $type = $days === 3 ? '3_dias' : 'vencido';
-        $inscriptionId = (int) $row['id'];
-
-        $checkStmt->bind_param('is', $inscriptionId, $type);
-        $checkStmt->execute();
-        $alreadySent = $checkStmt->get_result()->fetch_assoc();
-
-        if ($alreadySent) {
-            $summary['omitidas_ya_enviadas']++;
-            continue;
-        }
-
-        $fullName = trim($row['nombre'] . ' ' . $row['apellido']);
-
-        $send = notif_send_expiration(
-            $db,
-            (string) $row['email'],
-            $fullName,
-            $days,
-            (string) $row['fecha_fin'],
-            (string) $row['plan_nombre'],
-            (string) $row['sucursal_nombre']
-        );
-
-        $status = $send['ok'] ? 'enviado' : 'fallido';
-        $rowBranchId = (int) $row['sucursal_id'];
-        $clientId = (int) $row['cliente_id'];
-        $email = (string) $row['email'];
-        $plan = (string) $row['plan_nombre'];
-        $expiration = (string) $row['fecha_fin'];
-        $sentAt = date('Y-m-d H:i:s');
-
-        $insertStmt->bind_param(
-            'iiissssisss',
-            $rowBranchId,
-            $inscriptionId,
-            $clientId,
-            $fullName,
-            $email,
-            $plan,
-            $type,
-            $days,
-            $expiration,
-            $sentAt,
-            $status
-        );
-
-        if (!$insertStmt->execute()) {
-            $summary['errores']++;
-            $summary['errores_detalle'][] =
-                $fullName
-                . ': no se pudo guardar el historial ('
-                . $insertStmt->error
-                . ').';
-            continue;
-        }
-
-        if ($send['ok']) {
-            if ($type === '3_dias') {
-                $summary['enviados_3_dias']++;
-            } else {
-                $summary['enviados_vencidos']++;
-            }
-        } else {
-            $summary['errores']++;
-
-            if (count($summary['errores_detalle']) < 12) {
-                $summary['errores_detalle'][] =
-                    $fullName
-                    . ' · '
-                    . $email
-                    . ': '
-                    . $send['error'];
-            }
-        }
-    }
-
-    $stmt->close();
-    $checkStmt->close();
-    $insertStmt->close();
-
-    return $summary;
-}
 
 if (
     $_SERVER['REQUEST_METHOD'] === 'POST'
@@ -1510,7 +1326,7 @@ $autoInitial = notif_search_auto(
                     <i class="fas fa-calendar-alt"></i>
                     <span>
                         <strong>Notificaciones de vencimiento</strong>
-                        <small>3 días antes y día del vencimiento</small>
+                        <small>Automático · 3 días antes y día del vencimiento</small>
                     </span>
                 </div>
             </header>
@@ -1518,7 +1334,8 @@ $autoInitial = notif_search_auto(
             <div class="notification-card-body expiration-layout">
                 <div>
                     <p>
-                        El botón procesa las inscripciones originadas en
+                        Este proceso se ejecutará automáticamente. El botón
+                        sirve como prueba manual para
                         <strong><?php echo notif_h($branchName); ?></strong>.
                     </p>
 
@@ -1544,7 +1361,7 @@ $autoInitial = notif_search_auto(
                     class="notification-danger-button"
                 >
                     <i class="fas fa-bolt"></i>
-                    Forzar envío
+                    Probar envío ahora
                 </button>
             </div>
         </section>

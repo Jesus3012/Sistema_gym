@@ -2415,3 +2415,363 @@ body.configuracion-page.modal-open {
         grid-template-columns: 1fr;
     }
 }
+
+/* =========================================================
+   CONTRASEÑA TEMPORAL PREDETERMINADA POR INSTALACIÓN
+   ========================================================= */
+.configuracion-page .config-system-password-card {
+    overflow: visible;
+}
+
+.configuracion-page .config-system-password-card .card-body {
+    padding: 18px;
+}
+
+.configuracion-page .config-system-password-intro {
+    display: grid;
+    grid-template-columns: 44px minmax(0, 1fr);
+    align-items: start;
+    gap: 12px;
+    margin-bottom: 16px;
+    padding: 14px;
+    border: 1px solid #d8e4f2;
+    border-radius: 11px;
+    background: #f8fbff;
+}
+
+.configuracion-page .config-system-password-icon {
+    width: 44px;
+    height: 44px;
+    display: grid;
+    place-items: center;
+    border-radius: 11px;
+    color: var(--cfg-blue);
+    background: #e7f0ff;
+    font-size: 1rem;
+}
+
+.configuracion-page .config-system-password-intro strong {
+    display: block;
+    margin: 1px 0 4px;
+    color: var(--cfg-primary);
+    font-size: .84rem;
+}
+
+.configuracion-page .config-system-password-intro p {
+    margin: 0;
+    color: var(--cfg-muted);
+    font-size: .72rem;
+    line-height: 1.5;
+}
+
+.configuracion-page .config-system-password-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+}
+
+.configuracion-page .config-password-control {
+    position: relative;
+}
+
+.configuracion-page .config-password-control .form-control {
+    padding-right: 46px;
+}
+
+.configuracion-page .config-password-control > button {
+    position: absolute;
+    top: 50%;
+    right: 5px;
+    width: 34px;
+    height: 34px;
+    display: grid;
+    place-items: center;
+    padding: 0;
+    border: 0;
+    border-radius: 7px;
+    color: #64748b;
+    background: transparent;
+    cursor: pointer;
+    transform: translateY(-50%);
+}
+
+.configuracion-page .config-password-control > button:hover,
+.configuracion-page .config-password-control > button:focus {
+    outline: none;
+    color: var(--cfg-blue);
+    background: #edf4ff;
+}
+
+.configuracion-page .config-password-feedback {
+    min-height: 37px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+    padding: 9px 11px;
+    border: 1px solid #dce4ed;
+    border-radius: 9px;
+    color: #64748b;
+    background: #f8fafc;
+    font-size: .69rem;
+    line-height: 1.4;
+}
+
+.configuracion-page .config-password-feedback-dot {
+    width: 8px;
+    height: 8px;
+    flex: 0 0 8px;
+    border-radius: 50%;
+    background: #94a3b8;
+}
+
+.configuracion-page .config-password-feedback.weak {
+    color: #9f2634;
+    border-color: #f2c8ce;
+    background: #fff5f6;
+}
+
+.configuracion-page .config-password-feedback.weak
+.config-password-feedback-dot {
+    background: #df3545;
+}
+
+.configuracion-page .config-password-feedback.medium {
+    color: #84510c;
+    border-color: #ead3ab;
+    background: #fff9ef;
+}
+
+.configuracion-page .config-password-feedback.medium
+.config-password-feedback-dot {
+    background: #d99a13;
+}
+
+.configuracion-page .config-password-feedback.strong {
+    color: #166044;
+    border-color: #c3dfd1;
+    background: #f2faf6;
+}
+
+.configuracion-page .config-password-feedback.strong
+.config-password-feedback-dot {
+    background: #24945f;
+}
+
+.configuracion-page .config-system-password-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px 16px;
+    margin-top: 12px;
+    color: #718096;
+    font-size: .65rem;
+    line-height: 1.4;
+    flex-wrap: wrap;
+}
+
+.configuracion-page .config-system-password-meta span {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.configuracion-page .config-system-password-meta i {
+    color: var(--cfg-blue);
+}
+
+.configuracion-page .config-system-password-actions {
+    align-items: center;
+}
+
+/* =========================================================
+   USUARIOS: CORRECCIÓN FINAL DE ROL, ESTADO Y ACCIONES
+   ========================================================= */
+@media (min-width: 769px) {
+    .configuracion-page .config-users-table th:nth-child(2),
+    .configuracion-page .config-users-table td:nth-child(2) {
+        width: 11%;
+    }
+
+    .configuracion-page .config-users-table th:nth-child(3),
+    .configuracion-page .config-users-table td:nth-child(3) {
+        width: 17%;
+    }
+
+    .configuracion-page .config-users-table th:nth-child(4),
+    .configuracion-page .config-users-table td:nth-child(4) {
+        width: 12%;
+    }
+
+    .configuracion-page .config-users-table th:nth-child(5),
+    .configuracion-page .config-users-table td:nth-child(5) {
+        width: 9%;
+    }
+
+    .configuracion-page .config-users-table th:nth-child(6),
+    .configuracion-page .config-users-table td:nth-child(6) {
+        width: 16%;
+    }
+
+    .configuracion-page .config-users-table th:nth-child(7),
+    .configuracion-page .config-users-table td:nth-child(7) {
+        width: 10%;
+    }
+
+    .configuracion-page .config-users-table th:nth-child(8),
+    .configuracion-page .config-users-table td:nth-child(8) {
+        width: 25%;
+    }
+
+    .configuracion-page .config-users-table td:nth-child(4),
+    .configuracion-page .config-users-table td:nth-child(5) {
+        overflow: visible;
+    }
+
+    .configuracion-page .config-user-role-badge {
+        width: fit-content;
+        max-width: 100%;
+        min-height: 27px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 5px 9px;
+        line-height: 1.15;
+        text-align: center;
+        white-space: normal;
+        overflow-wrap: normal;
+        word-break: normal;
+    }
+
+    .configuracion-page .config-users-actions {
+        gap: 5px;
+    }
+
+    .configuracion-page .config-users-actions .btn {
+        padding-right: 8px;
+        padding-left: 8px;
+        font-size: .64rem;
+    }
+}
+
+@media (max-width: 1180px) and (min-width: 769px) {
+    .configuracion-page .config-users-table th:nth-child(3),
+    .configuracion-page .config-users-table td:nth-child(3) {
+        width: 15%;
+    }
+
+    .configuracion-page .config-users-table th:nth-child(4),
+    .configuracion-page .config-users-table td:nth-child(4) {
+        width: 13%;
+    }
+
+    .configuracion-page .config-users-table th:nth-child(8),
+    .configuracion-page .config-users-table td:nth-child(8) {
+        width: 27%;
+    }
+}
+
+@media (max-width: 768px) {
+    .configuracion-page .config-system-password-grid {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 12px;
+    }
+
+    .configuracion-page .config-system-password-actions {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .configuracion-page .config-system-password-actions .btn {
+        width: 100%;
+    }
+
+    .configuracion-page .config-user-role-badge {
+        width: fit-content;
+        max-width: 100%;
+        white-space: normal;
+    }
+}
+
+@media (max-width: 430px) {
+    .configuracion-page .config-system-password-intro {
+        grid-template-columns: 36px minmax(0, 1fr);
+        gap: 9px;
+        padding: 11px;
+    }
+
+    .configuracion-page .config-system-password-icon {
+        width: 36px;
+        height: 36px;
+        border-radius: 9px;
+    }
+}
+
+
+/* =========================================================
+   ALTA GLOBAL DE USUARIOS: ALCANCE DINÁMICO POR ROL
+   ========================================================= */
+.configuracion-page .config-user-branch-group {
+    margin-top: 2px;
+    padding: 13px;
+    border: 1px solid #d5e1ef;
+    border-radius: 10px;
+    background: #f8fbff;
+}
+
+.configuracion-page .config-user-branch-group[hidden] {
+    display: none !important;
+}
+
+.configuracion-page .config-user-branch-group label {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+}
+
+.configuracion-page .config-user-branch-group label i {
+    color: var(--cfg-blue);
+}
+
+.configuracion-page .config-user-branch-help {
+    display: block;
+    margin-top: 6px;
+    color: var(--cfg-muted);
+    font-size: .68rem;
+    line-height: 1.4;
+}
+
+.configuracion-page .config-user-scope-summary {
+    margin-top: 13px;
+    transition:
+        border-color .18s ease,
+        background .18s ease;
+}
+
+.configuracion-page .config-user-scope-summary.is-reception {
+    border-color: #c8e6da;
+    background: #f4fbf7;
+}
+
+.configuracion-page .config-user-scope-summary.is-reception
+.admin-global-summary__icon {
+    color: #177451;
+    background: #dff4e8;
+}
+
+.configuracion-page .config-user-scope-summary.is-trainer {
+    border-color: #ead9bd;
+    background: #fffaf1;
+}
+
+.configuracion-page .config-user-scope-summary.is-trainer
+.admin-global-summary__icon {
+    color: #9a650c;
+    background: #fff0cf;
+}
+
+@media (max-width: 768px) {
+    .configuracion-page .config-user-branch-group {
+        padding: 11px;
+    }
+}

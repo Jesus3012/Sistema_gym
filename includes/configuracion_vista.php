@@ -58,6 +58,19 @@ $config_2fa = is_array(
     ? $configuracionVista['config_2fa']
     : null;
 
+/** @var array<string, mixed> $config_acceso */
+$config_acceso = is_array(
+    $configuracionVista['config_acceso'] ?? null
+)
+    ? $configuracionVista['config_acceso']
+    : array(
+        'table_exists' => false,
+        'configured' => false,
+        'updated_at' => null,
+        'updated_by_name' => null,
+        'uses_legacy_default' => true,
+    );
+
 /** @var array<string, mixed> $config_gimnasio */
 $config_gimnasio = is_array(
     $configuracionVista['config_gimnasio'] ?? null
@@ -1429,6 +1442,171 @@ $entrenadoresSucursal = is_array(
         <?php endif; ?>
 
         <?php if ($seccion == 'usuarios'): ?>
+        <div class="card config-system-password-card">
+            <div class="card-header">
+                <h3 class="card-title">
+                    <i class="fas fa-key"></i>
+                    Contraseña temporal del sistema
+                </h3>
+
+                <?php
+                $tablaPasswordExiste = !empty(
+                    $config_acceso['table_exists']
+                );
+                $passwordSistemaConfigurada = !empty(
+                    $config_acceso['configured']
+                );
+                ?>
+
+                <span class="mail-config-status <?php echo $tablaPasswordExiste ? 'ready' : 'missing'; ?>">
+                    <i class="fas <?php echo $tablaPasswordExiste ? 'fa-circle-check' : 'fa-triangle-exclamation'; ?>"></i>
+                    <?php
+                    echo !$tablaPasswordExiste
+                        ? 'Falta ejecutar SQL'
+                        : ($passwordSistemaConfigurada
+                            ? 'Personalizada'
+                            : 'Usando ego1');
+                    ?>
+                </span>
+            </div>
+
+            <div class="card-body">
+                <div class="config-system-password-intro">
+                    <span class="config-system-password-icon">
+                        <i class="fas fa-key"></i>
+                    </span>
+                    <div>
+                        <strong>Una contraseña predeterminada por instalación</strong>
+                        <p>
+                            Esta contraseña se utilizará para todos los usuarios
+                            nuevos y para los restablecimientos posteriores. El
+                            usuario deberá cambiarla durante su primer acceso.
+                        </p>
+                    </div>
+                </div>
+
+                <?php if (!$tablaPasswordExiste): ?>
+                    <div class="config-inline-notice warning">
+                        <i class="fas fa-database"></i>
+                        <div>
+                            <strong>Configuración pendiente</strong>
+                            <span>
+                                Ejecuta
+                                <b>database/instalar_password_temporal_sistema.sql</b>.
+                                Mientras no se ejecute, el sistema conservará
+                                <b>ego1</b> por compatibilidad.
+                            </span>
+                        </div>
+                    </div>
+                <?php else: ?>
+                    <form id="formPasswordTemporalSistema" autocomplete="off">
+                        <input
+                            type="hidden"
+                            name="security_csrf"
+                            value="<?php echo configuracion_h($configSecurityCsrf); ?>"
+                        >
+
+                        <div class="config-system-password-grid">
+                            <div class="form-group">
+                                <label for="passwordTemporalSistema">
+                                    Nueva contraseña temporal
+                                </label>
+                                <div class="config-password-control">
+                                    <input
+                                        type="password"
+                                        class="form-control"
+                                        name="password_temporal"
+                                        id="passwordTemporalSistema"
+                                        minlength="4"
+                                        maxlength="72"
+                                        autocomplete="new-password"
+                                        required
+                                    >
+                                    <button
+                                        type="button"
+                                        onclick="alternarPasswordSistema('passwordTemporalSistema', this)"
+                                        aria-label="Mostrar u ocultar contraseña"
+                                        title="Mostrar u ocultar contraseña"
+                                    >
+                                        <i class="fas fa-eye"></i>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="passwordTemporalSistemaConfirmacion">
+                                    Confirmar contraseña
+                                </label>
+                                <div class="config-password-control">
+                                    <input
+                                        type="password"
+                                        class="form-control"
+                                        name="password_temporal_confirmacion"
+                                        id="passwordTemporalSistemaConfirmacion"
+                                        minlength="4"
+                                        maxlength="72"
+                                        autocomplete="new-password"
+                                        required
+                                    >
+                                    <button
+                                        type="button"
+                                        onclick="alternarPasswordSistema('passwordTemporalSistemaConfirmacion', this)"
+                                        aria-label="Mostrar u ocultar contraseña"
+                                        title="Mostrar u ocultar contraseña"
+                                    >
+                                        <i class="fas fa-eye"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="config-password-feedback" id="passwordSistemaFeedback">
+                            <span class="config-password-feedback-dot"></span>
+                            <span>Mínimo 4 caracteres; se recomiendan 8 o más.</span>
+                        </div>
+
+                        <div class="config-system-password-meta">
+                            <span>
+                                <i class="fas fa-lock"></i>
+                                La contraseña actual nunca se muestra en pantalla.
+                            </span>
+                            <?php if (!empty($config_acceso['updated_at'])): ?>
+                                <span>
+                                    <i class="fas fa-clock-rotate-left"></i>
+                                    Actualizada el
+                                    <?php echo date(
+                                        'd/m/Y H:i',
+                                        strtotime((string) $config_acceso['updated_at'])
+                                    ); ?>
+                                    <?php if (!empty($config_acceso['updated_by_name'])): ?>
+                                        por
+                                        <strong><?php echo configuracion_h(
+                                            (string) $config_acceso['updated_by_name']
+                                        ); ?></strong>
+                                    <?php endif; ?>
+                                </span>
+                            <?php endif; ?>
+                        </div>
+
+                        <div class="config-form-actions-modern config-system-password-actions">
+                            <button
+                                type="button"
+                                class="btn btn-light"
+                                onclick="generarPasswordSistema()"
+                            >
+                                <i class="fas fa-wand-magic-sparkles"></i>
+                                Generar segura
+                            </button>
+                            <button type="submit" class="btn btn-primary">
+                                <i class="fas fa-save"></i>
+                                Guardar contraseña predeterminada
+                            </button>
+                        </div>
+                    </form>
+                <?php endif; ?>
+            </div>
+        </div>
+
         <div class="card">
             <div class="card-header">
                 <h3 class="card-title"><i class="fas fa-user-shield"></i> <?php echo $vistaGlobalConfiguracion ? 'Usuarios del sistema' : 'Personal asignado a la sucursal'; ?></h3>
@@ -1460,7 +1638,7 @@ $entrenadoresSucursal = is_array(
                         <tbody>
                             <?php
                             // El listado ya fue preparado con el alcance multisucursal.
-                            $roles_map = ['super_administrador' => 'Superadministrador', 'admin' => 'Administrador', 'recepcionista' => 'Recepcionista', 'entrenador' => 'Entrenador'];
+                            $roles_map = ['super_administrador' => 'Super administrador', 'admin' => 'Administrador', 'recepcionista' => 'Recepcionista', 'entrenador' => 'Entrenador'];
                             while($user = $usuarios->fetch_assoc()):
                             ?>
                             <tr>
@@ -1480,7 +1658,7 @@ $entrenadoresSucursal = is_array(
                                     </span>
                                 </td>
                                 <td data-label="Rol">
-                                    <span class="badge badge-info">
+                                    <span class="badge badge-info config-user-role-badge">
                                         <?php echo $roles_map[$user['rol']]
                                             ?? $user['rol']; ?>
                                     </span>
@@ -1585,7 +1763,7 @@ $entrenadoresSucursal = is_array(
                                             ? 'El usuario no tiene acceso al sistema'
                                             : ($restablecimientoPendiente
                                                 ? 'El usuario ya tiene un cambio de contraseña pendiente'
-                                                : 'Restablecer a la contraseña predeterminada ego1');
+                                                : 'Restablecer con la contraseña temporal configurada para el sistema');
                                         ?>"
                                     >
                                         <i class="fas <?php echo $restablecimientoPendiente ? 'fa-clock' : 'fa-key'; ?>"></i>
@@ -1637,7 +1815,7 @@ $entrenadoresSucursal = is_array(
                         <div class="form-group"><label><i class="fas fa-user-tag"></i> <?php echo $vistaGlobalConfiguracion ? 'Rol general' : 'Función en esta sucursal'; ?></label><select class="form-control" name="rol" id="usuarioRol" required><option value="recepcionista">Recepcionista</option><option value="entrenador">Entrenador</option><option value="admin">Administrador</option></select></div>
                         <div class="form-group"><label><i class="fas fa-circle"></i> <?php echo $vistaGlobalConfiguracion ? 'Estado de la cuenta' : 'Acceso a esta sucursal'; ?></label><select class="form-control" name="estado" id="usuarioEstado"><option value="activo">Activo</option><option value="inactivo">Inactivo</option></select></div>
                         <div class="alert alert-info alert-ocultable" data-alerta-id="usuario_info">
-                            <i class="fas fa-info-circle"></i> <strong>Información:</strong> Los nuevos usuarios recibirán por correo la contraseña temporal <strong>ego1</strong>. Deberán cambiarla durante el primer inicio de sesión.
+                            <i class="fas fa-info-circle"></i> <strong>Información:</strong> Los nuevos usuarios recibirán la contraseña temporal configurada para este sistema. Deberán cambiarla durante el primer inicio de sesión.
                             <button type="button" class="btn-ocultar" onclick="event.preventDefault(); event.stopPropagation(); ocultarAlerta('usuario_info')" title="Ocultar alerta">
                                 <i class="fas fa-times"></i>
                             </button>
@@ -1665,8 +1843,8 @@ $entrenadoresSucursal = is_array(
                         <strong>¿Está seguro?</strong>
                         <p class="mt-2 mb-0">
                             La contraseña de <strong id="resetNombreMostrar"></strong>
-                            se restablecerá a la contraseña predeterminada
-                            <strong>ego1</strong> y se enviará por correo.
+                            se restablecerá con la contraseña temporal predeterminada
+                            configurada para este sistema y se enviará por correo.
                         </p>
                         <p class="mt-2 mb-0 text-muted small">
                             El usuario deberá cambiarla durante su próximo inicio de sesión.
@@ -1691,6 +1869,126 @@ $entrenadoresSucursal = is_array(
         const CONFIG_VISTA_GLOBAL = <?php echo $vistaGlobalConfiguracion ? 'true' : 'false'; ?>;
         const CONFIG_SUCURSAL_NOMBRE = <?php echo json_encode($sucursalNombreConfiguracion, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT); ?>;
         const CONFIG_SECURITY_CSRF = <?php echo json_encode($configSecurityCsrf, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT); ?>;
+
+        function alternarPasswordSistema(inputId, boton) {
+            const input = document.getElementById(inputId);
+
+            if (!input) {
+                return;
+            }
+
+            const mostrar = input.type === 'password';
+            input.type = mostrar ? 'text' : 'password';
+
+            const icono = boton
+                ? boton.querySelector('i')
+                : null;
+
+            if (icono) {
+                icono.className = mostrar
+                    ? 'fas fa-eye-slash'
+                    : 'fas fa-eye';
+            }
+        }
+
+        function evaluarPasswordSistema() {
+            const password = document.getElementById(
+                'passwordTemporalSistema'
+            );
+            const confirmacion = document.getElementById(
+                'passwordTemporalSistemaConfirmacion'
+            );
+            const feedback = document.getElementById(
+                'passwordSistemaFeedback'
+            );
+
+            if (!password || !confirmacion || !feedback) {
+                return;
+            }
+
+            const valor = password.value;
+            const coincide = valor !== ''
+                && valor === confirmacion.value;
+            let nivel = 'neutral';
+            let texto = 'Mínimo 4 caracteres; se recomiendan 8 o más.';
+
+            if (valor.length > 0 && valor.length < 4) {
+                nivel = 'weak';
+                texto = 'La contraseña todavía es demasiado corta.';
+            } else if (valor.length >= 4 && valor.length < 8) {
+                nivel = coincide ? 'medium' : 'weak';
+                texto = coincide
+                    ? 'Contraseña válida, aunque se recomienda una más larga.'
+                    : 'Confirma exactamente la misma contraseña.';
+            } else if (valor.length >= 8) {
+                const categorias = [
+                    /[a-z]/.test(valor),
+                    /[A-Z]/.test(valor),
+                    /[0-9]/.test(valor),
+                    /[^a-zA-Z0-9]/.test(valor)
+                ].filter(Boolean).length;
+
+                nivel = coincide && categorias >= 3
+                    ? 'strong'
+                    : (coincide ? 'medium' : 'weak');
+                texto = !coincide
+                    ? 'Confirma exactamente la misma contraseña.'
+                    : (categorias >= 3
+                        ? 'Contraseña segura y lista para guardar.'
+                        : 'Contraseña válida; combina letras, números y símbolos para mejorarla.');
+            }
+
+            feedback.className =
+                'config-password-feedback ' + nivel;
+            feedback.querySelector('span:last-child').textContent = texto;
+        }
+
+        function generarPasswordSistema() {
+            const password = document.getElementById(
+                'passwordTemporalSistema'
+            );
+            const confirmacion = document.getElementById(
+                'passwordTemporalSistemaConfirmacion'
+            );
+
+            if (!password || !confirmacion) {
+                return;
+            }
+
+            const mayusculas = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+            const minusculas = 'abcdefghijkmnopqrstuvwxyz';
+            const numeros = '23456789';
+            const simbolos = '!@#$%*-_';
+            const todos = mayusculas + minusculas + numeros + simbolos;
+            const seleccionar = function (fuente) {
+                const valores = new Uint32Array(1);
+                window.crypto.getRandomValues(valores);
+                return fuente[valores[0] % fuente.length];
+            };
+            let generado = seleccionar(mayusculas)
+                + seleccionar(minusculas)
+                + seleccionar(numeros)
+                + seleccionar(simbolos);
+
+            while (generado.length < 12) {
+                generado += seleccionar(todos);
+            }
+
+            generado = generado
+                .split('')
+                .sort(function () {
+                    const valores = new Uint32Array(1);
+                    window.crypto.getRandomValues(valores);
+                    return (valores[0] % 3) - 1;
+                })
+                .join('');
+
+            password.value = generado;
+            confirmacion.value = generado;
+            password.type = 'text';
+            confirmacion.type = 'text';
+            evaluarPasswordSistema();
+        }
 
         // Funciones de Modal
         function abrirModal(modalId) {
@@ -2108,7 +2406,7 @@ $entrenadoresSucursal = is_array(
                     'La contraseña de <strong>' +
                     $('<div>').text(nombre).html() +
                     '</strong> se restablecerá a la contraseña ' +
-                    'predeterminada <strong>ego1</strong> y se enviará ' +
+                    'predeterminada configurada para este sistema y se enviará ' +
                     'por correo. El usuario deberá cambiarla en su ' +
                     'próximo inicio de sesión.',
                 icon: 'question',
@@ -2157,7 +2455,7 @@ $entrenadoresSucursal = is_array(
                                 icon: 'success',
                                 title: 'Contraseña restablecida',
                                 text:
-                                    'La contraseña se restableció a ego1. ' +
+                                    'La contraseña predeterminada del sistema fue asignada. ' +
                                     'Las credenciales fueron enviadas por correo.',
                                 target: document.body
                             });
@@ -2522,6 +2820,7 @@ $entrenadoresSucursal = is_array(
             inicializarListadosPaginados();
             inicializarCorreo();
             inicializarSeguridad2fa();
+            inicializarPasswordTemporalSistema();
         });
 
         function inicializarListadosPaginados() {
@@ -2812,6 +3111,111 @@ $entrenadoresSucursal = is_array(
                 );
 
                 renderLista();
+            });
+        }
+
+        function inicializarPasswordTemporalSistema() {
+            const $form = $('#formPasswordTemporalSistema');
+
+            if (!$form.length) {
+                return;
+            }
+
+            $('#passwordTemporalSistema, #passwordTemporalSistemaConfirmacion')
+                .on('input', evaluarPasswordSistema);
+
+            $form.on('submit', function(event) {
+                event.preventDefault();
+
+                const password = $('#passwordTemporalSistema').val();
+                const confirmation = $('#passwordTemporalSistemaConfirmacion').val();
+
+                if (String(password).length < 4) {
+                    Swal.fire({
+                        icon: 'warning',
+                        title: 'Contraseña demasiado corta',
+                        text: 'La contraseña temporal debe tener al menos 4 caracteres.',
+                        target: document.body
+                    });
+                    return;
+                }
+
+                if (password !== confirmation) {
+                    Swal.fire({
+                        icon: 'warning',
+                        title: 'Las contraseñas no coinciden',
+                        text: 'Escribe exactamente la misma contraseña en ambos campos.',
+                        target: document.body
+                    });
+                    return;
+                }
+
+                Swal.fire({
+                    icon: 'question',
+                    title: '¿Actualizar contraseña temporal?',
+                    html:
+                        '<p>Se aplicará a <strong>usuarios nuevos</strong> y a ' +
+                        '<strong>restablecimientos futuros</strong>.</p>' +
+                        '<p style="margin-bottom:0;color:#667085;font-size:13px;">' +
+                        'Las contraseñas actuales de los usuarios no cambiarán.' +
+                        '</p>',
+                    showCancelButton: true,
+                    confirmButtonText: 'Sí, actualizar',
+                    cancelButtonText: 'Cancelar',
+                    target: document.body
+                }).then(function(result) {
+                    if (!result.isConfirmed) {
+                        return;
+                    }
+
+                    Swal.fire({
+                        title: 'Guardando contraseña...',
+                        allowOutsideClick: false,
+                        allowEscapeKey: false,
+                        didOpen: function() {
+                            Swal.showLoading();
+                        },
+                        target: document.body
+                    });
+
+                    $.ajax({
+                        url: 'configuracion.php',
+                        method: 'POST',
+                        dataType: 'json',
+                        data: $form.serialize()
+                            + '&action=save_password_temporal_config',
+                        success: function(response) {
+                            if (!response.success) {
+                                Swal.fire({
+                                    icon: 'error',
+                                    title: 'No se pudo guardar',
+                                    text: response.message || 'Ocurrió un error.',
+                                    target: document.body
+                                });
+                                return;
+                            }
+
+                            Swal.fire({
+                                icon: 'success',
+                                title: 'Contraseña actualizada',
+                                text: response.message,
+                                confirmButtonText: 'Aceptar',
+                                target: document.body
+                            }).then(function() {
+                                window.location.reload();
+                            });
+                        },
+                        error: function(xhr) {
+                            Swal.fire({
+                                icon: 'error',
+                                title: 'No se pudo guardar',
+                                text: xhr.responseJSON?.message
+                                    || 'Ocurrió un error al actualizar la contraseña.',
+                                target: document.body
+                            });
+                        }
+                    });
+                });
             });
         }
 

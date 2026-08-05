@@ -6,6 +6,6 @@
 declare(strict_types=1);
 
 return [
-    'encryption_key_base64' => '',
+    'encryption_key_base64' => 'gfUD8KBiN13ouAPir5gASDTCY4xsXtEiOTgZ2e4t8cI=',
     'cookie_name' => 'gym_2fa_trusted',
 ];

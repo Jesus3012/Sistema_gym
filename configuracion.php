@@ -5,6 +5,7 @@ require_once __DIR__ . '/includes/sucursal_context.php';
 require_once __DIR__ . '/includes/super_admin_helper.php';
 require_once __DIR__ . '/includes/configuracion_context.php';
 require_once __DIR__ . '/includes/two_factor_helper.php';
+require_once __DIR__ . '/includes/password_temporal_helper.php';
 require_once __DIR__ . '/PHPMailer/PHPMailer.php';
 require_once __DIR__ . '/PHPMailer/SMTP.php';
 require_once __DIR__ . '/PHPMailer/Exception.php';
@@ -120,12 +121,15 @@ function obtenerConfiguracionCorreo($conn)
 }
 
 /**
- * Contraseña temporal inicial utilizada por el sistema.
- * El indicador password_change_required obliga al usuario a cambiarla.
+ * Obtiene la contraseña temporal predeterminada de esta instalación.
+ *
+ * La base de datos conserva el valor cifrado. Si la migración todavía no
+ * se ha ejecutado o aún no fue personalizada, se mantiene ego1 para no
+ * interrumpir el alta y restablecimiento de usuarios existentes.
  */
-function generarPasswordTemporal()
+function generarPasswordTemporal(mysqli $conn): string
 {
-    return 'ego1';
+    return password_temporal_get($conn);
 }
 
 /**
@@ -528,6 +532,7 @@ if (!$config_gimnasio) {
 
 $config_correo = obtenerConfiguracionCorreo($conn);
 $config_2fa = two_factor_get_config($conn);
+$config_acceso = password_temporal_get_metadata($conn);
 
 // Datos corporativos usados como respaldo visual del logo de una sede.
 $config_corporativa = configuracion_fila(
@@ -879,6 +884,50 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             configuracion_json(array(
                 'success' => true,
                 'message' => 'La política de verificación en dos pasos fue actualizada.'
+            ));
+        }
+
+        if ($action === 'save_password_temporal_config') {
+            $csrfSeguridad = (string) (
+                $_POST['security_csrf'] ?? ''
+            );
+
+            if (
+                $csrfSeguridad === ''
+                || !hash_equals(
+                    $configSecurityCsrf,
+                    $csrfSeguridad
+                )
+            ) {
+                throw new RuntimeException(
+                    'La sesión de seguridad cambió. Recarga la página.'
+                );
+            }
+
+            if (!rol_es_administrativo($usuario_rol_real)) {
+                throw new RuntimeException(
+                    'No tienes permiso para modificar la contraseña temporal del sistema.'
+                );
+            }
+
+            $passwordTemporal = password_temporal_validate(
+                (string) ($_POST['password_temporal'] ?? ''),
+                (string) (
+                    $_POST['password_temporal_confirmacion'] ?? ''
+                )
+            );
+
+            password_temporal_save(
+                $conn,
+                $passwordTemporal,
+                $usuario_id
+            );
+
+            configuracion_json(array(
+                'success' => true,
+                'message' =>
+                    'La contraseña temporal predeterminada del sistema fue actualizada. '
+                    . 'Se aplicará a usuarios nuevos y a futuros restablecimientos.'
             ));
         }
 
@@ -1596,6 +1645,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $_POST['rol'] ?? 'recepcionista'
             ));
             $estado = (string) ($_POST['estado'] ?? 'activo');
+            $sucursalDestinoId = (int) (
+                $_POST['sucursal_destino_id'] ?? 0
+            );
 
             /*
              * Las cuentas superadministradoras permanecen protegidas.
@@ -1655,26 +1707,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             /*
-             * En la vista Todas las sucursales el alta nueva es
-             * exclusivamente para un Administrador global. Solo una cuenta
-             * superadministradora puede realizar esta operación.
+             * Alta desde Todas las sucursales:
+             * - Administrador: acceso global a todas las sedes activas.
+             * - Recepcionista/Entrenador: acceso únicamente a la sede elegida.
              */
             if ($vistaGlobalConfiguracion && $id === 0) {
                 if (!$esSuperAdministradorActual) {
                     throw new RuntimeException(
-                        'Solo un superadministrador puede crear un '
-                        . 'administrador para todas las sucursales.'
-                    );
-                }
-
-                if ($rol !== 'admin') {
-                    throw new RuntimeException(
-                        'Desde Todas las sucursales únicamente se puede '
-                        . 'crear un Administrador.'
+                        'Solo el superadministrador puede crear cuentas '
+                        . 'desde la vista de Todas las sucursales.'
                     );
                 }
 
                 $estado = 'activo';
+
+                if ($rol !== 'admin') {
+                    if ($sucursalDestinoId <= 0) {
+                        throw new RuntimeException(
+                            'Selecciona la sucursal donde trabajará el usuario.'
+                        );
+                    }
+
+                    $sucursalDestino = configuracion_fila(
+                        $conn,
+                        "SELECT id, nombre
+                         FROM sucursales
+                         WHERE id = ?
+                           AND estado = 'activa'
+                         LIMIT 1",
+                        'i',
+                        array($sucursalDestinoId)
+                    );
+
+                    if (!$sucursalDestino) {
+                        throw new RuntimeException(
+                            'La sucursal seleccionada no existe o está inactiva.'
+                        );
+                    }
+                }
             }
 
             $duplicado = configuracion_fila(
@@ -1868,39 +1938,169 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ));
             }
 
-            $passwordTemporal = generarPasswordTemporal();
+            $passwordTemporal = generarPasswordTemporal($conn);
             $password = password_hash(
                 $passwordTemporal,
                 PASSWORD_DEFAULT
             );
 
             /*
-             * Alta de Administrador global:
-             * - usuarios.rol = admin
-             * - rol_sucursal = admin
-             * - acceso a todas las sucursales activas
-             * - la matriz queda como sede principal
+             * Alta desde la vista global.
+             * Un Administrador se asigna a todas las sucursales activas.
+             * Recepcionista y Entrenador se asignan solo a la sede elegida.
              */
             if ($vistaGlobalConfiguracion) {
-                $sucursalPrincipal = configuracion_fila(
+                if ($rol === 'admin') {
+                    $sucursalPrincipal = configuracion_fila(
+                        $conn,
+                        "SELECT id
+                         FROM sucursales
+                         WHERE estado = 'activa'
+                         ORDER BY es_matriz DESC, id ASC
+                         LIMIT 1"
+                    );
+
+                    $sucursalPrincipalId = (int) (
+                        $sucursalPrincipal['id'] ?? 0
+                    );
+
+                    if ($sucursalPrincipalId <= 0) {
+                        throw new RuntimeException(
+                            'No existe una sucursal activa para asignar '
+                            . 'al nuevo administrador.'
+                        );
+                    }
+
+                    $conn->begin_transaction();
+
+                    try {
+                        configuracion_ejecutar(
+                            $conn,
+                            "INSERT INTO usuarios
+                                (
+                                    nombre,
+                                    email,
+                                    password,
+                                    rol,
+                                    estado,
+                                    password_change_required
+                                )
+                             VALUES (?, ?, ?, 'admin', 'activo', 1)",
+                            'sss',
+                            array($nombre, $email, $password)
+                        );
+
+                        $id = (int) $conn->insert_id;
+
+                        configuracion_ejecutar(
+                            $conn,
+                            "INSERT INTO usuarios_sucursales
+                                (
+                                    usuario_id,
+                                    sucursal_id,
+                                    rol_sucursal,
+                                    es_principal,
+                                    puede_operar_caja,
+                                    estado
+                                )
+                             SELECT
+                                ?,
+                                s.id,
+                                'admin',
+                                CASE WHEN s.id = ? THEN 1 ELSE 0 END,
+                                1,
+                                'activo'
+                             FROM sucursales s
+                             WHERE s.estado = 'activa'",
+                            'ii',
+                            array($id, $sucursalPrincipalId)
+                        );
+
+                        $sedesEsperadas = configuracion_contar(
+                            $conn,
+                            "SELECT COUNT(*) AS total
+                             FROM sucursales
+                             WHERE estado = 'activa'"
+                        );
+
+                        $sedesAsignadas = configuracion_contar(
+                            $conn,
+                            "SELECT COUNT(*) AS total
+                             FROM usuarios_sucursales
+                             WHERE usuario_id = ?
+                               AND rol_sucursal = 'admin'
+                               AND estado = 'activo'",
+                            'i',
+                            array($id)
+                        );
+
+                        if (
+                            $sedesEsperadas <= 0
+                            || $sedesAsignadas !== $sedesEsperadas
+                        ) {
+                            throw new RuntimeException(
+                                'No fue posible completar la asignación global. '
+                                . 'Se esperaban '
+                                . $sedesEsperadas
+                                . ' sucursal(es) y se registraron '
+                                . $sedesAsignadas
+                                . '.'
+                            );
+                        }
+
+                        $conn->commit();
+                    } catch (Throwable $errorNuevoAdministrador) {
+                        $conn->rollback();
+                        throw $errorNuevoAdministrador;
+                    }
+
+                    $correo = enviarCredencialesAcceso(
+                        $conn,
+                        $nombre,
+                        $email,
+                        $passwordTemporal,
+                        'admin'
+                    );
+
+                    configuracion_json(array(
+                        'success' => true,
+                        'usuario_nuevo' => true,
+                        'alcance_global' => true,
+                        'rol_creado' => 'admin',
+                        'sedes_asignadas' => $sedesAsignadas,
+                        'correo_enviado' => $correo['enviado'],
+                        'correo_error' => $correo['error'],
+                        'password_temporal' => $correo['enviado']
+                            ? ''
+                            : $passwordTemporal,
+                        'message' => $correo['enviado']
+                            ? 'Administrador creado y asignado a '
+                                . $sedesAsignadas
+                                . ' sucursal(es). Las credenciales fueron enviadas.'
+                            : 'Administrador creado y asignado a '
+                                . $sedesAsignadas
+                                . ' sucursal(es), pero el correo no pudo enviarse.'
+                    ));
+                }
+
+                $sucursalDestino = configuracion_fila(
                     $conn,
-                    "SELECT id
+                    "SELECT id, nombre
                      FROM sucursales
-                     WHERE estado = 'activa'
-                     ORDER BY es_matriz DESC, id ASC
-                     LIMIT 1"
+                     WHERE id = ?
+                       AND estado = 'activa'
+                     LIMIT 1",
+                    'i',
+                    array($sucursalDestinoId)
                 );
 
-                $sucursalPrincipalId = (int) (
-                    $sucursalPrincipal['id'] ?? 0
-                );
-
-                if ($sucursalPrincipalId <= 0) {
+                if (!$sucursalDestino) {
                     throw new RuntimeException(
-                        'No existe una sucursal activa para asignar '
-                        . 'al nuevo administrador.'
+                        'La sucursal seleccionada no existe o está inactiva.'
                     );
                 }
+
+                $puedeOperarCaja = $rol === 'entrenador' ? 0 : 1;
 
                 $conn->begin_transaction();
 
@@ -1916,16 +2116,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 estado,
                                 password_change_required
                             )
-                         VALUES (
-                            ?,
-                            ?,
-                            ?,
-                            'admin',
-                            'activo',
-                            1
-                         )",
-                        'sss',
-                        array($nombre, $email, $password)
+                         VALUES (?, ?, ?, ?, 'activo', 1)",
+                        'ssss',
+                        array($nombre, $email, $password, $rol)
                     );
 
                     $id = (int) $conn->insert_id;
@@ -1941,62 +2134,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 puede_operar_caja,
                                 estado
                             )
-                         SELECT
-                            ?,
-                            s.id,
-                            'admin',
-                            CASE WHEN s.id = ? THEN 1 ELSE 0 END,
-                            1,
-                            'activo'
-                         FROM sucursales s
-                         WHERE s.estado = 'activa'",
-                        'ii',
-                        array($id, $sucursalPrincipalId)
+                         VALUES (?, ?, ?, 1, ?, 'activo')",
+                        'iisi',
+                        array(
+                            $id,
+                            $sucursalDestinoId,
+                            $rol,
+                            $puedeOperarCaja
+                        )
                     );
-
-                    /*
-                     * configuracion_ejecutar() cierra el statement antes de
-                     * regresar. Por eso $conn->affected_rows puede volver a
-                     * cero aunque el INSERT ... SELECT sí haya funcionado.
-                     * La verificación correcta se hace consultando las
-                     * relaciones guardadas dentro de la misma transacción.
-                     */
-                    $sedesEsperadas = configuracion_contar(
-                        $conn,
-                        "SELECT COUNT(*) AS total
-                         FROM sucursales
-                         WHERE estado = 'activa'"
-                    );
-
-                    $sedesAsignadas = configuracion_contar(
-                        $conn,
-                        "SELECT COUNT(*) AS total
-                         FROM usuarios_sucursales
-                         WHERE usuario_id = ?
-                           AND rol_sucursal = 'admin'
-                           AND estado = 'activo'",
-                        'i',
-                        array($id)
-                    );
-
-                    if (
-                        $sedesEsperadas <= 0
-                        || $sedesAsignadas !== $sedesEsperadas
-                    ) {
-                        throw new RuntimeException(
-                            'No fue posible completar la asignación global. '
-                            . 'Se esperaban '
-                            . $sedesEsperadas
-                            . ' sucursal(es) y se registraron '
-                            . $sedesAsignadas
-                            . '.'
-                        );
-                    }
 
                     $conn->commit();
-                } catch (Throwable $errorNuevoAdministrador) {
+                } catch (Throwable $errorNuevoUsuarioGlobal) {
                     $conn->rollback();
-                    throw $errorNuevoAdministrador;
+                    throw $errorNuevoUsuarioGlobal;
                 }
 
                 $correo = enviarCredencialesAcceso(
@@ -2004,26 +2155,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $nombre,
                     $email,
                     $passwordTemporal,
-                    'admin'
+                    $rol
                 );
+
+                $rolTextoCreado = $rol === 'recepcionista'
+                    ? 'Recepcionista'
+                    : 'Entrenador';
 
                 configuracion_json(array(
                     'success' => true,
                     'usuario_nuevo' => true,
-                    'administrador_global' => true,
-                    'sedes_asignadas' => $sedesAsignadas,
+                    'alcance_global' => false,
+                    'rol_creado' => $rol,
+                    'sucursal_asignada' => (string) $sucursalDestino['nombre'],
+                    'sedes_asignadas' => 1,
                     'correo_enviado' => $correo['enviado'],
                     'correo_error' => $correo['error'],
                     'password_temporal' => $correo['enviado']
                         ? ''
                         : $passwordTemporal,
                     'message' => $correo['enviado']
-                        ? 'Administrador creado y asignado a '
-                            . $sedesAsignadas
-                            . ' sucursal(es). Las credenciales fueron enviadas.'
-                        : 'Administrador creado y asignado a '
-                            . $sedesAsignadas
-                            . ' sucursal(es), pero el correo no pudo enviarse.'
+                        ? $rolTextoCreado
+                            . ' creado y asignado a '
+                            . (string) $sucursalDestino['nombre']
+                            . '. Las credenciales fueron enviadas.'
+                        : $rolTextoCreado
+                            . ' creado y asignado a '
+                            . (string) $sucursalDestino['nombre']
+                            . ', pero el correo no pudo enviarse.'
                 ));
             }
 
@@ -2305,7 +2464,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new RuntimeException('No se encontró el usuario.');
             }
 
-            $passwordTemporal = generarPasswordTemporal();
+            $passwordTemporal = generarPasswordTemporal($conn);
             $password = password_hash($passwordTemporal, PASSWORD_DEFAULT);
 
             configuracion_ejecutar(
@@ -2886,6 +3045,7 @@ $configuracionVista = array(
     'config_gimnasio' => $config_gimnasio,
     'config_correo' => $config_correo,
     'config_2fa' => $config_2fa,
+    'config_acceso' => $config_acceso,
     'es_super_administrador' => $esSuperAdministradorActual,
     'security_csrf' => $configSecurityCsrf,
     'logo_path' => $logo_path,
@@ -2932,11 +3092,11 @@ if (
 <button
     type="button"
     class="btn btn-primary btn-sm"
-    id="btnNuevoAdministradorGlobal"
-    onclick="abrirAltaAdministradorGlobal()"
+    id="btnNuevoUsuarioGlobal"
+    onclick="abrirAltaUsuarioGlobal()"
 >
     <i class="fas fa-user-shield"></i>
-    Nuevo administrador
+    Nuevo usuario
 </button>
 HTML;
 
@@ -2952,7 +3112,36 @@ HTML;
         1
     );
 
-    $scriptAdministradorGlobal = <<<'HTML'
+    $sucursalesAltaGlobal = array();
+    $resultadoSucursalesAlta = $conn->query(
+        "SELECT id, nombre, clave, es_matriz
+         FROM sucursales
+         WHERE estado = 'activa'
+         ORDER BY es_matriz DESC, nombre ASC, id ASC"
+    );
+
+    if ($resultadoSucursalesAlta instanceof mysqli_result) {
+        while ($filaSucursalAlta = $resultadoSucursalesAlta->fetch_assoc()) {
+            $sucursalesAltaGlobal[] = array(
+                'id' => (int) $filaSucursalAlta['id'],
+                'nombre' => (string) $filaSucursalAlta['nombre'],
+                'clave' => (string) ($filaSucursalAlta['clave'] ?? ''),
+                'es_matriz' => (int) ($filaSucursalAlta['es_matriz'] ?? 0)
+            );
+        }
+    }
+
+    $scriptAdministradorGlobal = '<script>window.CONFIG_SUCURSALES_ALTA_GLOBAL = '
+        . json_encode(
+            $sucursalesAltaGlobal,
+            JSON_UNESCAPED_UNICODE
+            | JSON_HEX_TAG
+            | JSON_HEX_APOS
+            | JSON_HEX_AMP
+            | JSON_HEX_QUOT
+        )
+        . ';</script>'
+        . <<<'HTML'
 <script>
 (function () {
     'use strict';
@@ -3234,8 +3423,8 @@ HTML;
         return null;
     }
 
-    function asegurarBotonAdministrador() {
-        if (document.getElementById('btnNuevoAdministradorGlobal')) {
+    function asegurarBotonUsuarioGlobal() {
+        if (document.getElementById('btnNuevoUsuarioGlobal')) {
             return;
         }
 
@@ -3253,20 +3442,175 @@ HTML;
 
         const boton = document.createElement('button');
         boton.type = 'button';
-        boton.id = 'btnNuevoAdministradorGlobal';
+        boton.id = 'btnNuevoUsuarioGlobal';
         boton.className = 'btn btn-primary btn-sm';
         boton.innerHTML =
             '<i class="fas fa-user-shield"></i> ' +
-            'Nuevo administrador';
+            'Nuevo usuario';
         boton.addEventListener('click', function () {
-            window.abrirAltaAdministradorGlobal();
+            window.abrirAltaUsuarioGlobal();
         });
 
         herramientas.innerHTML = '';
         herramientas.appendChild(boton);
     }
 
-    window.abrirAltaAdministradorGlobal = function () {
+    function obtenerSucursalesAltaGlobal() {
+        return Array.isArray(window.CONFIG_SUCURSALES_ALTA_GLOBAL)
+            ? window.CONFIG_SUCURSALES_ALTA_GLOBAL
+            : [];
+    }
+
+    function crearSelectorSucursalGlobal(formulario) {
+        let grupo = document.getElementById('grupoSucursalDestinoGlobal');
+
+        if (grupo) {
+            return grupo;
+        }
+
+        const campoRol = formulario.querySelector('[name="rol"]');
+        const grupoRol = campoRol ? campoRol.closest('.form-group') : null;
+
+        grupo = document.createElement('div');
+        grupo.id = 'grupoSucursalDestinoGlobal';
+        grupo.className = 'form-group config-user-branch-group';
+        grupo.hidden = true;
+
+        const opciones = obtenerSucursalesAltaGlobal().map(function (sucursal) {
+            const etiqueta = String(sucursal.nombre || 'Sucursal')
+                + (Number(sucursal.es_matriz) === 1 ? ' · Matriz' : '')
+                + (sucursal.clave ? ' (' + String(sucursal.clave) + ')' : '');
+
+            return '<option value="' + Number(sucursal.id || 0) + '">' +
+                escaparHtml(etiqueta) +
+                '</option>';
+        }).join('');
+
+        grupo.innerHTML =
+            '<label for="usuarioSucursalDestino">' +
+                '<i class="fas fa-building"></i> Sucursal asignada' +
+            '</label>' +
+            '<select class="form-control" name="sucursal_destino_id" ' +
+                'id="usuarioSucursalDestino">' +
+                '<option value="">Selecciona una sucursal</option>' +
+                opciones +
+            '</select>' +
+            '<small class="config-user-branch-help">' +
+                'El usuario tendrá acceso únicamente a esta sucursal.' +
+            '</small>';
+
+        if (grupoRol && grupoRol.parentNode) {
+            grupoRol.parentNode.insertBefore(grupo, grupoRol.nextSibling);
+        } else {
+            formulario.querySelector('.modal-body').appendChild(grupo);
+        }
+
+        return grupo;
+    }
+
+    function crearResumenAlcanceGlobal(formulario) {
+        let resumen = document.getElementById('resumenAltaUsuarioGlobal');
+
+        if (resumen) {
+            return resumen;
+        }
+
+        resumen = document.createElement('div');
+        resumen.id = 'resumenAltaUsuarioGlobal';
+        resumen.className = 'admin-global-summary config-user-scope-summary';
+
+        const campoEstado = formulario.querySelector('[name="estado"]');
+        const grupoEstado = campoEstado
+            ? campoEstado.closest('.form-group')
+            : null;
+
+        if (grupoEstado && grupoEstado.parentNode) {
+            grupoEstado.parentNode.insertBefore(
+                resumen,
+                grupoEstado.nextSibling
+            );
+        } else {
+            formulario.querySelector('.modal-body').appendChild(resumen);
+        }
+
+        return resumen;
+    }
+
+    function actualizarAlcanceUsuarioGlobal() {
+        const formulario = document.getElementById('formUsuario');
+
+        if (!formulario) {
+            return;
+        }
+
+        const rol = formulario.querySelector('[name="rol"]');
+        const grupoSucursal = crearSelectorSucursalGlobal(formulario);
+        const selectorSucursal = grupoSucursal.querySelector('select');
+        const resumen = crearResumenAlcanceGlobal(formulario);
+        const rolActual = rol ? String(rol.value || 'admin') : 'admin';
+
+        grupoSucursal.hidden = rolActual === 'admin';
+
+        if (selectorSucursal) {
+            selectorSucursal.required = rolActual !== 'admin';
+
+            if (rolActual === 'admin') {
+                selectorSucursal.value = '';
+            }
+        }
+
+        let icono = 'fa-user-shield';
+        let titulo = 'Cuenta administrativa global';
+        let descripcion =
+            'Se asignará automáticamente a todas las sucursales activas ' +
+            'con permisos de Administrador.';
+        let detalle =
+            '<span><i class="fas fa-layer-group"></i> ' +
+            'Acceso a todas las sucursales activas</span>';
+        let claseRol = 'is-admin';
+
+        if (rolActual === 'recepcionista') {
+            icono = 'fa-user-check';
+            titulo = 'Cuenta de recepción';
+            descripcion =
+                'Se asignará únicamente a la sucursal seleccionada ' +
+                'con permisos de Recepcionista.';
+            detalle =
+                '<span><i class="fas fa-cash-register"></i> ' +
+                'Puede operar caja en la sede asignada</span>';
+            claseRol = 'is-reception';
+        } else if (rolActual === 'entrenador') {
+            icono = 'fa-dumbbell';
+            titulo = 'Cuenta de entrenador';
+            descripcion =
+                'Se asignará únicamente a la sucursal seleccionada ' +
+                'con permisos de Entrenador.';
+            detalle =
+                '<span><i class="fas fa-ban"></i> ' +
+                'No tendrá permisos para operar caja</span>';
+            claseRol = 'is-trainer';
+        }
+
+        resumen.className =
+            'admin-global-summary config-user-scope-summary ' + claseRol;
+        resumen.innerHTML =
+            '<div class="admin-global-summary__icon">' +
+                '<i class="fas ' + icono + '"></i>' +
+            '</div>' +
+            '<div class="admin-global-summary__content">' +
+                '<strong>' + titulo + '</strong>' +
+                '<p>' + descripcion + '</p>' +
+                '<div class="admin-global-summary__details">' +
+                    detalle +
+                    '<span><i class="fas fa-key"></i> ' +
+                    'Usará la contraseña temporal configurada para este sistema</span>' +
+                    '<span><i class="fas fa-envelope"></i> ' +
+                    'Las credenciales se enviarán al correo indicado</span>' +
+                '</div>' +
+            '</div>';
+    }
+
+    window.abrirAltaUsuarioGlobal = function () {
         const modal = document.getElementById('modalUsuario');
         const formulario = document.getElementById('formUsuario');
 
@@ -3296,81 +3640,38 @@ HTML;
 
         if (titulo) {
             titulo.innerHTML =
-                '<i class="fas fa-user-shield"></i> ' +
-                'Nuevo administrador';
+                '<i class="fas fa-user-plus"></i> Nuevo usuario';
         }
 
         if (cuerpo) {
-            /*
-             * El modal original trae un aviso ocultable sobre la contraseña.
-             * En el alta global se sustituye junto con el aviso anterior por
-             * un único resumen compacto y permanente.
-             */
-            ['usuario_info', 'admin_global'].forEach(function (alertaId) {
-                cuerpo.querySelectorAll(
-                    '[data-alerta-id="' + alertaId + '"]'
-                ).forEach(function (alerta) {
+            cuerpo.querySelectorAll('[data-alerta-id="usuario_info"]')
+                .forEach(function (alerta) {
                     const siguiente = alerta.nextElementSibling;
 
                     if (
                         siguiente
-                        && siguiente.classList.contains(
-                            'alert-boton-container'
-                        )
+                        && siguiente.classList.contains('alert-boton-container')
                     ) {
                         siguiente.remove();
                     }
 
                     alerta.remove();
                 });
+        }
 
-                cuerpo.querySelectorAll(
-                    '[data-alerta-boton="' + alertaId + '"]'
-                ).forEach(function (botonAviso) {
-                    botonAviso.remove();
-                });
-            });
+        const grupoSucursal = crearSelectorSucursalGlobal(formulario);
+        const selectorSucursal = grupoSucursal.querySelector('select');
 
-            let resumen = document.getElementById(
-                'resumenAltaAdministradorGlobal'
-            );
+        if (selectorSucursal) {
+            selectorSucursal.value = '';
+        }
 
-            if (!resumen) {
-                resumen = document.createElement('div');
-                resumen.id = 'resumenAltaAdministradorGlobal';
-                resumen.className = 'admin-global-summary';
-                resumen.innerHTML =
-                    '<div class="admin-global-summary__icon">' +
-                        '<i class="fas fa-user-shield"></i>' +
-                    '</div>' +
-                    '<div class="admin-global-summary__content">' +
-                        '<strong>Cuenta administrativa global</strong>' +
-                        '<p>Se asignará automáticamente a todas las ' +
-                        'sucursales activas con permisos de Administrador.</p>' +
-                        '<div class="admin-global-summary__details">' +
-                            '<span><i class="fas fa-key"></i> ' +
-                            'Contraseña temporal: <b>ego1</b></span>' +
-                            '<span><i class="fas fa-envelope"></i> ' +
-                            'Las credenciales se enviarán al correo indicado</span>' +
-                        '</div>' +
-                    '</div>';
+        crearResumenAlcanceGlobal(formulario);
+        actualizarAlcanceUsuarioGlobal();
 
-                const campoEstado = formulario.querySelector(
-                    '[name="estado"]'
-                );
-                const grupoEstado = campoEstado
-                    ? campoEstado.closest('.form-group')
-                    : null;
-
-                if (grupoEstado && grupoEstado.parentNode) {
-                    grupoEstado.parentNode.insertBefore(
-                        resumen,
-                        grupoEstado.nextSibling
-                    );
-                } else {
-                    cuerpo.appendChild(resumen);
-                }
-            }
+        if (rol && rol.dataset.alcanceListener !== 'true') {
+            rol.dataset.alcanceListener = 'true';
+            rol.addEventListener('change', actualizarAlcanceUsuarioGlobal);
         }
 
         if (typeof window.abrirModal === 'function') {
@@ -3378,16 +3679,6 @@ HTML;
         } else {
             modal.classList.add('active');
         }
-
-        window.setTimeout(function () {
-            if (rol) {
-                rol.value = 'admin';
-            }
-
-            if (estado) {
-                estado.value = 'activo';
-            }
-        }, 0);
     };
 
     const formulario = document.getElementById('formUsuario');
@@ -3398,16 +3689,44 @@ HTML;
         return elemento.innerHTML;
     }
 
-    function mostrarResultadoAltaAdministrador(respuesta) {
+    function textoRolRespuesta(respuesta) {
+        const rol = String(respuesta.rol_creado || 'usuario');
+
+        if (rol === 'admin') {
+            return 'Administrador';
+        }
+
+        if (rol === 'recepcionista') {
+            return 'Recepcionista';
+        }
+
+        if (rol === 'entrenador') {
+            return 'Entrenador';
+        }
+
+        return 'Usuario';
+    }
+
+    function mostrarResultadoAltaUsuario(respuesta) {
         window.cerrarModal('modalUsuario');
 
+        const rolTexto = textoRolRespuesta(respuesta);
+        const esGlobal = Boolean(respuesta.alcance_global);
+        const sucursal = String(respuesta.sucursal_asignada || '');
+        const alcance = esGlobal
+            ? 'Se asignó a ' + String(respuesta.sedes_asignadas || 0) +
+                ' sucursal(es).'
+            : 'Se asignó a la sucursal ' + sucursal + '.';
+
         if (typeof window.Swal === 'undefined') {
-            const mensaje = respuesta.correo_enviado
-                ? 'Administrador creado. Las credenciales fueron enviadas.'
-                : 'Administrador creado. Contraseña temporal: ' +
-                    String(respuesta.password_temporal || 'ego1') +
+            let mensaje = rolTexto + ' creado. ' + alcance;
+
+            if (!respuesta.correo_enviado) {
+                mensaje += ' Contraseña temporal: ' +
+                    String(respuesta.password_temporal || 'No disponible') +
                     '. Error de correo: ' +
                     String(respuesta.correo_error || 'No especificado.');
+            }
 
             window.alert(mensaje);
             window.location.reload();
@@ -3417,11 +3736,9 @@ HTML;
         if (respuesta.correo_enviado) {
             window.Swal.fire({
                 icon: 'success',
-                title: 'Administrador creado',
-                text:
-                    'La cuenta fue asignada a ' +
-                    String(respuesta.sedes_asignadas || 0) +
-                    ' sucursal(es) y las credenciales fueron enviadas al correo registrado.',
+                title: rolTexto + ' creado',
+                text: alcance +
+                    ' Las credenciales fueron enviadas al correo registrado.',
                 confirmButtonText: 'Aceptar',
                 target: document.body
             }).then(function () {
@@ -3433,12 +3750,12 @@ HTML;
 
         window.Swal.fire({
             icon: 'warning',
-            title: 'Administrador creado sin correo',
+            title: rolTexto + ' creado sin correo',
             html:
-                '<p>La cuenta sí fue creada y asignada a todas las sucursales activas.</p>' +
+                '<p>La cuenta sí fue creada. ' + escaparHtml(alcance) + '</p>' +
                 '<p><strong>Contraseña temporal:</strong> ' +
                 '<code>' +
-                escaparHtml(respuesta.password_temporal || 'ego1') +
+                escaparHtml(respuesta.password_temporal || 'No disponible') +
                 '</code></p>' +
                 '<p><strong>Error al enviar:</strong><br>' +
                 escaparHtml(
@@ -3453,17 +3770,13 @@ HTML;
         });
     }
 
-    function enviarAltaAdministradorGlobal(evento) {
+    function enviarAltaUsuarioGlobal(evento) {
         if (!formulario) {
             return;
         }
 
         const campoId = formulario.querySelector('[name="id"]');
 
-        /*
-         * Las ediciones existentes continúan usando el manejador original.
-         * Este flujo propio se usa únicamente para el alta global nueva.
-         */
         if (campoId && campoId.value.trim() !== '') {
             return;
         }
@@ -3473,12 +3786,37 @@ HTML;
 
         const rol = formulario.querySelector('[name="rol"]');
         const estado = formulario.querySelector('[name="estado"]');
+        const sucursal = formulario.querySelector(
+            '[name="sucursal_destino_id"]'
+        );
         const botonGuardar = formulario.querySelector(
             'button[type="submit"], input[type="submit"]'
         );
+        const rolActual = rol ? String(rol.value || '') : '';
 
-        if (rol) {
-            rol.value = 'admin';
+        if (!['admin', 'recepcionista', 'entrenador'].includes(rolActual)) {
+            window.Swal.fire({
+                icon: 'error',
+                title: 'Rol no válido',
+                text: 'Selecciona un rol válido para continuar.',
+                target: document.body
+            });
+            return;
+        }
+
+        if (
+            rolActual !== 'admin'
+            && (!sucursal || String(sucursal.value || '') === '')
+        ) {
+            window.Swal.fire({
+                icon: 'warning',
+                title: 'Selecciona una sucursal',
+                text:
+                    'Recepcionistas y entrenadores deben asignarse a una ' +
+                    'sucursal específica.',
+                target: document.body
+            });
+            return;
         }
 
         if (estado) {
@@ -3491,13 +3829,25 @@ HTML;
 
         const datos = new FormData(formulario);
         datos.set('action', 'save_usuario');
-        datos.set('rol', 'admin');
+        datos.set('rol', rolActual);
         datos.set('estado', 'activo');
+
+        if (rolActual === 'admin') {
+            datos.delete('sucursal_destino_id');
+        }
+
+        const rolTexto = rolActual === 'admin'
+            ? 'administrador'
+            : (rolActual === 'recepcionista'
+                ? 'recepcionista'
+                : 'entrenador');
 
         if (typeof window.Swal !== 'undefined') {
             window.Swal.fire({
-                title: 'Creando administrador...',
-                text: 'Se está asignando la cuenta a todas las sucursales.',
+                title: 'Creando ' + rolTexto + '...',
+                text: rolActual === 'admin'
+                    ? 'Se asignará a todas las sucursales activas.'
+                    : 'Se asignará únicamente a la sucursal seleccionada.',
                 allowOutsideClick: false,
                 allowEscapeKey: false,
                 didOpen: function () {
@@ -3534,7 +3884,7 @@ HTML;
                     if (!respuestaHttp.ok || !respuestaJson.success) {
                         throw new Error(
                             respuestaJson.message ||
-                            'No fue posible crear el administrador.'
+                            'No fue posible crear el usuario.'
                         );
                     }
 
@@ -3542,7 +3892,7 @@ HTML;
                 });
             })
             .then(function (respuestaJson) {
-                mostrarResultadoAltaAdministrador(respuestaJson);
+                mostrarResultadoAltaUsuario(respuestaJson);
             })
             .catch(function (error) {
                 if (typeof window.Swal !== 'undefined') {
@@ -3569,13 +3919,13 @@ HTML;
     if (formulario) {
         formulario.addEventListener(
             'submit',
-            enviarAltaAdministradorGlobal,
+            enviarAltaUsuarioGlobal,
             true
         );
     }
 
     function inicializarControlesConfiguracion() {
-        asegurarBotonAdministrador();
+        asegurarBotonUsuarioGlobal();
 
         document.querySelectorAll('.alert-ocultable')
             .forEach(function (alerta) {
