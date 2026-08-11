@@ -70,19 +70,11 @@ $sucursalNombreConfiguracion = (string) (
     $configContexto['sucursal_nombre'] ?? 'Sucursal'
 );
 
-if (!$vistaGlobalConfiguracion) {
-    try {
-        configuracion_sincronizar_catalogos(
-            $conn,
-            $sucursalIdConfiguracion
-        );
-    } catch (Throwable $errorSincronizacion) {
-        error_log(
-            '[Configuración sincronización] '
-            . $errorSincronizacion->getMessage()
-        );
-    }
-}
+/*
+ * Los catálogos por sucursal ya no se rellenan automáticamente.
+ * En particular, un plan solo existe en planes_sucursales cuando
+ * un administrador lo asigna expresamente a esa sede.
+ */
 
 date_default_timezone_set((string) (
     $configContexto['zona_horaria']
@@ -1168,7 +1160,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $id = (int) $conn->insert_id;
                 }
 
-                configuracion_sincronizar_todas($conn);
                 $conn->commit();
             } catch (Throwable $errorPlan) {
                 $conn->rollback();
@@ -1177,7 +1168,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             configuracion_json(array(
                 'success' => true,
-                'message' => 'Plan guardado en el catálogo corporativo.'
+                'message' => 'Plan guardado en el catálogo general. La asignación a sucursales se administra de forma independiente.'
             ));
         }
 
@@ -1468,7 +1459,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $id = (int) $conn->insert_id;
                 }
 
-                configuracion_sincronizar_todas($conn);
                 $conn->commit();
             } catch (Throwable $errorProducto) {
                 $conn->rollback();
@@ -2521,15 +2511,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     : configuracion_fila(
                         $conn,
                         "SELECT
-                            p.id, p.nombre, p.duracion_dias,
-                            ps.precio, p.descripcion, ps.estado
+                            p.id,
+                            p.nombre,
+                            p.duracion_dias,
+                            COALESCE(ps.precio, p.precio) AS precio,
+                            p.descripcion,
+                            COALESCE(ps.estado, 'inactivo') AS estado,
+                            CASE
+                                WHEN ps.plan_id IS NULL THEN 0
+                                ELSE 1
+                            END AS asignado_sucursal
                          FROM planes p
-                         INNER JOIN planes_sucursales ps
+                         LEFT JOIN planes_sucursales ps
                             ON ps.plan_id = p.id
-                         WHERE p.id = ? AND ps.sucursal_id = ?
+                           AND ps.sucursal_id = ?
+                         WHERE p.id = ?
                          LIMIT 1",
                         'ii',
-                        array($id, $sucursalIdConfiguracion)
+                        array($sucursalIdConfiguracion, $id)
                     );
             } elseif ($tabla === 'productos') {
                 $fila = $vistaGlobalConfiguracion
@@ -2869,13 +2868,25 @@ if ($vistaGlobalConfiguracion) {
     $planesStmt = configuracion_preparar(
         $conn,
         "SELECT
-            p.id, p.nombre, p.duracion_dias,
-            ps.precio, p.descripcion, ps.estado,
-            p.precio AS precio_base, p.estado AS estado_base
+            p.id,
+            p.nombre,
+            p.duracion_dias,
+            COALESCE(ps.precio, p.precio) AS precio,
+            p.descripcion,
+            COALESCE(ps.estado, 'inactivo') AS estado,
+            p.precio AS precio_base,
+            p.estado AS estado_base,
+            CASE
+                WHEN ps.plan_id IS NULL THEN 0
+                ELSE 1
+            END AS asignado_sucursal
          FROM planes p
-         INNER JOIN planes_sucursales ps ON ps.plan_id = p.id
-         WHERE ps.sucursal_id = ?
-         ORDER BY p.id",
+         LEFT JOIN planes_sucursales ps
+            ON ps.plan_id = p.id
+           AND ps.sucursal_id = ?
+         ORDER BY
+            CASE WHEN ps.plan_id IS NULL THEN 1 ELSE 0 END,
+            p.id",
         'i',
         array($sucursalIdConfiguracion)
     );

@@ -135,6 +135,138 @@ function notif_add_recipient(
     }
 }
 
+function notif_uploaded_images(string $field = 'imagenes_notificacion'): array
+{
+    if (
+        !isset($_FILES[$field])
+        || !is_array($_FILES[$field])
+        || !isset($_FILES[$field]['name'])
+    ) {
+        return [];
+    }
+
+    $names = (array) $_FILES[$field]['name'];
+    $tmpNames = (array) ($_FILES[$field]['tmp_name'] ?? []);
+    $sizes = (array) ($_FILES[$field]['size'] ?? []);
+    $errors = (array) ($_FILES[$field]['error'] ?? []);
+
+    $files = [];
+
+    foreach ($names as $index => $originalName) {
+        $error = (int) ($errors[$index] ?? UPLOAD_ERR_NO_FILE);
+
+        if ($error === UPLOAD_ERR_NO_FILE) {
+            continue;
+        }
+
+        $files[] = [
+            'name' => trim((string) $originalName),
+            'tmp_name' => (string) ($tmpNames[$index] ?? ''),
+            'size' => (int) ($sizes[$index] ?? 0),
+            'error' => $error,
+        ];
+    }
+
+    if ($files === []) {
+        return [];
+    }
+
+    if (count($files) > 3) {
+        throw new RuntimeException(
+            'Solo puedes incluir hasta 3 imágenes por notificación.'
+        );
+    }
+
+    $maxBytes = 2 * 1024 * 1024;
+    $allowed = [
+        'image/jpeg' => 'jpg',
+        'image/png' => 'png',
+        'image/webp' => 'webp',
+    ];
+
+    $finfo = function_exists('finfo_open')
+        ? finfo_open(FILEINFO_MIME_TYPE)
+        : false;
+
+    $prepared = [];
+
+    try {
+        foreach ($files as $file) {
+            if ($file['error'] !== UPLOAD_ERR_OK) {
+                $uploadErrors = [
+                    UPLOAD_ERR_INI_SIZE => 'La imagen supera el límite permitido por PHP.',
+                    UPLOAD_ERR_FORM_SIZE => 'La imagen supera el tamaño permitido por el formulario.',
+                    UPLOAD_ERR_PARTIAL => 'La imagen se recibió de forma incompleta.',
+                    UPLOAD_ERR_NO_TMP_DIR => 'El servidor no tiene directorio temporal disponible.',
+                    UPLOAD_ERR_CANT_WRITE => 'El servidor no pudo escribir la imagen temporal.',
+                    UPLOAD_ERR_EXTENSION => 'Una extensión de PHP detuvo la carga de la imagen.',
+                ];
+
+                throw new RuntimeException(
+                    $uploadErrors[$file['error']]
+                    ?? 'No fue posible recibir una de las imágenes.'
+                );
+            }
+
+            if ($file['tmp_name'] === '' || !is_uploaded_file($file['tmp_name'])) {
+                throw new RuntimeException(
+                    'Una de las imágenes recibidas no es un archivo válido.'
+                );
+            }
+
+            if ($file['size'] <= 0 || $file['size'] > $maxBytes) {
+                throw new RuntimeException(
+                    'Cada imagen debe pesar como máximo 2 MB.'
+                );
+            }
+
+            $mime = '';
+
+            if ($finfo !== false) {
+                $mime = (string) finfo_file($finfo, $file['tmp_name']);
+            }
+
+            if ($mime === '' && function_exists('getimagesize')) {
+                $imageInfo = @getimagesize($file['tmp_name']);
+                $mime = is_array($imageInfo)
+                    ? (string) ($imageInfo['mime'] ?? '')
+                    : '';
+            }
+
+            if (!isset($allowed[$mime])) {
+                throw new RuntimeException(
+                    'Solo se permiten imágenes JPG, PNG o WEBP.'
+                );
+            }
+
+            $safeOriginal = preg_replace(
+                '/[^a-zA-Z0-9._ -]+/u',
+                '_',
+                $file['name']
+            );
+
+            $safeOriginal = trim((string) $safeOriginal);
+
+            if ($safeOriginal === '') {
+                $safeOriginal = 'imagen.' . $allowed[$mime];
+            }
+
+            $prepared[] = [
+                'path' => $file['tmp_name'],
+                'name' => $safeOriginal,
+                'mime' => $mime,
+                'size' => $file['size'],
+            ];
+        }
+    } finally {
+        if ($finfo !== false) {
+            finfo_close($finfo);
+        }
+    }
+
+    return $prepared;
+}
+
 function notif_value(
     mysqli $db,
     string $sql,
@@ -769,6 +901,13 @@ if (
             }
 
             /*
+             * Las imágenes son opcionales y únicamente viven durante esta
+             * petición. PHPMailer las incrusta en el cuerpo del correo antes
+             * de que PHP elimine los archivos temporales.
+             */
+            $uploadedImages = notif_uploaded_images();
+
+            /*
              * Valida SMTP antes de crear un registro sin posibilidad
              * de envío.
              */
@@ -857,7 +996,8 @@ if (
                     $title,
                     $message,
                     $type,
-                    $branchName
+                    $branchName,
+                    $uploadedImages
                 );
 
                 if ($send['ok']) {
@@ -921,6 +1061,7 @@ if (
                 'errores' => $errors,
                 'grupos' => notif_recipient_labels($groups),
                 'contexto' => $branchName,
+                'imagenes' => count($uploadedImages),
                 'error' => $sent === 0
                     ? 'No se pudo entregar ningún correo. Revisa el detalle SMTP.'
                     : '',
@@ -1162,7 +1303,7 @@ $autoInitial = notif_search_auto(
                     </div>
                 <?php endif; ?>
 
-                <form id="formNotificacion">
+                <form id="formNotificacion" enctype="multipart/form-data">
                     <input
                         type="hidden"
                         name="csrf"
@@ -1207,6 +1348,56 @@ $autoInitial = notif_search_auto(
                                 required
                                 placeholder="Escribe el mensaje que recibirán los destinatarios..."
                             ></textarea>
+                        </div>
+
+                        <div class="form-group col-12">
+                            <div class="notification-images-heading">
+                                <div>
+                                    <label for="imagenes_notificacion">
+                                        Imagen del correo
+                                        <span class="notification-optional">Opcional</span>
+                                    </label>
+                                    <p>
+                                        Puedes incluir hasta 3 imágenes dentro del correo.
+                                        JPG, PNG o WEBP · máximo 2 MB cada una.
+                                    </p>
+                                </div>
+                                <span id="imagenesContador" class="notification-images-count">
+                                    0 de 3
+                                </span>
+                            </div>
+
+                            <label
+                                for="imagenes_notificacion"
+                                class="notification-image-picker"
+                                id="notificationImagePicker"
+                            >
+                                <span class="notification-image-picker-icon">
+                                    <i class="fas fa-image"></i>
+                                </span>
+                                <span class="notification-image-picker-copy">
+                                    <strong>Agregar imágenes</strong>
+                                    <small>Haz clic para seleccionar desde tu equipo</small>
+                                </span>
+                                <span class="notification-image-picker-action">
+                                    Seleccionar
+                                </span>
+                            </label>
+
+                            <input
+                                type="file"
+                                name="imagenes_notificacion[]"
+                                id="imagenes_notificacion"
+                                class="notification-image-input"
+                                accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
+                                multiple
+                            >
+
+                            <div
+                                id="previewImagenesNotificacion"
+                                class="notification-image-preview"
+                                hidden
+                            ></div>
                         </div>
                     </div>
 
@@ -1887,6 +2078,176 @@ $autoInitial = notif_search_auto(
             loadAutomatic(1);
         });
 
+        const imageInput = document.getElementById('imagenes_notificacion');
+        const imagePreview = document.getElementById('previewImagenesNotificacion');
+        const imageCounter = document.getElementById('imagenesContador');
+        const imagePicker = document.getElementById('notificationImagePicker');
+        const MAX_IMAGES = 3;
+        const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
+        let selectedImageFiles = [];
+
+        function formatBytes(bytes) {
+            if (!Number.isFinite(bytes) || bytes <= 0) {
+                return '0 KB';
+            }
+
+            return (bytes / 1024 / 1024).toFixed(2) + ' MB';
+        }
+
+        function syncImageInputFiles() {
+            if (!imageInput || typeof DataTransfer === 'undefined') {
+                return;
+            }
+
+            const transfer = new DataTransfer();
+
+            selectedImageFiles.forEach(function (file) {
+                transfer.items.add(file);
+            });
+
+            imageInput.files = transfer.files;
+        }
+
+        function renderImagePreview() {
+            if (!imagePreview || !imageCounter) {
+                return;
+            }
+
+            imageCounter.textContent =
+                selectedImageFiles.length + ' de ' + MAX_IMAGES;
+
+            if (imagePicker) {
+                imagePicker.classList.toggle(
+                    'is-full',
+                    selectedImageFiles.length >= MAX_IMAGES
+                );
+            }
+
+            if (selectedImageFiles.length === 0) {
+                imagePreview.innerHTML = '';
+                imagePreview.hidden = true;
+                return;
+            }
+
+            imagePreview.hidden = false;
+            imagePreview.innerHTML = '';
+
+            selectedImageFiles.forEach(function (file, index) {
+                const url = URL.createObjectURL(file);
+                const item = document.createElement('article');
+                item.className = 'notification-image-preview-item';
+
+                item.innerHTML =
+                    '<div class="notification-image-preview-media">'
+                    + '<img src="' + url + '" alt="Vista previa de imagen">'
+                    + '<button type="button" class="notification-image-remove" '
+                    + 'data-image-index="' + index + '" '
+                    + 'title="Quitar imagen" aria-label="Quitar imagen">'
+                    + '<i class="fas fa-times"></i>'
+                    + '</button>'
+                    + '</div>'
+                    + '<div class="notification-image-preview-info">'
+                    + '<strong>' + escapeHtml(file.name) + '</strong>'
+                    + '<span>' + escapeHtml(formatBytes(file.size)) + '</span>'
+                    + '</div>';
+
+                const img = item.querySelector('img');
+                if (img) {
+                    img.addEventListener('load', function () {
+                        URL.revokeObjectURL(url);
+                    }, { once: true });
+                }
+
+                imagePreview.appendChild(item);
+            });
+        }
+
+        function addSelectedImages(files) {
+            const incoming = Array.from(files || []);
+
+            if (incoming.length === 0) {
+                return;
+            }
+
+            const allowedTypes = [
+                'image/jpeg',
+                'image/png',
+                'image/webp'
+            ];
+
+            for (const file of incoming) {
+                if (!allowedTypes.includes(file.type)) {
+                    Swal.fire({
+                        icon: 'warning',
+                        title: 'Formato no permitido',
+                        text: 'Solo puedes usar imágenes JPG, PNG o WEBP.',
+                        confirmButtonColor: '#1e3a8a'
+                    });
+                    continue;
+                }
+
+                if (file.size > MAX_IMAGE_BYTES) {
+                    Swal.fire({
+                        icon: 'warning',
+                        title: 'Imagen demasiado grande',
+                        text: file.name + ' supera el límite de 2 MB.',
+                        confirmButtonColor: '#1e3a8a'
+                    });
+                    continue;
+                }
+
+                if (selectedImageFiles.length >= MAX_IMAGES) {
+                    Swal.fire({
+                        icon: 'info',
+                        title: 'Máximo de imágenes alcanzado',
+                        text: 'Puedes incluir hasta 3 imágenes por notificación.',
+                        confirmButtonColor: '#1e3a8a'
+                    });
+                    break;
+                }
+
+                const duplicate = selectedImageFiles.some(function (current) {
+                    return current.name === file.name
+                        && current.size === file.size
+                        && current.lastModified === file.lastModified;
+                });
+
+                if (!duplicate) {
+                    selectedImageFiles.push(file);
+                }
+            }
+
+            syncImageInputFiles();
+            renderImagePreview();
+        }
+
+        if (imageInput) {
+            imageInput.addEventListener('change', function () {
+                addSelectedImages(this.files);
+                syncImageInputFiles();
+            });
+        }
+
+        if (imagePreview) {
+            imagePreview.addEventListener('click', function (event) {
+                const button = event.target.closest('.notification-image-remove');
+
+                if (!button) {
+                    return;
+                }
+
+                const index = Number(button.getAttribute('data-image-index'));
+
+                if (!Number.isInteger(index) || index < 0) {
+                    return;
+                }
+
+                selectedImageFiles.splice(index, 1);
+                syncImageInputFiles();
+                renderImagePreview();
+            });
+        }
+
         $('#formNotificacion').on('submit', function (event) {
             event.preventDefault();
 
@@ -1937,6 +2298,12 @@ $autoInitial = notif_search_auto(
                     '<div class="swal-notification-summary">'
                     + '<strong>Destinatarios:</strong>'
                     + '<ul>' + list + '</ul>'
+                    + (selectedImageFiles.length > 0
+                        ? '<div class="swal-notification-images"><i class="fas fa-image"></i> '
+                            + selectedImageFiles.length
+                            + (selectedImageFiles.length === 1 ? ' imagen incluida' : ' imágenes incluidas')
+                            + '</div>'
+                        : '')
                     + '<span>' + escapeHtml(contextName) + '</span>'
                     + '</div>',
                 showCancelButton: true,
@@ -1959,17 +2326,19 @@ $autoInitial = notif_search_auto(
                     }
                 });
 
-                const data = $form.serializeArray();
-                data.push({
-                    name: 'action',
-                    value: 'enviar_notificacion'
-                });
+                syncImageInputFiles();
+
+                const data = new FormData($form[0]);
+                data.set('action', 'enviar_notificacion');
 
                 $.ajax({
                     url: endpoint,
                     method: 'POST',
                     dataType: 'json',
-                    data: data
+                    data: data,
+                    processData: false,
+                    contentType: false,
+                    cache: false
                 }).done(function (response) {
                     const errors =
                         Array.isArray(response.errores)
@@ -1988,6 +2357,17 @@ $autoInitial = notif_search_auto(
                         + response.total
                         + '</strong><span>Total</span></div>'
                         + '</div>';
+
+                    if (Number(response.imagenes || 0) > 0) {
+                        html +=
+                            '<div class="swal-success-images">'
+                            + '<i class="fas fa-images"></i> '
+                            + Number(response.imagenes)
+                            + (Number(response.imagenes) === 1
+                                ? ' imagen incluida en el correo'
+                                : ' imágenes incluidas en el correo')
+                            + '</div>';
+                    }
 
                     if (errors.length > 0) {
                         html +=

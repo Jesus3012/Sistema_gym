@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/asistencia_context.php';
+require_once __DIR__ . '/asistencia_salida_minima.php';
 
 try {
     $contexto = asistencia_contexto();
@@ -40,6 +41,15 @@ try {
         asistencia_error(
             'El socio seleccionado no existe.',
             404
+        );
+    }
+
+    if ($tipo === 'salida') {
+        asistencia_exigir_tiempo_minimo_salida(
+            $contexto['conn'],
+            (int) $contexto['sucursal_id'],
+            $clienteId,
+            5
         );
     }
 

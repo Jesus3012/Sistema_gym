@@ -4,6 +4,8 @@
 
 declare(strict_types=1);
 
+// BUILD_PLANES_SUCURSAL_SOLO_ASIGNADOS_20260811_1231
+
 require_once __DIR__ . '/includes/auth_guard.php';
 
 if (!isset($connPermisos) || !$connPermisos instanceof mysqli) {
@@ -65,30 +67,6 @@ function planes_formato_duracion(int $dias): string
     }
 
     return number_format($dias) . ' días';
-}
-
-function planes_sincronizar_sucursales(mysqli $db): void
-{
-    $sql = "INSERT IGNORE INTO planes_sucursales
-                (sucursal_id, plan_id, precio, estado)
-            SELECT
-                s.id,
-                p.id,
-                CAST(p.precio AS DECIMAL(10,2)),
-                CASE
-                    WHEN p.estado = 'activo' THEN 'activo'
-                    ELSE 'inactivo'
-                END
-            FROM sucursales s
-            CROSS JOIN planes p
-            WHERE s.estado = 'activa'";
-
-    if (!$db->query($sql)) {
-        throw new RuntimeException(
-            'No fue posible sincronizar los planes con las sucursales: '
-            . $db->error
-        );
-    }
 }
 
 function planes_nombre_duplicado(
@@ -153,10 +131,38 @@ $sucursalPlanesNombre = trim((string) (
 $vistaSolicitada = strtolower(trim((string) ($_GET['vista'] ?? 'sucursal')));
 $vistaGlobalPlanes = $vistaSolicitada === 'global';
 
-try {
-    planes_sincronizar_sucursales($conn);
-} catch (Throwable $sincronizacionError) {
-    error_log('[Planes sincronización] ' . $sincronizacionError->getMessage());
+/*
+ * IMPORTANTE:
+ * planes es el catálogo maestro.
+ * planes_sucursales define en qué sedes está realmente asignado cada plan.
+ * Aquí NO se crean relaciones automáticamente.
+ */
+$sucursalesPlanes = [];
+$sucursalesPlanesPorId = [];
+
+$resultadoSucursalesPlanes = $conn->query(
+    "SELECT id, nombre, clave, es_matriz
+     FROM sucursales
+     WHERE estado = 'activa'
+     ORDER BY es_matriz DESC, nombre ASC, id ASC"
+);
+
+if ($resultadoSucursalesPlanes instanceof mysqli_result) {
+    while ($filaSucursalPlan = $resultadoSucursalesPlanes->fetch_assoc()) {
+        $idSucursalPlan = (int) ($filaSucursalPlan['id'] ?? 0);
+
+        if ($idSucursalPlan <= 0) {
+            continue;
+        }
+
+        $filaSucursalPlan['id'] = $idSucursalPlan;
+        $filaSucursalPlan['es_matriz'] = (int) (
+            $filaSucursalPlan['es_matriz'] ?? 0
+        );
+
+        $sucursalesPlanes[] = $filaSucursalPlan;
+        $sucursalesPlanesPorId[$idSucursalPlan] = $filaSucursalPlan;
+    }
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -179,8 +185,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $planId = (int) ($_POST['plan_id'] ?? 0);
     $estado = strtolower(trim((string) ($_POST['estado'] ?? 'activo')));
+    $estadosPermitidos = $vistaGlobalPlanes
+        ? ['activo', 'inactivo']
+        : ['activo', 'inactivo', 'no_asignado'];
 
-    if (!in_array($estado, ['activo', 'inactivo'], true)) {
+    if (!in_array($estado, $estadosPermitidos, true)) {
         planes_json([
             'ok' => false,
             'mensaje' => 'El estado seleccionado no es válido.',
@@ -194,6 +203,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $descripcion = trim((string) ($_POST['descripcion'] ?? ''));
         $aplicarPrecioTodas = isset($_POST['aplicar_precio_todas'])
             && (string) $_POST['aplicar_precio_todas'] === '1';
+
+        $sucursalesSeleccionadas = [];
+        $sucursalesRecibidas = $_POST['sucursales_plan'] ?? [];
+
+        if (!is_array($sucursalesRecibidas)) {
+            $sucursalesRecibidas = [$sucursalesRecibidas];
+        }
+
+        foreach ($sucursalesRecibidas as $sucursalRecibida) {
+            $sucursalSeleccionadaId = (int) $sucursalRecibida;
+
+            if ($sucursalSeleccionadaId <= 0) {
+                continue;
+            }
+
+            if (!isset($sucursalesPlanesPorId[$sucursalSeleccionadaId])) {
+                planes_json([
+                    'ok' => false,
+                    'mensaje' => 'Una de las sucursales seleccionadas ya no está disponible.',
+                ], 422);
+            }
+
+            $sucursalesSeleccionadas[$sucursalSeleccionadaId] =
+                $sucursalSeleccionadaId;
+        }
+
+        $sucursalesSeleccionadas = array_values($sucursalesSeleccionadas);
 
         if ($nombre === '' || $duracionDias <= 0 || $precioTexto === '') {
             planes_json([
@@ -278,13 +314,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $planId
                 );
                 $stmtPlan->execute();
-
-                if ($stmtPlan->affected_rows < 0) {
-                    throw new RuntimeException(
-                        'No fue posible actualizar el plan.'
-                    );
-                }
-
                 $stmtPlan->close();
             } else {
                 $stmtPlan = $conn->prepare(
@@ -312,49 +341,96 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $stmtPlan->close();
             }
 
-            $stmtSincronizar = $conn->prepare(
-                "INSERT IGNORE INTO planes_sucursales
-                    (sucursal_id, plan_id, precio, estado)
-                 SELECT id, ?, ?, ?
-                 FROM sucursales
-                 WHERE estado = 'activa'"
-            );
-
-            if (!$stmtSincronizar) {
-                throw new RuntimeException(
-                    'No fue posible preparar la disponibilidad por sucursal.'
-                );
-            }
-
-            $precioSucursal = (float) $precioBase;
-            $stmtSincronizar->bind_param(
-                'ids',
-                $planId,
-                $precioSucursal,
-                $estado
-            );
-            $stmtSincronizar->execute();
-            $stmtSincronizar->close();
-
-            if ($estado === 'inactivo') {
-                $stmtEstado = $conn->prepare(
-                    "UPDATE planes_sucursales
-                     SET estado = 'inactivo'
-                     WHERE plan_id = ?"
+            /*
+             * La existencia de la fila en planes_sucursales significa que
+             * el plan está asignado a esa sede. No se crean filas para las
+             * demás sucursales.
+             */
+            if ($sucursalesSeleccionadas !== []) {
+                $marcadores = implode(
+                    ',',
+                    array_fill(0, count($sucursalesSeleccionadas), '?')
                 );
 
-                if (!$stmtEstado) {
+                $sqlRetirar = "DELETE FROM planes_sucursales
+                               WHERE plan_id = ?
+                                 AND sucursal_id NOT IN ({$marcadores})";
+
+                $stmtRetirar = $conn->prepare($sqlRetirar);
+
+                if (!$stmtRetirar) {
                     throw new RuntimeException(
-                        'No fue posible desactivar el plan en las sucursales.'
+                        'No fue posible preparar la asignación de sucursales.'
                     );
                 }
 
-                $stmtEstado->bind_param('i', $planId);
-                $stmtEstado->execute();
-                $stmtEstado->close();
+                $tiposRetirar = 'i' . str_repeat(
+                    'i',
+                    count($sucursalesSeleccionadas)
+                );
+                $parametrosRetirar = array_merge(
+                    [$planId],
+                    $sucursalesSeleccionadas
+                );
+                $referenciasRetirar = [$tiposRetirar];
+
+                foreach ($parametrosRetirar as $indiceParametro => $valorParametro) {
+                    $referenciasRetirar[] =
+                        &$parametrosRetirar[$indiceParametro];
+                }
+
+                call_user_func_array(
+                    [$stmtRetirar, 'bind_param'],
+                    $referenciasRetirar
+                );
+                $stmtRetirar->execute();
+                $stmtRetirar->close();
+            } else {
+                $stmtRetirar = $conn->prepare(
+                    "DELETE FROM planes_sucursales
+                     WHERE plan_id = ?"
+                );
+
+                if (!$stmtRetirar) {
+                    throw new RuntimeException(
+                        'No fue posible retirar las asignaciones del plan.'
+                    );
+                }
+
+                $stmtRetirar->bind_param('i', $planId);
+                $stmtRetirar->execute();
+                $stmtRetirar->close();
             }
 
-            if ($aplicarPrecioTodas) {
+            $precioSucursal = (float) $precioBase;
+            $estadoSucursalNuevo = 'activo';
+
+            $stmtAsignar = $conn->prepare(
+                "INSERT IGNORE INTO planes_sucursales
+                    (sucursal_id, plan_id, precio, estado)
+                 VALUES (?, ?, ?, ?)"
+            );
+
+            if (!$stmtAsignar) {
+                throw new RuntimeException(
+                    'No fue posible preparar las sucursales del plan.'
+                );
+            }
+
+            foreach ($sucursalesSeleccionadas as $sucursalSeleccionadaId) {
+                $stmtAsignar->bind_param(
+                    'iids',
+                    $sucursalSeleccionadaId,
+                    $planId,
+                    $precioSucursal,
+                    $estadoSucursalNuevo
+                );
+                $stmtAsignar->execute();
+            }
+
+            $stmtAsignar->close();
+
+            if ($aplicarPrecioTodas && $sucursalesSeleccionadas !== []) {
                 $stmtPrecio = $conn->prepare(
                     "UPDATE planes_sucursales
                      SET precio = ?
@@ -363,7 +439,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 if (!$stmtPrecio) {
                     throw new RuntimeException(
-                        'No fue posible aplicar el precio a las sucursales.'
+                        'No fue posible aplicar el precio a las sucursales asignadas.'
                     );
                 }
 
@@ -378,17 +454,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             $conn->commit();
 
+            $cantidadSucursales = count($sucursalesSeleccionadas);
+
             planes_json([
                 'ok' => true,
                 'mensaje' => $esNuevo
-                    ? 'El plan se creó correctamente.'
-                    : 'El plan se guardó correctamente.',
+                    ? (
+                        $cantidadSucursales > 0
+                            ? 'El plan se creó y quedó asignado a '
+                                . $cantidadSucursales
+                                . ($cantidadSucursales === 1
+                                    ? ' sucursal.'
+                                    : ' sucursales.')
+                            : 'El plan se creó en el catálogo sin asignarlo a ninguna sucursal.'
+                    )
+                    : 'El plan y sus sucursales asignadas se guardaron correctamente.',
             ]);
         } catch (Throwable $error) {
-            if ($conn->errno === 0) {
-                // mysqli puede no reportar una transacción activa; rollback es seguro.
-            }
-
             try {
                 $conn->rollback();
             } catch (Throwable $rollbackError) {
@@ -404,11 +486,182 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
-    if ($planId <= 0 || $sucursalPlanesId <= 0) {
+    if ($sucursalPlanesId <= 0) {
         planes_json([
             'ok' => false,
-            'mensaje' => 'No fue posible identificar el plan o la sucursal.',
+            'mensaje' => 'No fue posible identificar la sucursal activa.',
         ], 422);
+    }
+
+    /*
+     * Alta directa desde una sucursal.
+     * Se crea el registro maestro en planes y UNA sola relación en
+     * planes_sucursales: la sucursal que el usuario tiene activa.
+     */
+    if ($planId <= 0) {
+        $nombre = trim((string) ($_POST['nombre'] ?? ''));
+        $duracionDias = (int) ($_POST['duracion_dias'] ?? 0);
+        $descripcion = trim((string) ($_POST['descripcion'] ?? ''));
+        $precioTexto = trim((string) ($_POST['precio'] ?? ''));
+
+        if ($nombre === '' || $duracionDias <= 0 || $precioTexto === '') {
+            planes_json([
+                'ok' => false,
+                'mensaje' => 'Nombre, duración y precio son obligatorios.',
+            ], 422);
+        }
+
+        if (planes_strlen($nombre) > 50) {
+            planes_json([
+                'ok' => false,
+                'mensaje' => 'El nombre no puede superar 50 caracteres.',
+            ], 422);
+        }
+
+        if ($descripcion !== '' && planes_strlen($descripcion) > 1000) {
+            planes_json([
+                'ok' => false,
+                'mensaje' => 'La descripción no puede superar 1000 caracteres.',
+            ], 422);
+        }
+
+        if ($duracionDias > 3650) {
+            planes_json([
+                'ok' => false,
+                'mensaje' => 'La duración no puede superar 3650 días.',
+            ], 422);
+        }
+
+        if (!preg_match('/^\d+(?:\.\d{1,2})?$/', $precioTexto)) {
+            planes_json([
+                'ok' => false,
+                'mensaje' => 'Captura un precio válido con máximo dos decimales.',
+            ], 422);
+        }
+
+        if (!in_array($estado, ['activo', 'inactivo'], true)) {
+            planes_json([
+                'ok' => false,
+                'mensaje' => 'Selecciona si el plan estará disponible o no disponible.',
+            ], 422);
+        }
+
+        $precioSucursal = (float) $precioTexto;
+
+        if ($precioSucursal < 0 || $precioSucursal > 99999999.99) {
+            planes_json([
+                'ok' => false,
+                'mensaje' => 'El precio capturado no es válido.',
+            ], 422);
+        }
+
+        if (planes_nombre_duplicado($conn, $nombre)) {
+            planes_json([
+                'ok' => false,
+                'mensaje' => 'Ese plan ya existe en el catálogo. Usa el botón Agregar para habilitarlo en esta sucursal.',
+            ], 422);
+        }
+
+        /* planes.precio es entero en la estructura actual. */
+        $precioBase = (int) round($precioSucursal);
+
+        try {
+            $conn->begin_transaction();
+
+            $stmtNuevoPlan = $conn->prepare(
+                "INSERT INTO planes
+                    (nombre, duracion_dias, precio, descripcion, estado)
+                 VALUES (?, ?, ?, ?, ?)"
+            );
+
+            if (!$stmtNuevoPlan) {
+                throw new RuntimeException(
+                    'No fue posible preparar el registro del plan.'
+                );
+            }
+
+            $stmtNuevoPlan->bind_param(
+                'siiss',
+                $nombre,
+                $duracionDias,
+                $precioBase,
+                $descripcion,
+                $estado
+            );
+            $stmtNuevoPlan->execute();
+            $planId = (int) $conn->insert_id;
+            $stmtNuevoPlan->close();
+
+            $stmtAsignacionLocal = $conn->prepare(
+                "INSERT INTO planes_sucursales
+                    (sucursal_id, plan_id, precio, estado)
+                 VALUES (?, ?, ?, ?)"
+            );
+
+            if (!$stmtAsignacionLocal) {
+                throw new RuntimeException(
+                    'No fue posible preparar la asignación del plan a la sucursal.'
+                );
+            }
+
+            $stmtAsignacionLocal->bind_param(
+                'iids',
+                $sucursalPlanesId,
+                $planId,
+                $precioSucursal,
+                $estado
+            );
+            $stmtAsignacionLocal->execute();
+            $stmtAsignacionLocal->close();
+
+            $conn->commit();
+
+            planes_json([
+                'ok' => true,
+                'mensaje' => 'El plan se creó únicamente en ' . $sucursalPlanesNombre . '.',
+            ]);
+        } catch (Throwable $error) {
+            try {
+                $conn->rollback();
+            } catch (Throwable $rollbackError) {
+                error_log('[Planes rollback local] ' . $rollbackError->getMessage());
+            }
+
+            error_log('[Planes crear local] ' . $error->getMessage());
+
+            planes_json([
+                'ok' => false,
+                'mensaje' => 'No fue posible crear el plan en esta sucursal.',
+            ], 500);
+        }
+    }
+
+    if ($estado === 'no_asignado') {
+        $stmtRetirarSucursal = $conn->prepare(
+            "DELETE FROM planes_sucursales
+             WHERE sucursal_id = ?
+               AND plan_id = ?"
+        );
+
+        if (!$stmtRetirarSucursal) {
+            planes_json([
+                'ok' => false,
+                'mensaje' => 'No fue posible preparar el retiro del plan.',
+            ], 500);
+        }
+
+        $stmtRetirarSucursal->bind_param(
+            'ii',
+            $sucursalPlanesId,
+            $planId
+        );
+        $stmtRetirarSucursal->execute();
+        $stmtRetirarSucursal->close();
+
+        planes_json([
+            'ok' => true,
+            'mensaje' => 'El plan fue retirado de esta sucursal.',
+        ]);
     }
 
     $precioTexto = trim((string) ($_POST['precio'] ?? ''));
@@ -433,7 +686,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     $stmtPlanGlobal = $conn->prepare(
-        'SELECT id FROM planes WHERE id = ? LIMIT 1'
+        'SELECT id, estado FROM planes WHERE id = ? LIMIT 1'
     );
 
     if (!$stmtPlanGlobal) {
@@ -453,6 +706,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'ok' => false,
             'mensaje' => 'El plan seleccionado ya no existe.',
         ], 404);
+    }
+
+    if (
+        $estado === 'activo'
+        && (string) ($planGlobal['estado'] ?? '') !== 'activo'
+    ) {
+        planes_json([
+            'ok' => false,
+            'mensaje' => 'El plan está inactivo en el catálogo general y no puede habilitarse en esta sucursal.',
+        ], 422);
     }
 
     $stmtSucursal = $conn->prepare(
@@ -507,7 +770,10 @@ if ($vistaGlobalPlanes) {
             p.estado AS estado_global,
             p.precio AS precio_mostrado,
             p.estado AS estado_mostrado,
+            1 AS asignado_sucursal,
+            COALESCE(pa.sucursales_asignadas, 0) AS sucursales_asignadas,
             COALESCE(pa.sucursales_activas, 0) AS sucursales_activas,
+            pa.sucursales_ids,
             pa.precio_min,
             pa.precio_max,
             COALESCE(ia.membresias_activas, 0) AS membresias_activas,
@@ -517,9 +783,21 @@ if ($vistaGlobalPlanes) {
             SELECT
                 ps.plan_id,
                 COUNT(DISTINCT CASE
+                    WHEN s.estado = 'activa'
+                    THEN ps.sucursal_id
+                END) AS sucursales_asignadas,
+                COUNT(DISTINCT CASE
                     WHEN ps.estado = 'activo' AND s.estado = 'activa'
                     THEN ps.sucursal_id
                 END) AS sucursales_activas,
+                GROUP_CONCAT(
+                    DISTINCT CASE
+                        WHEN s.estado = 'activa' THEN ps.sucursal_id
+                        ELSE NULL
+                    END
+                    ORDER BY ps.sucursal_id
+                    SEPARATOR ','
+                ) AS sucursales_ids,
                 MIN(CASE WHEN s.estado = 'activa' THEN ps.precio END) AS precio_min,
                 MAX(CASE WHEN s.estado = 'activa' THEN ps.precio END) AS precio_max
             FROM planes_sucursales ps
@@ -551,15 +829,21 @@ if ($vistaGlobalPlanes) {
             p.precio AS precio_base,
             p.descripcion,
             p.estado AS estado_global,
-            COALESCE(ps.precio, p.precio) AS precio_mostrado,
-            COALESCE(ps.estado, p.estado) AS estado_mostrado,
+            ps.precio AS precio_mostrado,
+            CASE
+                WHEN p.estado <> 'activo' THEN 'inactivo'
+                ELSE ps.estado
+            END AS estado_mostrado,
+            1 AS asignado_sucursal,
+            0 AS sucursales_asignadas,
             0 AS sucursales_activas,
+            NULL AS sucursales_ids,
             NULL AS precio_min,
             NULL AS precio_max,
             COALESCE(ia.membresias_activas, 0) AS membresias_activas,
             COALESCE(ia.usos_historicos, 0) AS usos_historicos
         FROM planes p
-        LEFT JOIN planes_sucursales ps
+        INNER JOIN planes_sucursales ps
           ON ps.plan_id = p.id
          AND ps.sucursal_id = ?
         LEFT JOIN (
@@ -576,7 +860,9 @@ if ($vistaGlobalPlanes) {
              AND iss.sucursal_id = ?
             GROUP BY i.plan_id
         ) ia ON ia.plan_id = p.id
-        ORDER BY p.duracion_dias ASC, p.nombre ASC
+        ORDER BY
+            p.duracion_dias ASC,
+            p.nombre ASC
     ";
 
     $stmtPlanes = $conn->prepare($sqlPlanes);
@@ -637,6 +923,111 @@ foreach ($planes as $planResumen) {
         rel="stylesheet"
         href="css/planes.css?v=<?php echo (int) @filemtime(__DIR__ . '/css/planes.css'); ?>"
     >
+    <style>
+        /* Cards minimalistas: solo información necesaria y acción. */
+        .plans-header-actions {
+            flex-wrap: wrap;
+        }
+
+        .plan-card {
+            min-height: 0 !important;
+            align-self: start !important;
+        }
+
+        .plan-card {
+            min-height: 315px !important;
+        }
+
+        .plan-card-top {
+            padding: 16px 18px !important;
+        }
+
+        .plan-card-kicker {
+            margin-bottom: 3px !important;
+            font-size: .60rem !important;
+        }
+
+        .plan-card-title-wrap h2 {
+            font-size: 1rem !important;
+        }
+
+        .plan-status-badge {
+            padding: 5px 8px !important;
+            font-size: .62rem !important;
+        }
+
+        .plan-card-body {
+            display: block !important;
+            flex: 1 1 auto !important;
+            min-height: 175px !important;
+            padding: 18px 18px 16px !important;
+        }
+
+        .plan-summary-row {
+            margin-bottom: 0 !important;
+        }
+
+        .plan-price-block small {
+            font-size: .60rem !important;
+        }
+
+        .plan-price-block strong {
+            margin-top: 5px !important;
+            font-size: 2.05rem !important;
+            line-height: 1 !important;
+            letter-spacing: -0.035em !important;
+        }
+
+        .plan-duration-chip {
+            padding: 7px 9px !important;
+            border-radius: 9px !important;
+            font-size: .66rem !important;
+        }
+
+        .plan-description {
+            min-height: 42px !important;
+            margin: 18px 0 0 !important;
+            font-size: .78rem !important;
+            line-height: 1.45 !important;
+        }
+
+        .plan-card-footer {
+            justify-content: flex-end !important;
+            min-height: 58px !important;
+            margin-top: 0 !important;
+            padding: 12px 18px !important;
+        }
+
+        .plan-card-footer > span {
+            display: none !important;
+        }
+
+        .plan-edit-button {
+            min-height: 32px !important;
+            padding: 6px 11px !important;
+            border-radius: 8px !important;
+            font-size: .68rem !important;
+        }
+
+        .plans-local-summary[hidden],
+        #localPlanEditSummary {
+            display: none !important;
+        }
+
+        <?php if (!$vistaGlobalPlanes): ?>
+        /* En una sucursal no repetimos nombre de sede ni estado dentro de cada card. */
+        .plan-data-grid,
+        .plan-metrics {
+            display: none !important;
+        }
+        <?php endif; ?>
+
+        @media (min-width: 1200px) {
+            .plans-grid {
+                align-items: start;
+            }
+        }
+    </style>
 </head>
 <body>
 <?php require_once __DIR__ . '/includes/sidebar.php'; ?>
@@ -663,16 +1054,16 @@ foreach ($planes as $planResumen) {
                     </span>
                 </div>
 
-                <?php if ($vistaGlobalPlanes): ?>
-                    <button
-                        type="button"
-                        class="plans-primary-button"
-                        id="newPlanButton"
-                    >
-                        <i class="fas fa-plus"></i>
-                        Nuevo plan
-                    </button>
-                <?php else: ?>
+                <button
+                    type="button"
+                    class="plans-primary-button"
+                    id="newPlanButton"
+                >
+                    <i class="fas fa-plus"></i>
+                    Nuevo plan
+                </button>
+
+                <?php if (!$vistaGlobalPlanes): ?>
                     <a
                         href="planes.php?vista=global"
                         class="plans-secondary-button"
@@ -755,6 +1146,9 @@ foreach ($planes as $planResumen) {
                 $planId = (int) $plan['id'];
                 $estadoMostrado = (string) $plan['estado_mostrado'];
                 $estadoGlobal = (string) $plan['estado_global'];
+                $asignadoSucursal = $vistaGlobalPlanes
+                    ? true
+                    : ((int) ($plan['asignado_sucursal'] ?? 0) === 1);
                 $precioMostrado = (float) $plan['precio_mostrado'];
                 $precioMin = $plan['precio_min'] !== null
                     ? (float) $plan['precio_min']
@@ -768,6 +1162,26 @@ foreach ($planes as $planResumen) {
                 ));
                 $membresiasPlan = (int) $plan['membresias_activas'];
                 $usosHistoricosPlan = (int) $plan['usos_historicos'];
+
+                $sucursalesIdsPlan = [];
+                $sucursalesIdsTexto = trim((string) (
+                    $plan['sucursales_ids'] ?? ''
+                ));
+
+                if ($sucursalesIdsTexto !== '') {
+                    foreach (explode(',', $sucursalesIdsTexto) as $sucursalIdTexto) {
+                        $idSucursalDato = (int) $sucursalIdTexto;
+
+                        if ($idSucursalDato > 0) {
+                            $sucursalesIdsPlan[] = $idSucursalDato;
+                        }
+                    }
+                }
+
+                $estadoFormulario = $estadoMostrado === 'no_asignado'
+                    ? 'activo'
+                    : $estadoMostrado;
+
                 $datosPlan = [
                     'id' => $planId,
                     'nombre' => (string) $plan['nombre'],
@@ -775,8 +1189,11 @@ foreach ($planes as $planResumen) {
                     'precio' => $precioMostrado,
                     'precio_base' => (int) $plan['precio_base'],
                     'descripcion' => $descripcion,
-                    'estado' => $estadoMostrado,
+                    'estado' => $estadoFormulario,
+                    'estado_mostrado' => $estadoMostrado,
                     'estado_global' => $estadoGlobal,
+                    'asignado' => $asignadoSucursal,
+                    'sucursales_ids' => $sucursalesIdsPlan,
                 ];
                 ?>
 
@@ -795,15 +1212,33 @@ foreach ($planes as $planResumen) {
                         </div>
 
                         <span class="plan-status-badge <?php echo $estadoMostrado === 'activo' ? 'status-active' : 'status-inactive'; ?>">
-                            <i class="fas <?php echo $estadoMostrado === 'activo' ? 'fa-circle-check' : 'fa-circle-pause'; ?>"></i>
-                            <?php echo $estadoMostrado === 'activo' ? 'Disponible' : 'Inactivo'; ?>
+                            <i class="fas <?php echo $estadoMostrado === 'activo'
+                                ? 'fa-circle-check'
+                                : ($estadoMostrado === 'no_asignado'
+                                    ? 'fa-circle-plus'
+                                    : 'fa-circle-pause'); ?>"></i>
+                            <?php
+                            echo $estadoMostrado === 'activo'
+                                ? 'Disponible'
+                                : ($estadoMostrado === 'no_asignado'
+                                    ? 'No agregado'
+                                    : 'Inactivo');
+                            ?>
                         </span>
                     </div>
 
                     <div class="plan-card-body">
                         <div class="plan-summary-row">
                             <div class="plan-price-block">
-                                <small><?php echo $vistaGlobalPlanes ? 'Precio base' : 'Precio en esta sucursal'; ?></small>
+                                <small>
+                                    <?php
+                                    echo $vistaGlobalPlanes
+                                        ? 'Precio base'
+                                        : ($asignadoSucursal
+                                            ? 'Precio en esta sucursal'
+                                            : 'Precio base sugerido');
+                                    ?>
+                                </small>
                                 <strong>$<?php echo number_format($precioMostrado, 2); ?></strong>
                             </div>
 
@@ -813,8 +1248,8 @@ foreach ($planes as $planResumen) {
                             </span>
                         </div>
 
-                        <div class="plan-data-grid">
-                            <?php if ($vistaGlobalPlanes): ?>
+                        <?php if ($vistaGlobalPlanes): ?>
+                            <div class="plan-data-grid">
                                 <div class="plan-data-box plan-data-box-wide">
                                     <small>Rango por sucursal</small>
                                     <strong>
@@ -829,21 +1264,11 @@ foreach ($planes as $planResumen) {
                                 </div>
 
                                 <div class="plan-data-box">
-                                    <small>Sucursales activas</small>
-                                    <strong><?php echo number_format((int) $plan['sucursales_activas']); ?></strong>
+                                    <small>Sucursales asignadas</small>
+                                    <strong><?php echo number_format((int) ($plan['sucursales_asignadas'] ?? 0)); ?></strong>
                                 </div>
-                            <?php else: ?>
-                                <div class="plan-data-box plan-data-box-wide">
-                                    <small>Vista de sucursal</small>
-                                    <strong><?php echo planes_h($sucursalPlanesNombre); ?></strong>
-                                </div>
-
-                                <div class="plan-data-box">
-                                    <small>Estado local</small>
-                                    <strong><?php echo $estadoMostrado === 'activo' ? 'Disponible' : 'No disponible'; ?></strong>
-                                </div>
-                            <?php endif; ?>
-                        </div>
+                            </div>
+                        <?php endif; ?>
 
                         <p class="plan-description">
                             <?php echo planes_h(
@@ -853,42 +1278,20 @@ foreach ($planes as $planResumen) {
                             ); ?>
                         </p>
 
-                        <div class="plan-metrics">
-                            <div>
-                                <span class="plan-metric-icon">
-                                    <i class="fas fa-users"></i>
-                                </span>
-                                <span>
-                                    <small>Membresías vigentes</small>
-                                    <strong><?php echo number_format($membresiasPlan); ?></strong>
-                                </span>
-                            </div>
-
-                            <div>
-                                <span class="plan-metric-icon">
-                                    <i class="fas fa-clock-rotate-left"></i>
-                                </span>
-                                <span>
-                                    <small>Usos históricos</small>
-                                    <strong><?php echo number_format($usosHistoricosPlan); ?></strong>
-                                </span>
-                            </div>
-                        </div>
                     </div>
 
                     <footer class="plan-card-footer">
-                        <span>
-                            <i class="fas fa-pen-to-square"></i>
-                            Puedes editar precio, estado y descripción
-                        </span>
-
                         <button
                             type="button"
                             class="plan-edit-button"
                             data-edit-plan="<?php echo $planId; ?>"
                         >
-                            <i class="fas fa-pen"></i>
-                            Editar
+                            <i class="fas <?php echo !$vistaGlobalPlanes && !$asignadoSucursal
+                                ? 'fa-plus'
+                                : 'fa-pen'; ?>"></i>
+                            <?php echo !$vistaGlobalPlanes && !$asignadoSucursal
+                                ? 'Agregar'
+                                : 'Editar'; ?>
                         </button>
                     </footer>
                 </article>
@@ -1014,6 +1417,67 @@ foreach ($planes as $planResumen) {
                     </label>
                 </div>
 
+                <div class="plans-field plans-field-wide">
+                    <span>Sucursales asignadas</span>
+                    <small>
+                        Selecciona únicamente las sedes donde este plan debe existir.
+                        Si no eliges ninguna, quedará guardado solo en el catálogo general.
+                    </small>
+                </div>
+
+                <label class="plans-check">
+                    <input
+                        type="checkbox"
+                        id="selectAllPlanBranches"
+                    >
+                    <span>
+                        <strong>Seleccionar todas las sucursales</strong>
+                        <small>
+                            Es opcional. No se asignarán automáticamente.
+                        </small>
+                    </span>
+                </label>
+
+                <div id="planBranchesList">
+                    <?php foreach ($sucursalesPlanes as $sucursalPlan): ?>
+                        <label class="plans-check">
+                            <input
+                                type="checkbox"
+                                name="sucursales_plan[]"
+                                value="<?php echo (int) $sucursalPlan['id']; ?>"
+                                data-plan-branch
+                            >
+                            <span>
+                                <strong>
+                                    <?php echo planes_h(
+                                        (string) $sucursalPlan['nombre']
+                                    ); ?>
+                                </strong>
+                                <small>
+                                    <?php
+                                    $detalleSucursalPlan = trim((string) (
+                                        $sucursalPlan['clave'] ?? ''
+                                    ));
+
+                                    if ((int) ($sucursalPlan['es_matriz'] ?? 0) === 1) {
+                                        $detalleSucursalPlan = trim(
+                                            $detalleSucursalPlan . ' · Matriz',
+                                            ' ·'
+                                        );
+                                    }
+
+                                    echo planes_h(
+                                        $detalleSucursalPlan !== ''
+                                            ? $detalleSucursalPlan
+                                            : 'Sucursal activa'
+                                    );
+                                    ?>
+                                </small>
+                            </span>
+                        </label>
+                    <?php endforeach; ?>
+                </div>
+
                 <label class="plans-check" id="applyPriceAllWrap">
                     <input
                         type="checkbox"
@@ -1022,14 +1486,51 @@ foreach ($planes as $planResumen) {
                         value="1"
                     >
                     <span>
-                        <strong>Aplicar el precio base a todas las sucursales</strong>
+                        <strong>Aplicar el precio base a las sucursales asignadas</strong>
                         <small>
-                            Úsalo solo cuando quieras reemplazar los precios locales actuales.
+                            Actívalo solo si quieres reemplazar sus precios locales.
                         </small>
                     </span>
                 </label>
             <?php else: ?>
-                <div class="plans-local-summary">
+                <div id="localPlanCreateFields" hidden>
+                    <div class="plans-form-grid">
+                        <label class="plans-field plans-field-wide">
+                            <span>Nombre del plan</span>
+                            <input
+                                type="text"
+                                name="nombre"
+                                id="planName"
+                                maxlength="50"
+                            >
+                        </label>
+
+                        <label class="plans-field">
+                            <span>Duración en días</span>
+                            <input
+                                type="number"
+                                name="duracion_dias"
+                                id="planDuration"
+                                min="1"
+                                max="3650"
+                                step="1"
+                            >
+                        </label>
+
+                        <label class="plans-field plans-field-wide">
+                            <span>Descripción</span>
+                            <textarea
+                                name="descripcion"
+                                id="planDescription"
+                                maxlength="1000"
+                                rows="3"
+                                placeholder="Ej. Acceso por un mes"
+                            ></textarea>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="plans-local-summary" id="localPlanEditSummary" hidden aria-hidden="true">
                     <span class="plans-local-summary-icon">
                         <i class="fas fa-id-card"></i>
                     </span>
@@ -1063,6 +1564,7 @@ foreach ($planes as $planResumen) {
                         <select name="estado" id="planStatus">
                             <option value="activo">Disponible</option>
                             <option value="inactivo">No disponible</option>
+                            <option value="no_asignado">Quitar de esta sucursal</option>
                         </select>
                     </label>
                 </div>
@@ -1113,6 +1615,17 @@ foreach ($planes as $planResumen) {
     const editButtons = Array.from(document.querySelectorAll('[data-edit-plan]'));
     const closeButtons = Array.from(document.querySelectorAll('[data-close-plan-modal]'));
     const newPlanButton = document.getElementById('newPlanButton');
+    const branchCheckboxes = Array.from(
+        document.querySelectorAll('[data-plan-branch]')
+    );
+    const selectAllPlanBranches = document.getElementById(
+        'selectAllPlanBranches'
+    );
+    const localPlanCreateFields = document.getElementById('localPlanCreateFields');
+    const localPlanEditSummary = document.getElementById('localPlanEditSummary');
+    const localPlanNameInput = document.getElementById('planName');
+    const localPlanDurationInput = document.getElementById('planDuration');
+    const localPlanDescriptionInput = document.getElementById('planDescription');
     let searchTimer = null;
 
     function normalize(value) {
@@ -1161,15 +1674,103 @@ foreach ($planes as $planResumen) {
         planId.value = '0';
     }
 
+    function updateAllBranchesCheckbox() {
+        if (!selectAllPlanBranches) {
+            return;
+        }
+
+        const total = branchCheckboxes.length;
+        const checked = branchCheckboxes.filter(function (checkbox) {
+            return checkbox.checked;
+        }).length;
+
+        selectAllPlanBranches.checked = total > 0 && checked === total;
+        selectAllPlanBranches.indeterminate =
+            checked > 0 && checked < total;
+    }
+
+    function setSelectedBranches(ids) {
+        const selected = Array.isArray(ids)
+            ? ids.map(function (id) {
+                return Number(id);
+            })
+            : [];
+
+        branchCheckboxes.forEach(function (checkbox) {
+            checkbox.checked = selected.includes(
+                Number(checkbox.value)
+            );
+        });
+
+        updateAllBranchesCheckbox();
+    }
+
+    function setLocalCreateMode(isCreate) {
+        if (isGlobalView) {
+            return;
+        }
+
+        if (localPlanCreateFields) {
+            localPlanCreateFields.hidden = !isCreate;
+        }
+
+        if (localPlanEditSummary) {
+            localPlanEditSummary.hidden = isCreate;
+        }
+
+        if (localPlanNameInput) {
+            localPlanNameInput.required = isCreate;
+        }
+
+        if (localPlanDurationInput) {
+            localPlanDurationInput.required = isCreate;
+        }
+
+        const status = document.getElementById('planStatus');
+        const removeOption = status
+            ? status.querySelector('option[value="no_asignado"]')
+            : null;
+
+        if (removeOption) {
+            removeOption.disabled = isCreate;
+        }
+    }
+
     function prepareCreate() {
         form.reset();
         planId.value = '0';
         modalTitle.textContent = 'Nuevo plan';
         modalSubtitle.textContent =
-            'Crea el plan y déjalo disponible en las sucursales activas.';
+            'Crea el plan y elige exactamente en qué sucursales estará disponible.';
 
         document.getElementById('planStatus').value = 'activo';
-        document.getElementById('applyPriceAll').checked = true;
+
+        if (isGlobalView) {
+            setSelectedBranches([]);
+
+            const applyPriceAll = document.getElementById('applyPriceAll');
+
+            if (applyPriceAll) {
+                applyPriceAll.checked = false;
+            }
+        } else {
+            setLocalCreateMode(true);
+            modalSubtitle.textContent =
+                'El nuevo plan se guardará únicamente en ' + <?php echo json_encode($sucursalPlanesNombre, JSON_UNESCAPED_UNICODE); ?> + '.';
+
+            if (localPlanNameInput) {
+                localPlanNameInput.value = '';
+            }
+
+            if (localPlanDurationInput) {
+                localPlanDurationInput.value = '';
+            }
+
+            if (localPlanDescriptionInput) {
+                localPlanDescriptionInput.value = '';
+            }
+        }
+
         openModal();
     }
 
@@ -1180,14 +1781,25 @@ foreach ($planes as $planResumen) {
 
         form.reset();
         planId.value = String(data.id || 0);
-        modalTitle.textContent = 'Editar ' + String(data.nombre || 'plan');
+
+        const assigned = data.asignado !== false;
+
+        modalTitle.textContent = !isGlobalView && !assigned
+            ? 'Agregar ' + String(data.nombre || 'plan')
+            : 'Editar ' + String(data.nombre || 'plan');
+
         modalSubtitle.textContent = isGlobalView
-            ? 'Actualiza el catálogo general sin borrar su historial.'
-            : 'Ajusta precio y disponibilidad solo para la sucursal activa.';
+            ? 'Actualiza el catálogo y define exactamente las sucursales asignadas.'
+            : (
+                assigned
+                    ? 'Ajusta precio y disponibilidad solo para la sucursal activa.'
+                    : 'Agrega este plan del catálogo únicamente a la sucursal activa.'
+            );
 
         document.getElementById('planPrice').value = String(
             data.precio == null ? '' : data.precio
         );
+
         document.getElementById('planStatus').value = String(
             data.estado || 'activo'
         );
@@ -1203,8 +1815,17 @@ foreach ($planes as $planResumen) {
             document.getElementById('planDescription').value = String(
                 data.descripcion || ''
             );
-            document.getElementById('applyPriceAll').checked = false;
+
+            const applyPriceAll = document.getElementById('applyPriceAll');
+
+            if (applyPriceAll) {
+                applyPriceAll.checked = false;
+            }
+
+            setSelectedBranches(data.sucursales_ids || []);
         } else {
+            setLocalCreateMode(false);
+
             document.getElementById('localPlanName').textContent = String(
                 data.nombre || 'Plan'
             );
@@ -1213,6 +1834,10 @@ foreach ($planes as $planResumen) {
 
             const status = document.getElementById('planStatus');
             status.disabled = false;
+
+            if (!assigned) {
+                status.value = 'activo';
+            }
         }
 
         openModal();
@@ -1311,6 +1936,20 @@ foreach ($planes as $planResumen) {
     if (newPlanButton) {
         newPlanButton.addEventListener('click', prepareCreate);
     }
+
+    if (selectAllPlanBranches) {
+        selectAllPlanBranches.addEventListener('change', function () {
+            branchCheckboxes.forEach(function (checkbox) {
+                checkbox.checked = selectAllPlanBranches.checked;
+            });
+
+            updateAllBranchesCheckbox();
+        });
+    }
+
+    branchCheckboxes.forEach(function (checkbox) {
+        checkbox.addEventListener('change', updateAllBranchesCheckbox);
+    });
 
     document.addEventListener('keydown', function (event) {
         if (event.key === 'Escape' && modal.classList.contains('is-open')) {

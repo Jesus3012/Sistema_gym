@@ -530,6 +530,11 @@ $registro_asistencia_habilitado =
         let escaneoBloqueado = false;
         let tiempoUltimoEscaneo = 0;
 
+        // Bloqueo local para evitar que la cámara procese el mismo QR
+        // como salida durante los 5 minutos posteriores a la entrada.
+        const TIEMPO_MINIMO_SALIDA_MS = 5 * 60 * 1000;
+        const qrBloqueadosHasta = new Map();
+
         let currentListadoTipo = 'todos';
         let currentListadoFiltro = '';
 
@@ -587,6 +592,7 @@ $registro_asistencia_habilitado =
                 code: respuesta && respuesta.code
                     ? String(respuesta.code)
                     : '',
+                data: respuesta || {},
                 message:
                     respuesta &&
                     (
@@ -831,6 +837,19 @@ $registro_asistencia_habilitado =
 
         function onScanSuccess(decodedText, decodedResult) {
             const ahora = Date.now();
+            const codigoQR = String(decodedText).trim();
+
+            const bloqueoHasta = Number(
+                qrBloqueadosHasta.get(codigoQR) || 0
+            );
+
+            if (bloqueoHasta > ahora) {
+                return;
+            }
+
+            if (bloqueoHasta > 0) {
+                qrBloqueadosHasta.delete(codigoQR);
+            }
 
             if (escaneoBloqueado || (ahora - tiempoUltimoEscaneo < 2000)) {
                 return;
@@ -838,8 +857,6 @@ $registro_asistencia_habilitado =
 
             tiempoUltimoEscaneo = ahora;
             escaneoBloqueado = true;
-
-            const codigoQR = String(decodedText).trim();
 
             console.log("Código escaneado:", codigoQR);
 
@@ -860,6 +877,15 @@ $registro_asistencia_habilitado =
                     console.log("Respuesta backend:", response);
 
                     if (response.success) {
+                        if (response.tipo === 'entrada') {
+                            qrBloqueadosHasta.set(
+                                codigoQR,
+                                Date.now() + TIEMPO_MINIMO_SALIDA_MS
+                            );
+                        } else if (response.tipo === 'salida') {
+                            qrBloqueadosHasta.delete(codigoQR);
+                        }
+
                         const mensaje = response.tipo === 'entrada'
                             ? `Entrada registrada a las ${response.hora_entrada}`
                             : `Salida registrada a las ${response.hora_salida}`;
@@ -906,7 +932,28 @@ $registro_asistencia_habilitado =
                         'No se pudo procesar el código QR.'
                     );
 
-                    if (detalle.status === 401) {
+                    if (detalle.code === 'salida_espera_minima') {
+                        const segundosRestantes = Math.max(
+                            1,
+                            Number(detalle.data.segundos_restantes || 1)
+                        );
+
+                        qrBloqueadosHasta.set(
+                            codigoQR,
+                            Date.now() + (segundosRestantes * 1000)
+                        );
+
+                        mostrarNotificacion(
+                            'ENTRADA YA REGISTRADA',
+                            detalle.message,
+                            'info'
+                        );
+
+                        setEstadoLector(
+                            'active',
+                            '<i class="fas fa-clock"></i> Entrada activa · salida disponible después de 5 minutos'
+                        );
+                    } else if (detalle.status === 401) {
                         mostrarNotificacion(
                             'SESIÓN FINALIZADA',
                             detalle.message,

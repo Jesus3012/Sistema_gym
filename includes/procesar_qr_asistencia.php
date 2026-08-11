@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/asistencia_context.php';
+require_once __DIR__ . '/asistencia_salida_minima.php';
 
 try {
     $contexto = asistencia_contexto();
@@ -23,15 +24,23 @@ try {
     );
 
     if ($cliente === null) {
-        /*
-         * No se inserta una denegación con cliente_id NULL para evitar
-         * incompatibilidades con bases antiguas.
-         */
         asistencia_error(
             'Código QR no válido.',
             404
         );
     }
+
+    /*
+     * Cuando existe una entrada abierta, el modo "auto" convertiría
+     * la siguiente lectura en salida. La bloqueamos durante 5 minutos
+     * para evitar salidas accidentales por una segunda lectura del QR.
+     */
+    asistencia_exigir_tiempo_minimo_salida(
+        $contexto['conn'],
+        (int) $contexto['sucursal_id'],
+        (int) $cliente['id'],
+        5
+    );
 
     $resultado = asistencia_registrar(
         $contexto['conn'],

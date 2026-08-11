@@ -254,7 +254,8 @@ if (!function_exists('notif_send_manual')) {
         string $title,
         string $message,
         string $type,
-        string $branchContext
+        string $branchContext,
+        array $images = []
     ): array {
         if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
             return ['ok' => false, 'error' => 'Correo destinatario inválido.'];
@@ -273,6 +274,58 @@ if (!function_exists('notif_send_manual')) {
             ));
 
             $color = notif_type_color($type);
+            $imagesHtml = '';
+            $embeddedImages = 0;
+
+            foreach ($images as $index => $image) {
+                $path = (string) ($image['path'] ?? '');
+                $imageName = trim((string) ($image['name'] ?? 'imagen'));
+                $mime = trim((string) ($image['mime'] ?? ''));
+
+                if ($path === '' || !is_file($path)) {
+                    continue;
+                }
+
+                if (!in_array(
+                    $mime,
+                    ['image/jpeg', 'image/png', 'image/webp'],
+                    true
+                )) {
+                    continue;
+                }
+
+                $cid = 'notif_' . $index . '_' . bin2hex(random_bytes(6));
+
+                $mail->addEmbeddedImage(
+                    $path,
+                    $cid,
+                    $imageName !== '' ? $imageName : ('imagen_' . ($index + 1)),
+                    'base64',
+                    $mime
+                );
+
+                $embeddedImages++;
+
+                $imagesHtml .= '
+                    <div style="margin-top:16px;overflow:hidden;border:1px solid #e5e7eb;border-radius:12px;background:#f8fafc;">
+                        <img
+                            src="cid:' . htmlspecialchars($cid, ENT_QUOTES, 'UTF-8') . '"
+                            alt="Imagen de la notificación"
+                            style="display:block;width:100%;max-width:100%;height:auto;margin:0;border:0;"
+                        >
+                    </div>';
+            }
+
+            if ($imagesHtml !== '') {
+                $imagesHtml = '
+                    <div style="margin-top:22px;">
+                        <div style="margin:0 0 9px;color:#64748b;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;">
+                            Información visual
+                        </div>'
+                        . $imagesHtml
+                        . '
+                    </div>';
+            }
 
             $mail->Body = '
             <!DOCTYPE html>
@@ -294,7 +347,9 @@ if (!function_exists('notif_send_manual')) {
                             . '</strong>,</p>
                         <div style="font-size:15px;line-height:1.65;">'
                             . $messageHtml
-                            . '</div>
+                            . '</div>'
+                            . $imagesHtml
+                            . '
                     </div>
                     <div style="padding:13px 24px;border-top:1px solid #e5e7eb;color:#64748b;background:#f8fafc;font-size:11px;text-align:center;">'
                         . htmlspecialchars($gym, ENT_QUOTES, 'UTF-8')
@@ -310,6 +365,9 @@ if (!function_exists('notif_send_manual')) {
                 . ($name !== '' ? $name : 'socio')
                 . ",\n\n"
                 . trim($message)
+                . ($embeddedImages > 0
+                    ? "\n\nEste correo incluye " . $embeddedImages . ($embeddedImages === 1 ? ' imagen.' : ' imágenes.')
+                    : '')
                 . "\n\n"
                 . $branchContext;
 
