@@ -2775,3 +2775,364 @@ body.configuracion-page.modal-open {
         padding: 11px;
     }
 }
+
+/* =========================================================
+   MODAL DE USUARIOS: PIE SIEMPRE VISIBLE Y FORMULARIO COMPACTO
+   ========================================================= */
+.configuracion-page #modalUsuario .modal-content {
+    width: min(760px, calc(100vw - 32px));
+    max-height: calc(100dvh - 28px);
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    overflow: hidden;
+}
+
+.configuracion-page #modalUsuario .modal-header {
+    position: relative;
+    z-index: 3;
+    min-height: 72px;
+    padding: 15px 22px;
+    box-shadow: 0 1px 0 rgba(20, 38, 59, .08);
+}
+
+.configuracion-page #modalUsuario #formUsuario {
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+    height: 100%;
+    max-height: none;
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) auto;
+    overflow: hidden;
+}
+
+.configuracion-page #modalUsuario .modal-body {
+    min-width: 0;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-content: start;
+    gap: 14px 16px;
+    padding: 18px 22px;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+}
+
+.configuracion-page #modalUsuario .modal-body > .form-group,
+.configuracion-page #modalUsuario .config-user-branch-group,
+.configuracion-page #modalUsuario .config-user-scope-summary {
+    min-width: 0;
+    margin: 0;
+}
+
+.configuracion-page #modalUsuario .config-user-branch-group {
+    align-self: stretch;
+    padding: 12px;
+}
+
+.configuracion-page #modalUsuario .config-user-branch-help {
+    margin-top: 7px;
+}
+
+.configuracion-page #modalUsuario .config-user-scope-summary,
+.configuracion-page #modalUsuario .modal-body > .alert {
+    grid-column: 1 / -1;
+}
+
+.configuracion-page #modalUsuario .config-user-scope-summary {
+    grid-template-columns: 42px minmax(0, 1fr);
+    gap: 12px;
+    padding: 13px 14px;
+}
+
+.configuracion-page #modalUsuario
+.config-user-scope-summary .admin-global-summary__icon {
+    width: 42px;
+    height: 42px;
+}
+
+.configuracion-page #modalUsuario
+.config-user-scope-summary .admin-global-summary__content > p {
+    margin-bottom: 7px;
+}
+
+.configuracion-page #modalUsuario
+.config-user-scope-summary .admin-global-summary__details {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 7px 14px;
+}
+
+.configuracion-page #modalUsuario
+.config-user-scope-summary .admin-global-summary__details span {
+    min-width: 0;
+    align-items: flex-start;
+    white-space: normal;
+}
+
+.configuracion-page #modalUsuario .modal-footer {
+    position: relative;
+    z-index: 4;
+    min-height: 72px;
+    flex: 0 0 auto;
+    padding: 14px 22px;
+    border-top: 1px solid #dfe6ee;
+    background: #ffffff;
+    box-shadow: 0 -10px 24px rgba(20, 38, 59, .08);
+}
+
+.configuracion-page #modalUsuario .modal-footer .btn {
+    min-width: 132px;
+    min-height: 44px;
+    margin: 0;
+}
+
+@media (max-height: 760px) and (min-width: 769px) {
+    .configuracion-page #modalUsuario .modal-content {
+        max-height: calc(100dvh - 16px);
+    }
+
+    .configuracion-page #modalUsuario .modal-header {
+        min-height: 60px;
+        padding: 11px 18px;
+    }
+
+    .configuracion-page #modalUsuario .modal-body {
+        gap: 10px 14px;
+        padding: 12px 18px;
+    }
+
+    .configuracion-page #modalUsuario .form-control {
+        min-height: 40px;
+    }
+
+    .configuracion-page #modalUsuario .config-user-branch-group,
+    .configuracion-page #modalUsuario .config-user-scope-summary {
+        padding: 10px 12px;
+    }
+
+    .configuracion-page #modalUsuario .modal-footer {
+        min-height: 60px;
+        padding: 9px 18px;
+    }
+
+    .configuracion-page #modalUsuario .modal-footer .btn {
+        min-height: 40px;
+    }
+}
+
+@media (max-width: 768px) {
+    .configuracion-page #modalUsuario .modal-content {
+        width: 100%;
+        max-width: 100% !important;
+        max-height: calc(100dvh - 16px);
+        border-radius: 12px;
+    }
+
+    .configuracion-page #modalUsuario .modal-header {
+        min-height: 60px;
+        padding: 12px 14px;
+    }
+
+    .configuracion-page #modalUsuario .modal-body {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 11px;
+        padding: 13px;
+        scrollbar-gutter: auto;
+    }
+
+    .configuracion-page #modalUsuario .config-user-branch-group,
+    .configuracion-page #modalUsuario .config-user-scope-summary,
+    .configuracion-page #modalUsuario .modal-body > .alert {
+        grid-column: auto;
+    }
+
+    .configuracion-page #modalUsuario
+    .config-user-scope-summary .admin-global-summary__details {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 6px;
+    }
+
+    .configuracion-page #modalUsuario .modal-footer {
+        min-height: auto;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+        padding: 11px 13px;
+    }
+
+    .configuracion-page #modalUsuario .modal-footer .btn {
+        width: 100%;
+        min-width: 0;
+        min-height: 42px;
+    }
+}
+
+@media (max-width: 430px) {
+    .configuracion-page #modalUsuario .modal-footer {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .configuracion-page #modalUsuario .config-user-scope-summary {
+        grid-template-columns: 36px minmax(0, 1fr);
+        gap: 9px;
+        padding: 10px;
+    }
+
+    .configuracion-page #modalUsuario
+    .config-user-scope-summary .admin-global-summary__icon {
+        width: 36px;
+        height: 36px;
+    }
+}
+/* =========================================================
+   MODAL DE USUARIO
+   Conserva el diseño actual y mantiene visibles los botones.
+   Cargar DESPUÉS de css/configuracion.css
+   ========================================================= */
+
+.configuracion-page #modalUsuario {
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    overflow: hidden;
+}
+
+.configuracion-page #modalUsuario .modal-content {
+    width: min(780px, calc(100vw - 32px));
+    max-height: calc(100dvh - 32px);
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    overflow: hidden;
+}
+
+.configuracion-page #modalUsuario .modal-header {
+    position: relative;
+    z-index: 3;
+    flex: 0 0 auto;
+}
+
+.configuracion-page #modalUsuario #formUsuario {
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+    height: 100%;
+    max-height: none;
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) auto;
+    overflow: hidden;
+}
+
+.configuracion-page #modalUsuario .modal-body {
+    min-width: 0;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-content: start;
+    gap: 14px;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+}
+
+.configuracion-page #modalUsuario .modal-body > .form-group,
+.configuracion-page #modalUsuario .config-user-branch-group,
+.configuracion-page #modalUsuario .config-user-scope-summary,
+.configuracion-page #modalUsuario .modal-body > .alert {
+    width: 100%;
+    min-width: 0;
+    margin: 0;
+    grid-column: 1 / -1;
+}
+
+.configuracion-page #modalUsuario .modal-footer {
+    position: relative;
+    z-index: 5;
+    bottom: auto;
+    flex: 0 0 auto;
+    margin: 0;
+    border-top: 1px solid #e2e8f0;
+    background: #ffffff;
+    box-shadow: 0 -10px 24px rgba(20, 38, 59, 0.08);
+}
+
+.configuracion-page #modalUsuario .modal-footer .btn {
+    margin: 0;
+}
+
+/* Pantallas de poca altura: compacta sin esconder el pie. */
+@media (max-height: 760px) and (min-width: 769px) {
+    .configuracion-page #modalUsuario {
+        padding: 8px;
+    }
+
+    .configuracion-page #modalUsuario .modal-content {
+        max-height: calc(100dvh - 16px);
+    }
+
+    .configuracion-page #modalUsuario .modal-header {
+        min-height: 58px;
+        padding-top: 10px;
+        padding-bottom: 10px;
+    }
+
+    .configuracion-page #modalUsuario .modal-body {
+        gap: 10px;
+        padding-top: 12px;
+        padding-bottom: 12px;
+    }
+
+    .configuracion-page #modalUsuario .form-control {
+        min-height: 40px;
+    }
+
+    .configuracion-page #modalUsuario .config-user-branch-group,
+    .configuracion-page #modalUsuario .config-user-scope-summary {
+        padding-top: 10px;
+        padding-bottom: 10px;
+    }
+
+    .configuracion-page #modalUsuario .modal-footer {
+        min-height: 60px;
+        padding-top: 9px;
+        padding-bottom: 9px;
+    }
+}
+
+@media (max-width: 768px) {
+    .configuracion-page #modalUsuario {
+        align-items: center;
+        padding: 8px;
+    }
+
+    .configuracion-page #modalUsuario .modal-content {
+        width: 100%;
+        max-width: 100% !important;
+        max-height: calc(100dvh - 16px);
+    }
+
+    .configuracion-page #modalUsuario .modal-body {
+        gap: 11px;
+        scrollbar-gutter: auto;
+    }
+
+    .configuracion-page #modalUsuario .modal-footer {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+    }
+
+    .configuracion-page #modalUsuario .modal-footer .btn {
+        width: 100%;
+        min-width: 0;
+    }
+}
+
+@media (max-width: 430px) {
+    .configuracion-page #modalUsuario .modal-footer {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}

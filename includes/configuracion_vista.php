@@ -447,7 +447,14 @@ $entrenadoresSucursal = is_array(
                         </div>
                     </div>
                     <div class="text-right">
-                        <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Guardar Cambios</button>
+                        <button
+                            type="submit"
+                            class="btn btn-primary"
+                            id="btnGuardarInfoGimnasio"
+                        >
+                            <i class="fas fa-save"></i>
+                            <span>Guardar Cambios</span>
+                        </button>
                     </div>
                 </form>
             </div>
@@ -2662,8 +2669,42 @@ $entrenadoresSucursal = is_array(
             // Formulario de Información del Gimnasio (con logo)
             $('#formInfoGimnasio').on('submit', function(e) {
                 e.preventDefault();
-                const formData = new FormData(this);
+
+                const formulario = this;
+                const $formulario = $(formulario);
+                const $botonGuardar = $('#btnGuardarInfoGimnasio');
+
+                /*
+                 * Evita solicitudes duplicadas por doble clic o por presionar
+                 * Enter repetidamente mientras se sube el logo y se guardan
+                 * los datos corporativos.
+                 */
+                if ($formulario.data('guardando') === true) {
+                    return;
+                }
+
+                const formData = new FormData(formulario);
                 formData.append('action', 'save_config');
+
+                $formulario.data('guardando', true);
+                $botonGuardar
+                    .prop('disabled', true)
+                    .attr('aria-disabled', 'true')
+                    .html(
+                        '<i class="fas fa-spinner fa-spin"></i>' +
+                        '<span>Guardando...</span>'
+                    );
+
+                function desbloquearGuardado() {
+                    $formulario.data('guardando', false);
+                    $botonGuardar
+                        .prop('disabled', false)
+                        .removeAttr('aria-disabled')
+                        .html(
+                            '<i class="fas fa-save"></i>' +
+                            '<span>Guardar Cambios</span>'
+                        );
+                }
 
                 $.ajax({
                     url: 'configuracion.php',
@@ -2672,16 +2713,66 @@ $entrenadoresSucursal = is_array(
                     processData: false,
                     contentType: false,
                     dataType: 'json',
+                    timeout: 120000,
                     success: function(response) {
                         if (response.success) {
-                            Swal.fire({ icon: 'success', title: '¡Éxito!', text: response.message, target: document.body, showConfirmButton: false, timer: 2000 })
-                                .then(() => { location.reload(); });
-                        } else {
-                            Swal.fire({ icon: 'error', title: 'Error', text: response.message, target: document.body });
+                            /*
+                             * El botón permanece bloqueado hasta que finalice
+                             * la recarga. Así no puede enviarse otra solicitud
+                             * durante el mensaje de confirmación.
+                             */
+                            Swal.fire({
+                                icon: 'success',
+                                title: '¡Éxito!',
+                                text: response.message,
+                                target: document.body,
+                                showConfirmButton: false,
+                                timer: 1600,
+                                allowOutsideClick: false,
+                                allowEscapeKey: false
+                            }).then(function() {
+                                window.location.reload();
+                            });
+
+                            return;
                         }
+
+                        desbloquearGuardado();
+
+                        Swal.fire({
+                            icon: 'error',
+                            title: 'No se pudo guardar',
+                            text:
+                                response.message ||
+                                'No se pudo actualizar la información.',
+                            target: document.body
+                        });
                     },
                     error: function(xhr, status, error) {
-                        Swal.fire({ icon: 'error', title: 'Error', text: 'Ocurrió un error al guardar la configuración: ' + error, target: document.body });
+                        desbloquearGuardado();
+
+                        let mensaje =
+                            'Ocurrió un error al guardar la configuración.';
+
+                        if (
+                            xhr.responseJSON &&
+                            xhr.responseJSON.message
+                        ) {
+                            mensaje = xhr.responseJSON.message;
+                        } else if (status === 'timeout') {
+                            mensaje =
+                                'La operación tardó demasiado. Revisa tu ' +
+                                'conexión y vuelve a intentarlo.';
+                        } else if (error) {
+                            mensaje += ' Detalle: ' + error;
+                        }
+
+                        Swal.fire({
+                            icon: 'error',
+                            title: 'No se pudo guardar',
+                            text: mensaje,
+                            target: document.body
+                        });
                     }
                 });
             });
