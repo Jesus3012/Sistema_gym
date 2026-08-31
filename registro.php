@@ -213,17 +213,28 @@ $alerta = $errores[$error] ?? null;
 
     <style>
         :root {
-            --azul: #1e3a8a;
-            --azul-oscuro: #152c6b;
-            --azul-claro: #eef3ff;
-            --fondo: #f3f5f9;
-            --blanco: #ffffff;
-            --texto: #1f2937;
-            --texto-suave: #64748b;
-            --borde: #dfe5ee;
-            --radio-grande: 28px;
-            --radio: 14px;
-            --sombra: 0 24px 70px rgba(30, 58, 138, 0.14);
+            --register-primary: var(--sys-primary, #1e3a8a);
+            --register-primary-dark: var(--sys-primary-dark, #152c6b);
+            --register-primary-soft: var(--sys-primary-soft, #eef3ff);
+            --register-accent: var(--sys-accent, #2563eb);
+            --register-sidebar: var(--sys-sidebar, #0a2540);
+            --register-bg: var(--sys-bg, #f3f5f9);
+            --register-surface: var(--sys-surface, #ffffff);
+            --register-text: var(--sys-text, #1f2937);
+            --register-muted: var(--sys-muted, #64748b);
+            --register-border: var(--sys-border, #dfe5ee);
+            --register-radius: var(--sys-radius, 14px);
+            --azul: var(--register-primary);
+            --azul-oscuro: var(--register-primary-dark);
+            --azul-claro: var(--register-primary-soft);
+            --fondo: var(--register-bg);
+            --blanco: var(--register-surface);
+            --texto: var(--register-text);
+            --texto-suave: var(--register-muted);
+            --borde: var(--register-border);
+            --radio-grande: calc(var(--register-radius) + 14px);
+            --radio: var(--register-radius);
+            --sombra: 0 24px 70px color-mix(in srgb, var(--register-primary) 14%, transparent);
         }
 
         *,
@@ -251,8 +262,8 @@ $alerta = $errores[$error] ?? null;
             color: var(--texto);
             font-family: "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             background:
-                radial-gradient(circle at 8% 12%, rgba(30, 58, 138, 0.08), transparent 28rem),
-                radial-gradient(circle at 92% 88%, rgba(30, 58, 138, 0.05), transparent 24rem),
+                radial-gradient(circle at 8% 12%, color-mix(in srgb, var(--register-primary) 8%, transparent), transparent 28rem),
+                radial-gradient(circle at 92% 88%, color-mix(in srgb, var(--register-accent) 7%, transparent), transparent 24rem),
                 var(--fondo);
         }
 
@@ -291,7 +302,7 @@ $alerta = $errores[$error] ?? null;
             overflow: hidden;
             color: var(--blanco);
             text-align: center;
-            background: linear-gradient(145deg, #162d6f 0%, var(--azul) 56%, #3155ad 100%);
+            background: linear-gradient(145deg, var(--register-sidebar) 0%, color-mix(in srgb, var(--register-primary) 84%, var(--register-sidebar) 16%) 54%, var(--register-accent) 100%);
         }
 
         .brand-panel::before,
@@ -338,7 +349,7 @@ $alerta = $errores[$error] ?? null;
             border-radius: 38px;
             background: #ffffff;
             box-shadow:
-                0 26px 60px rgba(4, 15, 48, 0.3),
+                0 26px 60px color-mix(in srgb, var(--register-sidebar) 30%, transparent),
                 0 0 0 8px rgba(255, 255, 255, 0.075);
         }
 
@@ -367,7 +378,7 @@ $alerta = $errores[$error] ?? null;
             font-weight: 800;
             line-height: 1.12;
             letter-spacing: -0.03em;
-            text-shadow: 0 5px 18px rgba(5, 17, 52, 0.18);
+            text-shadow: 0 5px 18px color-mix(in srgb, var(--register-sidebar) 18%, transparent);
         }
 
         .brand-access {
@@ -390,7 +401,7 @@ $alerta = $errores[$error] ?? null;
 
         .brand-access i {
             flex: 0 0 auto;
-            color: #b9caef;
+            color: color-mix(in srgb, var(--register-accent) 42%, #ffffff 58%);
             font-size: 14px;
         }
 
@@ -434,9 +445,9 @@ $alerta = $errores[$error] ?? null;
             gap: 12px;
             margin: -4px 0 22px;
             padding: 13px 14px;
-            border: 1px solid #d8e2f5;
+            border: 1px solid color-mix(in srgb, var(--register-primary) 18%, var(--register-border));
             border-radius: 13px;
-            background: #f5f8ff;
+            background: color-mix(in srgb, var(--register-primary-soft) 78%, #ffffff 22%);
             color: var(--texto);
         }
 
@@ -481,7 +492,7 @@ $alerta = $errores[$error] ?? null;
         .form-label {
             display: block;
             margin-bottom: 7px;
-            color: #334155;
+            color: var(--register-text);
             font-size: 13px;
             font-weight: 700;
         }
@@ -545,7 +556,7 @@ $alerta = $errores[$error] ?? null;
         .form-control:focus {
             border-color: var(--azul);
             background: var(--blanco);
-            box-shadow: 0 0 0 4px rgba(30, 58, 138, 0.1);
+            box-shadow: 0 0 0 4px color-mix(in srgb, var(--register-accent) 14%, transparent);
         }
 
         .input-wrapper:focus-within .input-icon,
@@ -598,7 +609,7 @@ $alerta = $errores[$error] ?? null;
             border-radius: var(--radio);
             color: var(--blanco);
             background: var(--azul);
-            box-shadow: 0 12px 25px rgba(30, 58, 138, 0.2);
+            box-shadow: 0 12px 25px color-mix(in srgb, var(--register-primary) 22%, transparent);
             font-size: 15px;
             font-weight: 750;
             cursor: pointer;
@@ -608,7 +619,7 @@ $alerta = $errores[$error] ?? null;
         .btn-register:hover:not(:disabled) {
             transform: translateY(-1px);
             background: var(--azul-oscuro);
-            box-shadow: 0 15px 30px rgba(30, 58, 138, 0.25);
+            box-shadow: 0 15px 30px color-mix(in srgb, var(--register-primary) 28%, transparent);
         }
 
         .btn-register:disabled {
@@ -663,7 +674,7 @@ $alerta = $errores[$error] ?? null;
         .toggle-password:focus-visible,
         .btn-register:focus-visible,
         .login-link a:focus-visible {
-            outline: 3px solid rgba(30, 58, 138, 0.22);
+            outline: 3px solid color-mix(in srgb, var(--register-accent) 25%, transparent);
             outline-offset: 3px;
         }
 
@@ -717,7 +728,7 @@ $alerta = $errores[$error] ?? null;
                 aspect-ratio: auto;
                 border-radius: 28px;
                 box-shadow:
-                    0 18px 38px rgba(4, 15, 48, 0.25),
+                    0 18px 38px color-mix(in srgb, var(--register-sidebar) 25%, transparent),
                     0 0 0 6px rgba(255, 255, 255, 0.065);
             }
 
@@ -753,16 +764,16 @@ $alerta = $errores[$error] ?? null;
                 place-items: start center;
                 padding: 12px;
                 background:
-                    linear-gradient(180deg, rgba(30, 58, 138, 0.08), transparent 230px),
+                    linear-gradient(180deg, color-mix(in srgb, var(--register-primary) 9%, transparent), transparent 230px),
                     var(--fondo);
             }
 
             .page-shell {
                 width: 100%;
                 min-height: calc(100dvh - 24px);
-                border: 1px solid rgba(30, 58, 138, 0.08);
+                border: 1px solid color-mix(in srgb, var(--register-primary) 10%, transparent);
                 border-radius: 23px;
-                box-shadow: 0 18px 45px rgba(30, 58, 138, 0.12);
+                box-shadow: 0 18px 45px color-mix(in srgb, var(--register-primary) 14%, transparent);
             }
 
             .brand-panel {
@@ -881,6 +892,7 @@ $alerta = $errores[$error] ?? null;
             }
         }
     </style>
+    <link rel="stylesheet" href="tema.css.php?v=1" data-system-theme="true">
 </head>
 <body>
     <div class="page-shell">
@@ -1130,7 +1142,7 @@ $alerta = $errores[$error] ?? null;
                 title,
                 text,
                 confirmButtonText: 'Entendido',
-                confirmButtonColor: '#1e3a8a',
+                confirmButtonColor: getComputedStyle(document.documentElement).getPropertyValue('--sys-primary').trim() || '#1e3a8a',
                 customClass: {
                     popup: 'register-alert'
                 }
@@ -1145,6 +1157,14 @@ $alerta = $errores[$error] ?? null;
             );
         <?php endif; ?>
 
+        const systemPrimaryColor = getComputedStyle(document.documentElement)
+            .getPropertyValue('--sys-primary')
+            .trim() || '#1e3a8a';
+        const themeColorMeta = document.querySelector('meta[name="theme-color"]');
+        if (themeColorMeta) {
+            themeColorMeta.setAttribute('content', systemPrimaryColor);
+        }
+
         <?php if ($success): ?>
             Swal.fire({
                 icon: 'success',
@@ -1152,7 +1172,7 @@ $alerta = $errores[$error] ?? null;
                 text: 'Tu cuenta quedó pendiente de aprobación. Podrás iniciar sesión cuando un administrador la autorice.',
                 confirmButtonText: 'Entendido',
                 allowOutsideClick: false,
-                confirmButtonColor: '#1e3a8a',
+                confirmButtonColor: getComputedStyle(document.documentElement).getPropertyValue('--sys-primary').trim() || '#1e3a8a',
                 customClass: {
                     popup: 'register-alert'
                 }

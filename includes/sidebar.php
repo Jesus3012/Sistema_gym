@@ -744,6 +744,11 @@ $sidebar_navbar_version = is_file($sidebar_navbar_css)
     rel="stylesheet"
     href="css/navbar.css?v=<?php echo htmlspecialchars($sidebar_navbar_version, ENT_QUOTES, 'UTF-8'); ?>"
 >
+<link
+    rel="stylesheet"
+    href="tema.css.php?v=<?php echo rawurlencode((string) time()); ?>"
+    data-system-theme="true"
+>
 
 <script>
 (function () {

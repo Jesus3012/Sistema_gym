@@ -1,6 +1,6 @@
 :root {
-    --azul: #1e3a8a;
-    --azul-2: #2563eb;
+    --azul: var(--sys-primary, #1e3a8a);
+    --azul-2: var(--sys-accent, #2563eb);
     --azul-suave: #eff6ff;
     --verde: #10b981;
     --verde-oscuro: #047857;
@@ -73,7 +73,7 @@ button,
     padding: clamp(20px, 3vw, 30px);
     border: 1px solid rgba(255, 255, 255, .7);
     border-radius: var(--radio-xl);
-    background: linear-gradient(135deg, #172554 0%, #1e3a8a 56%, #2563eb 100%);
+    background: linear-gradient(135deg, #172554 0%, var(--sys-primary, #1e3a8a) 56%, var(--sys-accent, #2563eb) 100%);
     color: #fff;
     box-shadow: 0 18px 45px rgba(30, 58, 138, .2);
     overflow: hidden;
@@ -1044,7 +1044,7 @@ body.swal2-shown {
 
 .confirm-total-card {
     margin-bottom: 13px;
-    background: linear-gradient(135deg, #172554, #1e3a8a);
+    background: linear-gradient(135deg, #172554, var(--sys-primary, #1e3a8a));
     color: #fff;
 }
 
@@ -1669,7 +1669,7 @@ body {
     align-items: center;
     gap: 10px;
     margin: 0;
-    color: #1e3a8a !important;
+    color: var(--sys-primary, #1e3a8a) !important;
     font-size: clamp(1.25rem, 2vw, 1.5rem);
     font-weight: 700;
     line-height: 1.2;
@@ -1685,7 +1685,7 @@ body {
     justify-content: center;
     flex-shrink: 0;
     color: #ffffff !important;
-    background: #1e3a8a;
+    background: var(--sys-primary, #1e3a8a);
     border-radius: 9px;
     font-size: 0.95rem;
     box-shadow: 0 3px 8px rgba(30, 58, 138, 0.18);
@@ -1718,7 +1718,7 @@ body {
     align-items: center;
     gap: 9px;
     margin: 0;
-    color: #1e3a8a !important;
+    color: var(--sys-primary, #1e3a8a) !important;
     font-size: clamp(1.35rem, 2vw, 1.65rem);
     font-weight: 700;
     line-height: 1.2;
@@ -1729,7 +1729,7 @@ body {
     width: auto;
     height: auto;
     padding: 0;
-    color: #2563eb !important;
+    color: var(--sys-accent, #2563eb) !important;
     background: transparent !important;
     border: 0;
     border-radius: 0;
@@ -1779,7 +1779,7 @@ body {
 }
 
 .search-box input:focus {
-    border-color: #2563eb;
+    border-color: var(--sys-accent, #2563eb);
     box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
 }
 
@@ -1853,7 +1853,7 @@ body {
     border: 1px solid #bfdbfe;
     border-radius: 11px;
     background: #eff6ff;
-    color: #1e3a8a;
+    color: var(--sys-primary, #1e3a8a);
 }
 
 .ventas-context-icon {
@@ -1865,7 +1865,7 @@ body {
     flex: 0 0 31px;
     border-radius: 9px;
     background: #dbeafe;
-    color: #2563eb;
+    color: var(--sys-accent, #2563eb);
     font-size: .78rem;
 }
 
@@ -2275,7 +2275,7 @@ body {
     border: 1px solid #dbeafe;
     border-radius: 999px;
     background: #eff6ff;
-    color: #1e3a8a;
+    color: var(--sys-primary, #1e3a8a);
     font-size: .66rem;
     font-weight: 800;
     line-height: 1;
@@ -2283,7 +2283,7 @@ body {
 }
 
 .global-catalog-status i {
-    color: #2563eb;
+    color: var(--sys-accent, #2563eb);
     font-size: .62rem;
 }
 

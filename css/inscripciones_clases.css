@@ -1,6 +1,6 @@
 :root {
-    --azul: #1e3a8a;
-    --azul-hover: #152c6b;
+    --azul: var(--sys-primary, #1e3a8a);
+    --azul-hover: var(--sys-primary-dark, #152c6b);
     --azul-claro: #eef4ff;
     --fondo: #f4f6f9;
     --blanco: #ffffff;
@@ -2928,7 +2928,7 @@ body.modal-open {
     border: 1px solid #c8d6ec;
     border-radius: 7px;
     background: #fff;
-    color: #1e3a8a;
+    color: var(--sys-primary, #1e3a8a);
     font-size: .7rem;
     font-weight: 800;
     cursor: pointer;
@@ -2953,7 +2953,7 @@ body.modal-open {
 }
 
 .visitor-search-control:focus-within {
-    border-color: #244292;
+    border-color: var(--sys-primary, var(--sys-primary, #244292));
     box-shadow: 0 0 0 3px rgba(36, 66, 146, .1);
 }
 
@@ -2977,7 +2977,7 @@ body.modal-open {
 .visitor-search-spinner {
     position: absolute;
     right: 13px;
-    color: #244292;
+    color: var(--sys-primary, var(--sys-primary, #244292));
     font-size: .75rem;
 }
 
@@ -3024,7 +3024,7 @@ body.modal-open {
     place-items: center;
     border-radius: 9px;
     background: #e8efff;
-    color: #244292;
+    color: var(--sys-primary, var(--sys-primary, #244292));
     font-size: .7rem;
     font-weight: 900;
 }
@@ -3073,7 +3073,7 @@ body.modal-open {
 
 .visitor-result-empty i {
     margin-top: 2px;
-    color: #244292;
+    color: var(--sys-primary, var(--sys-primary, #244292));
 }
 
 .visitor-result-empty.is-error {

@@ -1,6 +1,6 @@
 :root {
-    --inventory-blue: #1e3a8a;
-    --inventory-blue-hover: #172f72;
+    --inventory-blue: var(--sys-primary, #1e3a8a);
+    --inventory-blue-hover: var(--sys-primary-dark, #172f72);
     --inventory-blue-soft: #eef4ff;
     --inventory-bg: #f4f6f9;
     --inventory-card: #ffffff;
@@ -672,7 +672,7 @@ body {
     border: 1px solid #dbeafe;
     border-radius: 11px;
     background: #eff6ff;
-    color: #1e3a8a;
+    color: var(--sys-primary, #1e3a8a);
 }
 
 .inventory-context-badge.global {
@@ -728,7 +728,7 @@ body {
 }
 
 .inventory-card.is-global .inventory-card-stockline > div:last-child strong {
-    color: #1e3a8a;
+    color: var(--sys-primary, #1e3a8a);
 }
 
 .inventory-card-coverage {

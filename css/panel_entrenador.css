@@ -1,6 +1,6 @@
 :root {
-    --trainer-blue: #1e3a8a;
-    --trainer-blue-dark: #152c6b;
+    --trainer-blue: var(--sys-primary, #1e3a8a);
+    --trainer-blue-dark: var(--sys-primary-dark, #152c6b);
     --trainer-blue-soft: #eff4ff;
     --trainer-bg: #f4f6f9;
     --trainer-card: #ffffff;

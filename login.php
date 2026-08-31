@@ -7,6 +7,7 @@ require_once 'config/database.php';
 require_once 'includes/super_admin_helper.php';
 require_once 'includes/sucursal_context.php';
 require_once 'includes/two_factor_helper.php';
+require_once __DIR__ . '/includes/tema_sistema.php';
 
 $error = trim((string) ($_GET['error'] ?? ''));
 $email_value = '';
@@ -18,6 +19,13 @@ $db = $database->getConnection();
 if ($db instanceof mysqli) {
     $db->set_charset('utf8mb4');
 }
+
+// Tema corporativo también disponible antes de renderizar el login.
+$loginTema = tema_sistema_defaults();
+if ($db instanceof mysqli) {
+    $loginTema = tema_sistema_obtener($db, false);
+}
+$loginThemeColor = (string) ($loginTema['color_primario'] ?? '#1e3a8a');
 
 $twoFactorReady = $db instanceof mysqli
     && two_factor_schema_ready($db);
@@ -400,7 +408,7 @@ $alerta = $errores[$error] ?? null;
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#1e3a8a">
+    <meta name="theme-color" content="<?php echo htmlspecialchars($loginThemeColor, ENT_QUOTES, 'UTF-8'); ?>">
     <title><?php echo $gym_name_safe; ?> | Iniciar sesión</title>
 
     <link rel="preconnect" href="https://cdnjs.cloudflare.com">
@@ -412,17 +420,20 @@ $alerta = $errores[$error] ?? null;
 
     <style>
         :root {
-            --azul: #1e3a8a;
-            --azul-oscuro: #152c6b;
-            --azul-claro: #eef3ff;
-            --fondo: #f3f5f9;
-            --blanco: #ffffff;
-            --texto: #1f2937;
-            --texto-suave: #64748b;
-            --borde: #dfe5ee;
-            --radio-grande: 28px;
-            --radio: 14px;
-            --sombra: 0 24px 70px rgba(30, 58, 138, 0.14);
+            /* Fallbacks. tema.css.php redefine --sys-* según la BD. */
+            --azul: var(--sys-primary, #1e3a8a);
+            --azul-oscuro: var(--sys-primary-dark, #152c6b);
+            --azul-claro: var(--sys-primary-soft, #eef3ff);
+            --login-accent: var(--sys-accent, #2563eb);
+            --login-sidebar: var(--sys-sidebar, #0a2540);
+            --fondo: var(--sys-bg, #f3f5f9);
+            --blanco: var(--sys-surface, #ffffff);
+            --texto: var(--sys-text, #1f2937);
+            --texto-suave: var(--sys-muted, #64748b);
+            --borde: var(--sys-border, #dfe5ee);
+            --radio-grande: calc(var(--sys-radius, 14px) + 14px);
+            --radio: var(--sys-radius, 14px);
+            --sombra: 0 24px 70px color-mix(in srgb, var(--azul) 15%, transparent);
         }
 
         *,
@@ -450,8 +461,8 @@ $alerta = $errores[$error] ?? null;
             color: var(--texto);
             font-family: "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             background:
-                radial-gradient(circle at 8% 12%, rgba(30, 58, 138, 0.08), transparent 28rem),
-                radial-gradient(circle at 92% 88%, rgba(30, 58, 138, 0.05), transparent 24rem),
+                radial-gradient(circle at 8% 12%, color-mix(in srgb, var(--azul) 8%, transparent), transparent 28rem),
+                radial-gradient(circle at 92% 88%, color-mix(in srgb, var(--login-accent) 6%, transparent), transparent 24rem),
                 var(--fondo);
         }
 
@@ -490,7 +501,7 @@ $alerta = $errores[$error] ?? null;
             color: var(--blanco);
             text-align: center;
             background:
-                linear-gradient(145deg, #162d6f 0%, var(--azul) 56%, #3155ad 100%);
+                linear-gradient(145deg, var(--login-sidebar) 0%, var(--azul) 56%, var(--login-accent) 100%);
         }
 
         .brand-panel::before,
@@ -549,10 +560,10 @@ $alerta = $errores[$error] ?? null;
             height: 88px;
             aspect-ratio: auto;
             padding: 8px;
-            border-color: rgba(30, 58, 138, 0.12);
+            border-color: color-mix(in srgb, var(--azul) 12%, transparent);
             border-radius: 22px;
             background: var(--blanco);
-            box-shadow: 0 15px 35px rgba(30, 58, 138, 0.16);
+            box-shadow: 0 15px 35px color-mix(in srgb, var(--azul) 16%, transparent);
         }
 
         .brand-logo-box img {
@@ -589,7 +600,7 @@ $alerta = $errores[$error] ?? null;
             font-weight: 800;
             line-height: 1.12;
             letter-spacing: -0.03em;
-            text-shadow: 0 5px 18px rgba(5, 17, 52, 0.18);
+            text-shadow: 0 5px 18px rgba(0, 0, 0, 0.18);
         }
 
         .brand-access {
@@ -612,7 +623,7 @@ $alerta = $errores[$error] ?? null;
 
         .brand-access i {
             flex: 0 0 auto;
-            color: #b9caef;
+            color: color-mix(in srgb, var(--login-accent) 35%, #ffffff 65%);
             font-size: 14px;
         }
 
@@ -723,7 +734,7 @@ $alerta = $errores[$error] ?? null;
         .form-control:focus {
             border-color: var(--azul);
             background: var(--blanco);
-            box-shadow: 0 0 0 4px rgba(30, 58, 138, 0.1);
+            box-shadow: 0 0 0 4px color-mix(in srgb, var(--azul) 10%, transparent);
         }
 
         .input-wrapper:focus-within .input-icon {
@@ -758,7 +769,7 @@ $alerta = $errores[$error] ?? null;
         .forgot-link:focus-visible,
         .register-link a:focus-visible,
         .btn-login:focus-visible {
-            outline: 3px solid rgba(30, 58, 138, 0.22);
+            outline: 3px solid color-mix(in srgb, var(--azul) 22%, transparent);
             outline-offset: 3px;
         }
 
@@ -818,7 +829,7 @@ $alerta = $errores[$error] ?? null;
             border-radius: var(--radio);
             color: var(--blanco);
             background: var(--azul);
-            box-shadow: 0 12px 25px rgba(30, 58, 138, 0.2);
+            box-shadow: 0 12px 25px color-mix(in srgb, var(--azul) 20%, transparent);
             font-size: 15px;
             font-weight: 750;
             cursor: pointer;
@@ -828,7 +839,7 @@ $alerta = $errores[$error] ?? null;
         .btn-login:hover:not(:disabled) {
             transform: translateY(-1px);
             background: var(--azul-oscuro);
-            box-shadow: 0 15px 30px rgba(30, 58, 138, 0.25);
+            box-shadow: 0 15px 30px color-mix(in srgb, var(--azul) 25%, transparent);
         }
 
         .btn-login:active:not(:disabled) {
@@ -895,6 +906,41 @@ $alerta = $errores[$error] ?? null;
             box-shadow: none !important;
         }
 
+
+        /* El panel de identidad debe seguir completamente el tema corporativo. */
+        .brand-panel {
+            background:
+                linear-gradient(
+                    145deg,
+                    var(--login-sidebar) 0%,
+                    color-mix(in srgb, var(--azul) 82%, var(--login-sidebar) 18%) 48%,
+                    var(--login-accent) 100%
+                );
+        }
+
+        .brand-access i {
+            color: color-mix(in srgb, var(--login-accent) 42%, #ffffff 58%);
+        }
+
+        .login-header h2,
+        .login-brand .brand-name,
+        .forgot-link,
+        .register-link a,
+        .input-wrapper:focus-within .input-icon,
+        .toggle-password:hover,
+        .logo-fallback {
+            color: var(--azul);
+        }
+
+        .btn-login,
+        .swal2-confirm.login-alert-button {
+            background: linear-gradient(135deg, var(--azul), var(--login-accent)) !important;
+            color: var(--sys-primary-text, #ffffff) !important;
+        }
+
+        .btn-login:hover:not(:disabled) {
+            background: linear-gradient(135deg, var(--azul-oscuro), var(--azul)) !important;
+        }
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
@@ -908,7 +954,7 @@ $alerta = $errores[$error] ?? null;
                 width: min(560px, 100%);
                 min-height: auto;
                 grid-template-columns: 1fr;
-                border-color: rgba(30, 58, 138, 0.08);
+                border-color: color-mix(in srgb, var(--azul) 8%, transparent);
                 border-radius: 26px;
             }
 
@@ -988,16 +1034,16 @@ $alerta = $errores[$error] ?? null;
                 place-items: start center;
                 padding: 12px;
                 background:
-                    linear-gradient(180deg, rgba(30, 58, 138, 0.08), transparent 230px),
+                    linear-gradient(180deg, color-mix(in srgb, var(--azul) 8%, transparent), transparent 230px),
                     var(--fondo);
             }
 
             .page-shell {
                 width: 100%;
                 min-height: calc(100dvh - 24px);
-                border: 1px solid rgba(30, 58, 138, 0.08);
+                border: 1px solid color-mix(in srgb, var(--azul) 8%, transparent);
                 border-radius: 23px;
-                box-shadow: 0 18px 45px rgba(30, 58, 138, 0.12);
+                box-shadow: 0 18px 45px color-mix(in srgb, var(--azul) 12%, transparent);
             }
 
             .brand-panel {
@@ -1123,6 +1169,7 @@ $alerta = $errores[$error] ?? null;
             }
         }
     </style>
+    <link rel="stylesheet" href="tema.css.php?v=1" data-system-theme="true">
 </head>
 <body>
     <div class="page-shell">

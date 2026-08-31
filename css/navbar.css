@@ -1,5 +1,5 @@
 :root {
-    --sidebar-bg: #0a2540;
+    --sidebar-bg: var(--sys-sidebar, #0a2540);
     --sidebar-dark: #0a1f32;
     --sidebar-hover: #1e3a5f;
     --sidebar-active: #2c4c7c;
@@ -38,7 +38,7 @@ body {
 #sidebar,
 aside.sidebar {
     scrollbar-width: thin !important;
-    scrollbar-color: #8c959d #0a2540 !important; /* thumb gris, track azul */
+    scrollbar-color: #8c959d var(--sidebar-bg) !important; /* thumb gris, track azul */
 }
 
 /* WebKit (Chrome, Safari, Edge) */
@@ -53,7 +53,7 @@ aside.sidebar::-webkit-scrollbar {
 .sidebar::-webkit-scrollbar-track,
 #sidebar::-webkit-scrollbar-track,
 aside.sidebar::-webkit-scrollbar-track {
-    background: #0a2540 !important; /* Mismo color que el sidebar */
+    background: var(--sidebar-bg) !important; /* Mismo color que el sidebar */
     border-radius: 0px !important;
 }
 
@@ -76,7 +76,7 @@ aside.sidebar::-webkit-scrollbar-thumb:hover {
 .sidebar::-webkit-scrollbar-corner,
 #sidebar::-webkit-scrollbar-corner,
 aside.sidebar::-webkit-scrollbar-corner {
-    background: #0a2540 !important;
+    background: var(--sidebar-bg) !important;
 }
 
 /* Para elementos dentro del sidebar que puedan tener scroll */
@@ -88,7 +88,7 @@ aside.sidebar::-webkit-scrollbar-corner {
 
 .sidebar *::-webkit-scrollbar-track,
 #sidebar *::-webkit-scrollbar-track {
-    background: #0a2540 !important;
+    background: var(--sidebar-bg) !important;
 }
 
 .sidebar *::-webkit-scrollbar-thumb,
@@ -108,7 +108,7 @@ aside.sidebar::-webkit-scrollbar-corner {
     #sidebar,
     aside.sidebar {
         scrollbar-width: thin !important;
-        scrollbar-color: #8c959d #0a2540 !important;
+        scrollbar-color: #8c959d var(--sidebar-bg) !important;
     }
 }
 
@@ -130,7 +130,7 @@ aside.sidebar::-webkit-scrollbar-corner {
     box-shadow: 2px 0 12px rgba(0, 0, 0, 0.1);
     /* Firefox */
     scrollbar-width: thin !important;
-    scrollbar-color: #8c959d #0a2540 !important;
+    scrollbar-color: #8c959d var(--sidebar-bg) !important;
 }
 
 /* Aislar el sidebar para evitar conflictos */
@@ -160,7 +160,7 @@ aside.sidebar::-webkit-scrollbar-corner {
 }
 
 .sidebar-collapse-btn:hover {
-    background: #2563eb;
+    background: var(--sys-accent, #2563eb);
     transform: scale(1.05);
 }
 
@@ -560,7 +560,7 @@ body.sidebar-collapsed .main-content {
     .sidebar,
     #sidebar,
     aside.sidebar {
-        scrollbar-color: #8c959d #0a2540 !important;
+        scrollbar-color: #8c959d var(--sidebar-bg) !important;
         scrollbar-width: thin !important;
     }
     
@@ -568,13 +568,13 @@ body.sidebar-collapsed .main-content {
     #sidebar::-webkit-scrollbar,
     aside.sidebar::-webkit-scrollbar {
         width: 6px !important;
-        background: #0a2540 !important;
+        background: var(--sidebar-bg) !important;
     }
     
     .sidebar::-webkit-scrollbar-track,
     #sidebar::-webkit-scrollbar-track,
     aside.sidebar::-webkit-scrollbar-track {
-        background: #0a2540 !important;
+        background: var(--sidebar-bg) !important;
     }
     
     .sidebar::-webkit-scrollbar-thumb,
@@ -600,7 +600,7 @@ body.sidebar-collapsed .main-content {
 }
 
 .swal-gym-title {
-    color: #0a2540 !important;
+    color: var(--sidebar-bg) !important;
     font-size: 1.55rem !important;
     font-weight: 800 !important;
 }
@@ -650,7 +650,7 @@ body.sidebar-collapsed .main-content {
 
 .swal-gym-access-row span i {
     width: 19px;
-    color: #3b82f6;
+    color: var(--sidebar-accent);
 }
 
 .swal-gym-access-row strong {
@@ -685,7 +685,7 @@ body.sidebar-collapsed .main-content {
     --sidebar-bg-deep: #0b1730;
     --sidebar-surface: rgba(255, 255, 255, .065);
     --sidebar-surface-hover: rgba(255, 255, 255, .105);
-    --sidebar-active: #2563eb;
+    --sidebar-active: var(--sys-accent, #2563eb);
     --sidebar-active-soft: rgba(37, 99, 235, .18);
     --sidebar-text: #f8fafc;
     --sidebar-muted: #aebbd0;
@@ -1034,7 +1034,7 @@ body.sidebar-collapsed .main-content {
     border-color: #dbe4f0;
     border-radius: 50%;
     background: #fff;
-    color: #1e3a8a;
+    color: var(--sys-primary, #1e3a8a);
     box-shadow: 0 4px 12px rgba(15,23,42,.16);
 }
 

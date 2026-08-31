@@ -1,7 +1,7 @@
 :root {
-    --azul: #1e3a8a;
-    --azul-hover: #152c6b;
-    --azul-claro: #eff4ff;
+    --azul: var(--sys-primary, #1e3a8a);
+    --azul-hover: var(--sys-primary-dark, #152c6b);
+    --azul-claro: var(--sys-primary-soft, #eff4ff);
     --fondo: #f4f6f9;
     --blanco: #ffffff;
     --texto: #1f2937;
@@ -289,7 +289,7 @@ body {
 }
 
 .btn-editar:hover {
-    background: #2563eb;
+    background: var(--sys-accent, #2563eb);
 }
 
 .btn-eliminar {

@@ -147,10 +147,10 @@ $registro_asistencia_habilitado =
             min-height: 31px;
             margin-top: 10px;
             padding: 0 11px;
-            border: 1px solid #bfd3fb;
+            border: 1px solid color-mix(in srgb, var(--sys-primary, #1e3a8a) 30%, var(--sys-border, #e5e7eb));
             border-radius: 8px;
-            color: #1e3a8a;
-            background: #eff6ff;
+            color: var(--sys-primary, #1e3a8a);
+            background: var(--sys-primary-soft, #eff6ff);
             font-size: .76rem;
             font-weight: 800;
         }
@@ -167,10 +167,10 @@ $registro_asistencia_habilitado =
             gap: 10px;
             margin: 0 0 18px;
             padding: 12px 14px;
-            border: 1px solid #bfdbfe;
+            border: 1px solid color-mix(in srgb, var(--sys-primary, #1e3a8a) 26%, var(--sys-border, #e5e7eb));
             border-radius: 10px;
-            color: #1e40af;
-            background: #eff6ff;
+            color: var(--sys-primary, #1e40af);
+            background: var(--sys-primary-soft, #eff6ff);
             font-size: .84rem;
             line-height: 1.45;
         }
@@ -185,10 +185,10 @@ $registro_asistencia_habilitado =
             gap: 5px;
             max-width: 120px;
             padding: 5px 8px;
-            border: 1px solid #c7d7fe;
+            border: 1px solid color-mix(in srgb, var(--sys-primary, #1e3a8a) 26%, var(--sys-border, #e5e7eb));
             border-radius: 7px;
-            color: #1d4ed8;
-            background: #eff6ff;
+            color: var(--sys-primary, #1d4ed8);
+            background: var(--sys-primary-soft, #eff6ff);
             font-size: .68rem;
             font-weight: 850;
             line-height: 1;
@@ -743,7 +743,7 @@ $registro_asistencia_habilitado =
                                     <h5 class="text-muted mb-2">No hay asistencias registradas hoy</h5>
                                     <p class="text-muted small mb-0">
                                         <i class="fas fa-qrcode"></i> Use el lector QR o
-                                        <a href="#" onclick="$('#modalRegistroManual').modal('show'); return false;" style="color: #1e3a8a;">
+                                        <a href="#" onclick="$('#modalRegistroManual').modal('show'); return false;" style="color: var(--sys-primary, #1e3a8a);">
                                             <i class="fas fa-hand-pointer"></i> registro manual
                                         </a>
                                     </p>
@@ -763,7 +763,7 @@ $registro_asistencia_habilitado =
                     icon: 'info',
                     title: 'Selecciona una sucursal',
                     text: 'El registro de asistencias requiere una sede concreta.',
-                    confirmButtonColor: '#1e3a8a'
+                    confirmButtonColor: getComputedStyle(document.documentElement).getPropertyValue('--sys-primary').trim() || '#1e3a8a'
                 });
                 return;
             }
@@ -1196,7 +1196,7 @@ $registro_asistencia_habilitado =
                         ? 'Registro no permitido'
                         : 'Error del servidor',
                     text: detalle.message,
-                    confirmButtonColor: '#1e3a8a'
+                    confirmButtonColor: getComputedStyle(document.documentElement).getPropertyValue('--sys-primary').trim() || '#1e3a8a'
                 });
 
                 if (detalle.esReglaNegocio) {

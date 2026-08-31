@@ -68,7 +68,7 @@
     min-height: 40px;
     padding: 0 14px;
     border-radius: 10px;
-    background: #1e3a8a;
+    background: var(--sys-primary, #1e3a8a);
     color: #fff !important;
     font-size: .82rem;
     font-weight: 800;
@@ -77,7 +77,7 @@
 }
 
 .platform-service-alert__action:hover {
-    background: #152c6b;
+    background: var(--sys-primary-dark, #152c6b);
 }
 
 .platform-service-alert--danger {
@@ -123,7 +123,7 @@
 .platform-service-alert--info .platform-service-alert__icon,
 .platform-service-alert--neutral .platform-service-alert__icon {
     background: #dbeafe;
-    color: #1e3a8a;
+    color: var(--sys-primary, #1e3a8a);
 }
 
 .platform-service-alert--info .platform-service-alert__eyebrow,
@@ -134,7 +134,7 @@
 .platform-service-alert--neutral h2,
 .platform-service-alert--neutral p,
 .platform-service-alert--neutral .platform-service-alert__meta span {
-    color: #1e3a8a;
+    color: var(--sys-primary, #1e3a8a);
 }
 
 @media (max-width: 767.98px) {

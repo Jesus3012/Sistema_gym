@@ -524,6 +524,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $error !== '') {
     <title>Cuestionario de salud</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css">
     <link rel="stylesheet" href="css/cuestionario_salud_publico.css?v=<?php echo file_exists(__DIR__ . '/css/cuestionario_salud_publico.css') ? filemtime(__DIR__ . '/css/cuestionario_salud_publico.css') : time(); ?>">
+    <link rel="stylesheet" href="tema.css.php?v=1" data-system-theme="true">
 </head>
 <body>
 <main class="public-health-shell">

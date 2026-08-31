@@ -78,6 +78,22 @@ $config_gimnasio = is_array(
     ? $configuracionVista['config_gimnasio']
     : array();
 
+/** @var array<string, mixed> $config_apariencia */
+$config_apariencia = is_array(
+    $configuracionVista['config_apariencia'] ?? null
+)
+    ? $configuracionVista['config_apariencia']
+    : array(
+        'tema' => 'Predeterminado',
+        'color_primario' => '#1e3a8a',
+        'color_acento' => '#2563eb',
+        'color_sidebar' => '#0a2540',
+        'color_fondo' => '#f4f6f9',
+        'color_superficie' => '#ffffff',
+        'color_texto' => '#172033',
+        'radio_componentes' => 12,
+    );
+
 /** @var array<string, mixed>|null $config_correo */
 $config_correo = is_array(
     $configuracionVista['config_correo'] ?? null
@@ -211,6 +227,92 @@ $entrenadoresSucursal = is_array(
         href="css/configuracion.css?v=<?php echo is_file($configuracionCss) ? (int) filemtime($configuracionCss) : time(); ?>"
     >
 
+    <style>
+        .config-current-password-panel {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            align-items: end;
+            gap: 12px;
+            margin: 0 0 16px;
+            padding: 12px 14px;
+            border: 1px solid var(--cfg-border, #dce4ed);
+            border-radius: 10px;
+            background: var(--cfg-blue-soft, #f3f7ff);
+        }
+
+        .config-current-password-panel__copy strong,
+        .config-current-password-panel__copy small {
+            display: block;
+        }
+
+        .config-current-password-panel__copy strong {
+            margin-bottom: 3px;
+            color: var(--cfg-primary, #172033);
+            font-size: .76rem;
+        }
+
+        .config-current-password-panel__copy small {
+            color: var(--cfg-muted, #667085);
+            font-size: .65rem;
+            line-height: 1.4;
+        }
+
+        .config-current-password-panel__field {
+            width: min(100%, 300px);
+        }
+
+        .config-current-password-panel .form-control,
+        .config-reset-password-preview .form-control {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco,
+                Consolas, "Liberation Mono", "Courier New", monospace;
+            font-weight: 700;
+            letter-spacing: .04em;
+            background: var(--cfg-card, #ffffff);
+        }
+
+        .config-reset-password-preview {
+            margin-top: 12px;
+            padding: 11px 12px;
+            border: 1px solid rgba(133, 100, 4, .2);
+            border-radius: 9px;
+            background: rgba(255, 248, 225, .72);
+        }
+
+        .config-reset-password-preview label {
+            display: block;
+            margin-bottom: 6px;
+            color: #705400;
+            font-size: .7rem;
+            font-weight: 800;
+        }
+
+        .config-reset-password-preview small {
+            display: block;
+            margin-top: 6px;
+            color: #7b6a34;
+            font-size: .62rem;
+            line-height: 1.4;
+        }
+
+        .config-password-view-loading i {
+            animation: configPasswordSpin .7s linear infinite;
+        }
+
+        @keyframes configPasswordSpin {
+            to { transform: rotate(360deg); }
+        }
+
+        @media (max-width: 700px) {
+            .config-current-password-panel {
+                grid-template-columns: 1fr;
+                align-items: stretch;
+            }
+
+            .config-current-password-panel__field {
+                width: 100%;
+            }
+        }
+    </style>
 </head>
 <body class="hold-transition sidebar-mini configuracion-page">
     <?php
@@ -273,6 +375,20 @@ $entrenadoresSucursal = is_array(
                         >
                             <i class="fas fa-sliders-h"></i>
                             General
+                        </a>
+                    </li>
+
+                    <li>
+                        <a
+                            href="<?php echo configuracion_h(
+                                configuracion_url('apariencia', true)
+                            ); ?>"
+                            class="<?php echo $seccion === 'apariencia'
+                                ? 'active'
+                                : ''; ?>"
+                        >
+                            <i class="fas fa-palette"></i>
+                            Apariencia
                         </a>
                     </li>
 
@@ -483,6 +599,225 @@ $entrenadoresSucursal = is_array(
                 </div>
             </div>
         </div>
+        <?php endif; ?>
+
+        <?php if ($seccion === 'apariencia'): ?>
+        <section class="appearance-config" aria-labelledby="appearanceConfigTitle">
+            <div class="appearance-hero">
+                <div>
+                    <span class="appearance-kicker">Identidad visual</span>
+                    <h2 id="appearanceConfigTitle">Apariencia del sistema</h2>
+                    <p>
+                        Define la paleta corporativa que utilizarán los módulos, el sidebar,
+                        botones principales, fondos y pantallas de acceso. Los colores de éxito,
+                        advertencia y error permanecen intactos para no perder significado visual.
+                    </p>
+                </div>
+                <div class="appearance-current-badge">
+                    <i class="fas fa-wand-magic-sparkles"></i>
+                    <span>
+                        <small>Tema actual</small>
+                        <strong id="appearanceCurrentTheme"><?php echo configuracion_h(ucfirst((string) ($config_apariencia['tema'] ?? 'predeterminado'))); ?></strong>
+                    </span>
+                </div>
+            </div>
+
+            <div class="appearance-layout">
+                <div class="appearance-editor-card">
+                    <div class="appearance-section-heading">
+                        <div>
+                            <span>Temas rápidos</span>
+                            <h3>Elige una base</h3>
+                        </div>
+                        <i class="fas fa-swatchbook"></i>
+                    </div>
+
+                    <div class="appearance-presets" id="appearancePresets">
+                        <button type="button" class="appearance-preset" data-theme-preset="ego">
+                            <span class="appearance-preset-colors">
+                                <i style="--preset:#1e3a8a"></i><i style="--preset:#2563eb"></i><i style="--preset:#0a2540"></i>
+                            </span>
+                            <strong>Predeterminado Azul</strong>
+                            <small>Predeterminado</small>
+                        </button>
+                        <button type="button" class="appearance-preset" data-theme-preset="oceano">
+                            <span class="appearance-preset-colors">
+                                <i style="--preset:#0f4c81"></i><i style="--preset:#0284c7"></i><i style="--preset:#082f49"></i>
+                            </span>
+                            <strong>Océano</strong>
+                            <small>Azul moderno</small>
+                        </button>
+                        <button type="button" class="appearance-preset" data-theme-preset="esmeralda">
+                            <span class="appearance-preset-colors">
+                                <i style="--preset:#047857"></i><i style="--preset:#10b981"></i><i style="--preset:#064e3b"></i>
+                            </span>
+                            <strong>Esmeralda</strong>
+                            <small>Activo y fresco</small>
+                        </button>
+                        <button type="button" class="appearance-preset" data-theme-preset="violeta">
+                            <span class="appearance-preset-colors">
+                                <i style="--preset:#6d28d9"></i><i style="--preset:#8b5cf6"></i><i style="--preset:#2e1065"></i>
+                            </span>
+                            <strong>Violeta</strong>
+                            <small>Contemporáneo</small>
+                        </button>
+                        <button type="button" class="appearance-preset" data-theme-preset="grafito">
+                            <span class="appearance-preset-colors">
+                                <i style="--preset:#334155"></i><i style="--preset:#64748b"></i><i style="--preset:#0f172a"></i>
+                            </span>
+                            <strong>Grafito</strong>
+                            <small>Sobrio</small>
+                        </button>
+                        <button type="button" class="appearance-preset" data-theme-preset="rojo">
+                            <span class="appearance-preset-colors">
+                                <i style="--preset:#b91c1c"></i><i style="--preset:#ef4444"></i><i style="--preset:#7f1d1d"></i>
+                            </span>
+                            <strong>Rojo</strong>
+                            <small>Enérgico</small>
+                        </button>
+                        <button type="button" class="appearance-preset" data-theme-preset="rosa">
+                            <span class="appearance-preset-colors">
+                                <i style="--preset:#db2777"></i><i style="--preset:#f472b6"></i><i style="--preset:#831843"></i>
+                            </span>
+                            <strong>Rosa</strong>
+                            <small>Moderno</small>
+                        </button>
+                        <button type="button" class="appearance-preset" data-theme-preset="amarillo">
+                            <span class="appearance-preset-colors">
+                                <i style="--preset:#d4a017"></i><i style="--preset:#f59e0b"></i><i style="--preset:#5b4304"></i>
+                            </span>
+                            <strong>Amarillo</strong>
+                            <small>Vibrante</small>
+                        </button>
+                    </div>
+
+                    <form id="formAppearanceConfig" class="appearance-form" autocomplete="off">
+                        <input type="hidden" name="security_csrf" value="<?php echo configuracion_h($configSecurityCsrf); ?>">
+                        <input type="hidden" name="tema" id="appearanceThemeName" value="<?php echo configuracion_h((string) ($config_apariencia['tema'] ?? 'ego')); ?>">
+
+                        <div class="appearance-section-heading appearance-colors-heading">
+                            <div>
+                                <span>Personalización</span>
+                                <h3>Colores del sistema</h3>
+                            </div>
+                            <i class="fas fa-droplet"></i>
+                        </div>
+
+                        <div class="appearance-color-grid">
+                            <?php
+                            $appearanceFields = array(
+                                'color_primario' => array('Principal', 'Botones, encabezados y acciones principales'),
+                                'color_acento' => array('Acento', 'Estados activos, enlaces y detalles'),
+                                'color_sidebar' => array('Sidebar', 'Menú lateral y navegación'),
+                                'color_fondo' => array('Fondo', 'Fondo general de las pantallas'),
+                                'color_superficie' => array('Superficie', 'Cards, modales y paneles'),
+                                'color_texto' => array('Texto', 'Texto principal del sistema'),
+                            );
+                            foreach ($appearanceFields as $fieldName => $fieldInfo):
+                                $fieldValue = (string) ($config_apariencia[$fieldName] ?? '#ffffff');
+                            ?>
+                            <label class="appearance-color-field" for="<?php echo configuracion_h($fieldName); ?>">
+                                <span class="appearance-color-copy">
+                                    <strong><?php echo configuracion_h($fieldInfo[0]); ?></strong>
+                                    <small><?php echo configuracion_h($fieldInfo[1]); ?></small>
+                                </span>
+                                <span class="appearance-color-control">
+                                    <input
+                                        type="color"
+                                        class="appearance-color-input"
+                                        id="<?php echo configuracion_h($fieldName); ?>"
+                                        name="<?php echo configuracion_h($fieldName); ?>"
+                                        value="<?php echo configuracion_h($fieldValue); ?>"
+                                    >
+                                    <input
+                                        type="text"
+                                        class="appearance-hex-input"
+                                        data-color-target="<?php echo configuracion_h($fieldName); ?>"
+                                        value="<?php echo configuracion_h(strtoupper($fieldValue)); ?>"
+                                        maxlength="7"
+                                        spellcheck="false"
+                                        aria-label="Código hexadecimal de <?php echo configuracion_h($fieldInfo[0]); ?>"
+                                    >
+                                </span>
+                            </label>
+                            <?php endforeach; ?>
+                        </div>
+
+                        <div class="appearance-radius-row">
+                            <div>
+                                <strong>Redondeo de componentes</strong>
+                                <small>Modifica el radio general de cards, botones y modales sin alterar su estructura.</small>
+                            </div>
+                            <div class="appearance-range-control">
+                                <input
+                                    type="range"
+                                    name="radio_componentes"
+                                    id="appearanceRadius"
+                                    min="6"
+                                    max="22"
+                                    step="1"
+                                    value="<?php echo (int) ($config_apariencia['radio_componentes'] ?? 12); ?>"
+                                >
+                                <output id="appearanceRadiusValue"><?php echo (int) ($config_apariencia['radio_componentes'] ?? 12); ?> px</output>
+                            </div>
+                        </div>
+
+                        <div class="appearance-actions">
+                            <button type="button" class="btn appearance-reset-btn" id="btnResetAppearance">
+                                <i class="fas fa-rotate-left"></i>
+                                Restaurar predeterminado
+                            </button>
+                            <button type="submit" class="btn btn-primary" id="btnSaveAppearance">
+                                <i class="fas fa-save"></i>
+                                <span>Guardar apariencia</span>
+                            </button>
+                        </div>
+                    </form>
+                </div>
+
+                <aside class="appearance-preview-card">
+                    <div class="appearance-section-heading">
+                        <div>
+                            <span>Vista previa</span>
+                            <h3>Cambios en tiempo real</h3>
+                        </div>
+                        <i class="fas fa-eye"></i>
+                    </div>
+
+                    <div class="theme-preview" id="themePreview">
+                        <div class="theme-preview-sidebar">
+                            <div class="theme-preview-logo">E</div>
+                            <span class="theme-preview-nav active"><i></i><b></b></span>
+                            <span class="theme-preview-nav"><i></i><b></b></span>
+                            <span class="theme-preview-nav"><i></i><b></b></span>
+                            <span class="theme-preview-nav"><i></i><b></b></span>
+                        </div>
+                        <div class="theme-preview-content">
+                            <div class="theme-preview-topbar">
+                                <div><b></b><span></span></div>
+                                <i></i>
+                            </div>
+                            <div class="theme-preview-body">
+                                <div class="theme-preview-title"><strong></strong><span></span></div>
+                                <div class="theme-preview-stats">
+                                    <div><i></i><b></b><span></span></div>
+                                    <div><i></i><b></b><span></span></div>
+                                </div>
+                                <div class="theme-preview-panel">
+                                    <div class="theme-preview-panel-head"><b></b><button type="button">Acción</button></div>
+                                    <span></span><span></span><span class="short"></span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="appearance-preview-note">
+                        <i class="fas fa-circle-info"></i>
+                        <span>La previsualización también se refleja temporalmente en esta pantalla. El cambio definitivo se aplica al guardar.</span>
+                    </div>
+                </aside>
+            </div>
+        </section>
         <?php endif; ?>
 
         <?php if ($seccion == 'correo'): ?>
@@ -1492,6 +1827,46 @@ $entrenadoresSucursal = is_array(
                     </div>
                 </div>
 
+                <?php if ($tablaPasswordExiste): ?>
+                    <div class="config-current-password-panel">
+                        <div class="config-current-password-panel__copy">
+                            <strong>Contraseña predeterminada actual</strong>
+                            <small>
+                                Se consulta solo al pulsar el ojo. Es la contraseña
+                                que recibirán usuarios nuevos y restablecimientos.
+                            </small>
+                        </div>
+
+                        <div class="config-current-password-panel__field">
+                            <div class="config-password-control">
+                                <input
+                                    type="password"
+                                    class="form-control"
+                                    id="passwordTemporalActualSistema"
+                                    value=""
+                                    placeholder="••••••••"
+                                    readonly
+                                    autocomplete="off"
+                                    spellcheck="false"
+                                    aria-label="Contraseña temporal predeterminada actual"
+                                >
+                                <button
+                                    type="button"
+                                    id="btnVerPasswordTemporalActualSistema"
+                                    onclick="alternarPasswordTemporalActual(
+                                        'passwordTemporalActualSistema',
+                                        this
+                                    )"
+                                    aria-label="Mostrar u ocultar contraseña predeterminada actual"
+                                    title="Mostrar u ocultar contraseña predeterminada actual"
+                                >
+                                    <i class="fas fa-eye"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                <?php endif; ?>
+
                 <?php if (!$tablaPasswordExiste): ?>
                     <div class="config-inline-notice warning">
                         <i class="fas fa-database"></i>
@@ -1575,7 +1950,7 @@ $entrenadoresSucursal = is_array(
                         <div class="config-system-password-meta">
                             <span>
                                 <i class="fas fa-lock"></i>
-                                La contraseña actual nunca se muestra en pantalla.
+                                La contraseña predeterminada solo se revela bajo demanda. Las contraseñas personales de los usuarios nunca se muestran.
                             </span>
                             <?php if (!empty($config_acceso['updated_at'])): ?>
                                 <span>
@@ -1856,6 +2231,39 @@ $entrenadoresSucursal = is_array(
                         <p class="mt-2 mb-0 text-muted small">
                             El usuario deberá cambiarla durante su próximo inicio de sesión.
                         </p>
+
+                        <div class="config-reset-password-preview">
+                            <label for="resetPasswordPredeterminadaPreview">
+                                Contraseña que se asignará
+                            </label>
+                            <div class="config-password-control">
+                                <input
+                                    type="password"
+                                    class="form-control"
+                                    id="resetPasswordPredeterminadaPreview"
+                                    value=""
+                                    placeholder="••••••••"
+                                    readonly
+                                    autocomplete="off"
+                                    spellcheck="false"
+                                >
+                                <button
+                                    type="button"
+                                    id="btnVerResetPasswordPredeterminada"
+                                    onclick="alternarPasswordTemporalActual(
+                                        'resetPasswordPredeterminadaPreview',
+                                        this
+                                    )"
+                                    aria-label="Mostrar u ocultar contraseña que se asignará"
+                                    title="Mostrar u ocultar contraseña que se asignará"
+                                >
+                                    <i class="fas fa-eye"></i>
+                                </button>
+                            </div>
+                            <small>
+                                Es la contraseña temporal predeterminada vigente del sistema.
+                            </small>
+                        </div>
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -1896,6 +2304,101 @@ $entrenadoresSucursal = is_array(
                     ? 'fas fa-eye-slash'
                     : 'fas fa-eye';
             }
+        }
+
+        function limpiarVisorPasswordTemporal(inputId, boton) {
+            const input = document.getElementById(inputId);
+
+            if (!input) {
+                return;
+            }
+
+            input.value = '';
+            input.type = 'password';
+            input.dataset.visible = '0';
+            input.placeholder = '••••••••';
+
+            if (boton) {
+                const icono = boton.querySelector('i');
+                if (icono) {
+                    icono.className = 'fas fa-eye';
+                }
+                boton.classList.remove('config-password-view-loading');
+                boton.disabled = false;
+            }
+        }
+
+        function alternarPasswordTemporalActual(inputId, boton) {
+            const input = document.getElementById(inputId);
+
+            if (!input || !boton) {
+                return;
+            }
+
+            if (input.dataset.visible === '1') {
+                limpiarVisorPasswordTemporal(inputId, boton);
+                return;
+            }
+
+            const icono = boton.querySelector('i');
+            boton.disabled = true;
+            boton.classList.add('config-password-view-loading');
+
+            if (icono) {
+                icono.className = 'fas fa-spinner';
+            }
+
+            $.ajax({
+                url: 'configuracion.php',
+                method: 'POST',
+                dataType: 'json',
+                cache: false,
+                data: {
+                    action: 'get_password_temporal_actual',
+                    security_csrf: CONFIG_SECURITY_CSRF
+                },
+                success: function(response) {
+                    if (!response.success || !response.password_temporal) {
+                        Swal.fire({
+                            icon: 'error',
+                            title: 'No se pudo consultar',
+                            text: response.message
+                                || 'No fue posible obtener la contraseña temporal.',
+                            target: document.body
+                        });
+                        limpiarVisorPasswordTemporal(inputId, boton);
+                        return;
+                    }
+
+                    input.value = String(response.password_temporal);
+                    input.type = 'text';
+                    input.dataset.visible = '1';
+
+                    if (icono) {
+                        icono.className = 'fas fa-eye-slash';
+                    }
+
+                    boton.classList.remove('config-password-view-loading');
+                    boton.disabled = false;
+
+                    /* Ocultarla automáticamente después de 30 segundos. */
+                    window.setTimeout(function() {
+                        if (input.dataset.visible === '1') {
+                            limpiarVisorPasswordTemporal(inputId, boton);
+                        }
+                    }, 30000);
+                },
+                error: function(xhr) {
+                    limpiarVisorPasswordTemporal(inputId, boton);
+                    Swal.fire({
+                        icon: 'error',
+                        title: 'No se pudo consultar',
+                        text: xhr.responseJSON?.message
+                            || 'Ocurrió un error al consultar la contraseña temporal.',
+                        target: document.body
+                    });
+                }
+            });
         }
 
         function evaluarPasswordSistema() {
@@ -2400,6 +2903,12 @@ $entrenadoresSucursal = is_array(
             $('#resetUsuarioId').val(id);
             $('#resetUsuarioNombre').val(nombre);
             $('#resetNombreMostrar').text(nombre);
+
+            limpiarVisorPasswordTemporal(
+                'resetPasswordPredeterminadaPreview',
+                document.getElementById('btnVerResetPasswordPredeterminada')
+            );
+
             abrirModal('modalRestablecer');
         }
 
@@ -2911,6 +3420,7 @@ $entrenadoresSucursal = is_array(
             inicializarListadosPaginados();
             inicializarCorreo();
             inicializarSeguridad2fa();
+            inicializarAparienciaSistema();
             inicializarPasswordTemporalSistema();
         });
 
@@ -3308,6 +3818,257 @@ $entrenadoresSucursal = is_array(
                     });
                 });
             });
+        }
+
+        function inicializarAparienciaSistema() {
+            const form = document.getElementById('formAppearanceConfig');
+            if (!form) return;
+
+            const themeName = document.getElementById('appearanceThemeName');
+            const radius = document.getElementById('appearanceRadius');
+            const radiusValue = document.getElementById('appearanceRadiusValue');
+            const currentTheme = document.getElementById('appearanceCurrentTheme');
+            const saveButton = document.getElementById('btnSaveAppearance');
+            const resetButton = document.getElementById('btnResetAppearance');
+
+            const presets = {
+                ego: {
+                    color_primario: '#1e3a8a', color_acento: '#2563eb', color_sidebar: '#0a2540',
+                    color_fondo: '#f4f6f9', color_superficie: '#ffffff', color_texto: '#172033', radio_componentes: 12
+                },
+                oceano: {
+                    color_primario: '#0f4c81', color_acento: '#0284c7', color_sidebar: '#082f49',
+                    color_fondo: '#f3f7fa', color_superficie: '#ffffff', color_texto: '#172033', radio_componentes: 12
+                },
+                esmeralda: {
+                    color_primario: '#047857', color_acento: '#10b981', color_sidebar: '#064e3b',
+                    color_fondo: '#f3f7f5', color_superficie: '#ffffff', color_texto: '#172033', radio_componentes: 12
+                },
+                violeta: {
+                    color_primario: '#6d28d9', color_acento: '#8b5cf6', color_sidebar: '#2e1065',
+                    color_fondo: '#f6f4fa', color_superficie: '#ffffff', color_texto: '#211a2d', radio_componentes: 14
+                },
+                grafito: {
+                    color_primario: '#334155', color_acento: '#64748b', color_sidebar: '#0f172a',
+                    color_fondo: '#f3f4f6', color_superficie: '#ffffff', color_texto: '#111827', radio_componentes: 10
+                },
+                rojo: {
+                    color_primario: '#b91c1c', color_acento: '#ef4444', color_sidebar: '#7f1d1d',
+                    color_fondo: '#fff5f5', color_superficie: '#ffffff', color_texto: '#2b1717', radio_componentes: 12
+                },
+                rosa: {
+                    color_primario: '#db2777', color_acento: '#f472b6', color_sidebar: '#831843',
+                    color_fondo: '#fff5fa', color_superficie: '#ffffff', color_texto: '#31111f', radio_componentes: 14
+                },
+                amarillo: {
+                    color_primario: '#d4a017', color_acento: '#f59e0b', color_sidebar: '#5b4304',
+                    color_fondo: '#fffbeb', color_superficie: '#ffffff', color_texto: '#3b2f0f', radio_componentes: 12
+                }
+            };
+
+            function validHex(value) {
+                return /^#[0-9a-f]{6}$/i.test(String(value || '').trim());
+            }
+
+            function hexToRgb(hex) {
+                const clean = hex.replace('#', '');
+                return [
+                    parseInt(clean.substring(0, 2), 16),
+                    parseInt(clean.substring(2, 4), 16),
+                    parseInt(clean.substring(4, 6), 16)
+                ];
+            }
+
+            function mixColor(color, target, weight) {
+                const a = hexToRgb(color);
+                const b = hexToRgb(target);
+                const out = a.map(function(value, index) {
+                    return Math.round(value + ((b[index] - value) * weight));
+                });
+                return '#' + out.map(function(value) {
+                    return value.toString(16).padStart(2, '0');
+                }).join('');
+            }
+
+            function contrastColor(color) {
+                const rgb = hexToRgb(color);
+                const lum = ((rgb[0] * 299) + (rgb[1] * 587) + (rgb[2] * 114)) / 1000;
+                return lum >= 160 ? '#172033' : '#ffffff';
+            }
+
+            function getConfigFromForm() {
+                return {
+                    color_primario: document.getElementById('color_primario').value,
+                    color_acento: document.getElementById('color_acento').value,
+                    color_sidebar: document.getElementById('color_sidebar').value,
+                    color_fondo: document.getElementById('color_fondo').value,
+                    color_superficie: document.getElementById('color_superficie').value,
+                    color_texto: document.getElementById('color_texto').value,
+                    radio_componentes: Number(radius.value || 12)
+                };
+            }
+
+            function applyThemePreview(config) {
+                const root = document.documentElement;
+                const primary = config.color_primario;
+                const accent = config.color_acento;
+                const sidebar = config.color_sidebar;
+                const text = config.color_texto;
+
+                root.style.setProperty('--sys-primary', primary);
+                root.style.setProperty('--sys-primary-dark', mixColor(primary, '#000000', .20));
+                root.style.setProperty('--sys-primary-soft', mixColor(primary, '#ffffff', .92));
+                root.style.setProperty('--sys-primary-text', contrastColor(primary));
+                root.style.setProperty('--sys-accent', accent);
+                root.style.setProperty('--sys-accent-dark', mixColor(accent, '#000000', .16));
+                root.style.setProperty('--sys-sidebar', sidebar);
+                root.style.setProperty('--sys-sidebar-dark', mixColor(sidebar, '#000000', .17));
+                root.style.setProperty('--sys-sidebar-hover', mixColor(sidebar, '#ffffff', .12));
+                root.style.setProperty('--sys-sidebar-active', mixColor(sidebar, accent, .34));
+                root.style.setProperty('--sys-sidebar-text', contrastColor(sidebar));
+                root.style.setProperty('--sys-bg', config.color_fondo);
+                root.style.setProperty('--sys-surface', config.color_superficie);
+                root.style.setProperty('--sys-surface-soft', mixColor(config.color_superficie, config.color_fondo, .45));
+                root.style.setProperty('--sys-text', text);
+                root.style.setProperty('--sys-muted', mixColor(text, '#ffffff', .42));
+                root.style.setProperty('--sys-border', mixColor(text, '#ffffff', .88));
+                root.style.setProperty('--sys-radius', config.radio_componentes + 'px');
+
+                if (radiusValue) radiusValue.textContent = config.radio_componentes + ' px';
+
+                document.querySelectorAll('.appearance-preset').forEach(function(button) {
+                    button.classList.toggle('active', button.dataset.themePreset === themeName.value);
+                });
+            }
+
+            function setField(name, value) {
+                const colorInput = document.getElementById(name);
+                if (!colorInput) return;
+                colorInput.value = value;
+                const textInput = document.querySelector('.appearance-hex-input[data-color-target="' + name + '"]');
+                if (textInput) textInput.value = value.toUpperCase();
+            }
+
+            document.querySelectorAll('.appearance-color-input').forEach(function(input) {
+                input.addEventListener('input', function() {
+                    const textInput = document.querySelector('.appearance-hex-input[data-color-target="' + input.id + '"]');
+                    if (textInput) textInput.value = input.value.toUpperCase();
+                    themeName.value = 'personalizado';
+                    if (currentTheme) currentTheme.textContent = 'Personalizado';
+                    applyThemePreview(getConfigFromForm());
+                });
+            });
+
+            document.querySelectorAll('.appearance-hex-input').forEach(function(input) {
+                input.addEventListener('input', function() {
+                    let value = String(input.value || '').trim();
+                    if (value && value.charAt(0) !== '#') value = '#' + value;
+                    if (!validHex(value)) return;
+                    const target = document.getElementById(input.dataset.colorTarget || '');
+                    if (target) target.value = value;
+                    themeName.value = 'personalizado';
+                    if (currentTheme) currentTheme.textContent = 'Personalizado';
+                    applyThemePreview(getConfigFromForm());
+                });
+                input.addEventListener('blur', function() {
+                    const target = document.getElementById(input.dataset.colorTarget || '');
+                    if (target) input.value = target.value.toUpperCase();
+                });
+            });
+
+            document.querySelectorAll('.appearance-preset').forEach(function(button) {
+                button.addEventListener('click', function() {
+                    const name = button.dataset.themePreset || 'ego';
+                    const preset = presets[name];
+                    if (!preset) return;
+                    Object.keys(preset).forEach(function(key) {
+                        if (key === 'radio_componentes') return;
+                        setField(key, preset[key]);
+                    });
+                    radius.value = String(preset.radio_componentes);
+                    themeName.value = name;
+                    if (currentTheme) currentTheme.textContent = button.querySelector('strong').textContent;
+                    applyThemePreview(getConfigFromForm());
+                });
+            });
+
+            radius.addEventListener('input', function() {
+                themeName.value = 'personalizado';
+                if (currentTheme) currentTheme.textContent = 'Personalizado';
+                applyThemePreview(getConfigFromForm());
+            });
+
+            form.addEventListener('submit', function(event) {
+                event.preventDefault();
+                if (form.dataset.saving === '1') return;
+
+                form.dataset.saving = '1';
+                saveButton.disabled = true;
+                saveButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>Guardando...</span>';
+
+                const data = new FormData(form);
+                data.append('action', 'save_appearance');
+
+                fetch('configuracion.php?vista=global&section=apariencia', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    body: data
+                })
+                .then(function(response) { return response.json(); })
+                .then(function(response) {
+                    if (!response.success) throw new Error(response.message || 'No fue posible guardar la apariencia.');
+                    return Swal.fire({
+                        icon: 'success',
+                        title: 'Apariencia actualizada',
+                        text: response.message,
+                        timer: 1400,
+                        showConfirmButton: false,
+                        target: document.body
+                    });
+                })
+                .then(function() {
+                    window.location.href = 'configuracion.php?vista=global&section=apariencia';
+                })
+                .catch(function(error) {
+                    form.dataset.saving = '0';
+                    saveButton.disabled = false;
+                    saveButton.innerHTML = '<i class="fas fa-save"></i><span>Guardar apariencia</span>';
+                    Swal.fire({ icon: 'error', title: 'No se pudo guardar', text: error.message, target: document.body });
+                });
+            });
+
+            resetButton.addEventListener('click', function() {
+                Swal.fire({
+                    icon: 'question',
+                    title: '¿Restaurar tema predeterminado?',
+                    text: 'Se restaurarán los colores y el redondeo predeterminados del sistema.',
+                    showCancelButton: true,
+                    confirmButtonText: 'Sí, restaurar',
+                    cancelButtonText: 'Cancelar',
+                    target: document.body
+                }).then(function(result) {
+                    if (!result.isConfirmed) return;
+                    const data = new FormData();
+                    data.append('action', 'reset_appearance');
+                    data.append('security_csrf', form.querySelector('[name="security_csrf"]').value);
+
+                    resetButton.disabled = true;
+                    fetch('configuracion.php?vista=global&section=apariencia', {
+                        method: 'POST', credentials: 'same-origin', body: data
+                    })
+                    .then(function(response) { return response.json(); })
+                    .then(function(response) {
+                        if (!response.success) throw new Error(response.message || 'No fue posible restaurar el tema.');
+                        window.location.href = 'configuracion.php?vista=global&section=apariencia';
+                    })
+                    .catch(function(error) {
+                        resetButton.disabled = false;
+                        Swal.fire({ icon: 'error', title: 'No se pudo restaurar', text: error.message, target: document.body });
+                    });
+                });
+            });
+
+            applyThemePreview(getConfigFromForm());
         }
 
         function inicializarSeguridad2fa() {

@@ -1,6 +1,6 @@
 :root {
-    --tf-primary: #1e3a8a;
-    --tf-primary-dark: #152c6b;
+    --tf-primary: var(--sys-primary, #1e3a8a);
+    --tf-primary-dark: var(--sys-primary-dark, #152c6b);
     --tf-soft: #eef3ff;
     --tf-bg: #f3f5f9;
     --tf-text: #172033;
@@ -41,7 +41,7 @@ button, input { font: inherit; }
     align-items: center;
     gap: 16px;
     color: #fff;
-    background: linear-gradient(145deg, #162d6f, #1e3a8a 58%, #3155ad);
+    background: linear-gradient(145deg, #162d6f, var(--sys-primary, #1e3a8a) 58%, #3155ad);
 }
 
 .tf-header-icon {

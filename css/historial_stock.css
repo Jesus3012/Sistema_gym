@@ -1,6 +1,6 @@
 :root {
---azul: #1e3a8a;
---azul-claro: #2563eb;
+--azul: var(--sys-primary, #1e3a8a);
+--azul-claro: var(--sys-accent, #2563eb);
 --azul-suave: #eff6ff;
 --fondo: #f4f6f9;
 --blanco: #ffffff;
@@ -459,7 +459,7 @@ font-weight: 500;
 }
 
 .table-info strong {
-color: #1e3a8a;
+color: var(--sys-primary, #1e3a8a);
 font-weight: 700;
 }
 .pagination .page-item.active .page-link {
@@ -586,7 +586,7 @@ color: #fff;
     border: 1px solid #dbeafe;
     border-radius: 11px;
     background: #eff6ff;
-    color: #1e3a8a;
+    color: var(--sys-primary, #1e3a8a);
 }
 
 .stock-context-badge.global {
@@ -648,7 +648,7 @@ color: #fff;
     border: 1px solid #dbeafe;
     border-radius: 8px;
     background: #f8fbff;
-    color: #1e3a8a;
+    color: var(--sys-primary, #1e3a8a);
 }
 
 .stock-branch-badge > i {

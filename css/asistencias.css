@@ -1,12 +1,12 @@
 :root {
-    --azul: #1e3a8a;
-    --azul-hover: #152c6b;
-    --azul-claro: #eef3ff;
-    --fondo: #f0f2f5;
-    --blanco: #ffffff;
-    --texto: #172033;
-    --texto-suave: #6b7280;
-    --borde: #e5e7eb;
+    --azul: var(--sys-primary, #1e3a8a);
+    --azul-hover: var(--sys-primary-dark, #152c6b);
+    --azul-claro: var(--sys-primary-soft, #eef3ff);
+    --fondo: var(--sys-bg, #f0f2f5);
+    --blanco: var(--sys-surface, #ffffff);
+    --texto: var(--sys-text, #172033);
+    --texto-suave: var(--sys-muted, #6b7280);
+    --borde: var(--sys-border, #e5e7eb);
     --verde: #16a34a;
     --verde-hover: #15803d;
     --rojo: #dc2626;
@@ -69,7 +69,7 @@ body {
 .section-kicker {
     display: block;
     margin-bottom: 4px;
-    color: #7b8494;
+    color: var(--texto-suave);
     font-size: 0.72rem;
     font-weight: 700;
     letter-spacing: 0.08em;
@@ -125,9 +125,9 @@ body {
     padding: 24px;
     overflow: hidden;
     border-radius: 18px;
-    background: linear-gradient(135deg, #17306e 0%, var(--azul) 58%, #274eb2 100%);
+    background: linear-gradient(135deg, var(--sys-sidebar, #17306e) 0%, var(--azul) 55%, var(--sys-accent, #274eb2) 100%);
     color: var(--blanco);
-    box-shadow: 0 12px 30px rgba(30, 58, 138, 0.22);
+    box-shadow: 0 12px 30px color-mix(in srgb, var(--azul) 24%, transparent);
 }
 
 .qr-module::before,
@@ -436,12 +436,12 @@ body {
 }
 
 .table-custom td {
-    color: #4b5563;
+    color: var(--texto-suave);
     font-size: 0.84rem;
 }
 
 .table-custom tbody tr:hover {
-    background: #f8fafc;
+    background: var(--sys-surface-soft, #f8fafc);
 }
 
 .badge-plan {
@@ -509,7 +509,7 @@ body {
 }
 
 .cliente-item:hover {
-    background: #eef3ff !important;
+    background: var(--azul-claro) !important;
 }
 
 .cliente-item.disabled {
@@ -737,7 +737,7 @@ body {
     }
 
     .responsive-table td:first-child {
-        background: #f8fafc;
+        background: var(--sys-surface-soft, #f8fafc);
         color: var(--texto);
         text-align: left;
     }
@@ -811,4 +811,60 @@ body {
         gap: 4px;
         text-align: left;
     }
+}
+/* =========================================================
+   TEMA DINÁMICO DEL SISTEMA
+   Conserva verde/rojo/amarillo únicamente para estados y acciones semánticas.
+   ========================================================= */
+.qr-module {
+    border: 1px solid color-mix(in srgb, var(--sys-accent, #2563eb) 24%, transparent);
+}
+
+.qr-icon-wrap {
+    color: var(--sys-primary-text, #ffffff);
+}
+
+.qr-status-card {
+    border: 1px solid color-mix(in srgb, #ffffff 18%, transparent);
+}
+
+.stats-card,
+.table-custom,
+.modal-custom {
+    background: var(--sys-surface, #ffffff);
+    border-color: var(--sys-border, #e5e7eb);
+}
+
+.stats-icon,
+.stats-number,
+.section-kicker,
+.page-header h2,
+.page-header h2 i {
+    color: var(--sys-primary, #1e3a8a);
+}
+
+.table-custom thead,
+.modal-header-custom {
+    background: linear-gradient(
+        135deg,
+        var(--sys-primary, #1e3a8a),
+        color-mix(in srgb, var(--sys-primary, #1e3a8a) 74%, var(--sys-accent, #2563eb) 26%)
+    );
+    color: var(--sys-primary-text, #ffffff);
+}
+
+.cliente-item:hover {
+    background: var(--sys-primary-soft, #eef3ff) !important;
+}
+
+/* Los badges de duración siguen siendo distinguibles, pero los no semánticos
+   toman tonos derivados del tema en lugar de azul/violeta fijos. */
+.badge-anual {
+    background: var(--sys-primary, #3b82f6);
+    color: var(--sys-primary-text, #ffffff);
+}
+
+.badge-semanal {
+    background: var(--sys-accent, #8b5cf6);
+    color: var(--sys-primary-text, #ffffff);
 }

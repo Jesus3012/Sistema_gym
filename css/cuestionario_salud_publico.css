@@ -1,6 +1,6 @@
 :root {
-    --brand: #244292;
-    --brand-dark: #193474;
+    --brand: var(--sys-primary, var(--sys-primary, #244292));
+    --brand-dark: var(--sys-primary-dark, var(--sys-primary-dark, #193474));
     --brand-soft: #edf2ff;
     --text: #172033;
     --muted: #667085;
@@ -157,7 +157,7 @@ a:focus-visible {
     width: 0;
     height: 100%;
     border-radius: inherit;
-    background: linear-gradient(90deg, #244292, #4a6cc3);
+    background: linear-gradient(90deg, var(--sys-primary, var(--sys-primary, #244292)), #4a6cc3);
     transition: width .28s ease;
 }
 

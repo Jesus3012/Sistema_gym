@@ -1,6 +1,6 @@
 :root {
-    --service-primary: #1e3a8a;
-    --service-primary-dark: #152c6b;
+    --service-primary: var(--sys-primary, #1e3a8a);
+    --service-primary-dark: var(--sys-primary-dark, #152c6b);
     --service-primary-soft: #eef4ff;
     --service-bg: #f4f6f9;
     --service-surface: #ffffff;

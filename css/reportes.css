@@ -1,7 +1,7 @@
 :root {
-    --report-primary: #0a2540;
+    --report-primary: var(--sys-sidebar, #0a2540);
     --report-primary-soft: #edf4fb;
-    --report-blue: #2563eb;
+    --report-blue: var(--sys-accent, #2563eb);
     --report-blue-dark: #1d4ed8;
     --report-cyan: #0891b2;
     --report-green: #17875d;

@@ -1,6 +1,6 @@
 :root {
-    --azul: #1e3a8a;
-    --azul-claro: #2563eb;
+    --azul: var(--sys-primary, #1e3a8a);
+    --azul-claro: var(--sys-accent, #2563eb);
     --azul-suave: #eff6ff;
     --fondo: #f4f6f9;
     --blanco: #ffffff;
@@ -614,7 +614,7 @@ input[type="file"].form-control {
 
 /* Diferenciación visual sutil entre secciones */
 .create-card {
-    border-top: 3px solid #2563eb;
+    border-top: 3px solid var(--sys-accent, #2563eb);
 }
 
 .create-card .card-header {
@@ -1338,7 +1338,7 @@ input[type="file"].form-control {
 }
 
 .product-action.edit {
-    background: #2563eb !important;
+    background: var(--sys-accent, #2563eb) !important;
 }
 
 .product-action.stock,
@@ -1426,7 +1426,7 @@ input[type="file"].form-control {
     border: 1px solid #bfdbfe;
     border-radius: 11px;
     background: #eff6ff;
-    color: #1e3a8a;
+    color: var(--sys-primary, #1e3a8a);
 }
 
 .products-context-badge.global {
@@ -1483,7 +1483,7 @@ input[type="file"].form-control {
     place-items: center;
     border-radius: 13px;
     background: #dbeafe;
-    color: #1e3a8a;
+    color: var(--sys-primary, #1e3a8a);
     font-size: 1.05rem;
 }
 
@@ -1520,7 +1520,7 @@ input[type="file"].form-control {
     border: 1px solid #bfdbfe;
     border-radius: 999px;
     background: #eff6ff;
-    color: #1e3a8a;
+    color: var(--sys-primary, #1e3a8a);
     font-size: .7rem;
     font-weight: 800;
     white-space: nowrap;
@@ -1608,7 +1608,7 @@ input[type="file"].form-control {
     padding: 0 !important;
     border-radius: 11px !important;
     background: #dbeafe !important;
-    color: #1e3a8a !important;
+    color: var(--sys-primary, #1e3a8a) !important;
     font-size: .95rem !important;
 }
 
@@ -1617,7 +1617,7 @@ input[type="file"].form-control {
     width: auto !important;
     margin: 0 0 2px !important;
     padding: 0 !important;
-    color: #2563eb !important;
+    color: var(--sys-accent, #2563eb) !important;
     background: transparent !important;
     font-size: .61rem !important;
     font-weight: 850 !important;

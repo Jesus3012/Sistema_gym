@@ -1,6 +1,6 @@
 body.sucursales-page {
-    --br-azul: #1e3a8a;
-    --br-azul-hover: #152c6b;
+    --br-azul: var(--sys-primary, #1e3a8a);
+    --br-azul-hover: var(--sys-primary-dark, #152c6b);
     --br-azul-suave: #eef4ff;
     --br-fondo: #f4f6f9;
     --br-blanco: #ffffff;
@@ -2292,7 +2292,7 @@ body.br-modal-open {
 }
 
 .br-terminal-meta-item i {
-    color: #1e3a8a;
+    color: var(--sys-primary, #1e3a8a);
 }
 
 .br-validation-badge {
@@ -2368,7 +2368,7 @@ body.br-modal-open {
     height: 34px;
     border-radius: 10px;
     background: #eff6ff;
-    color: #1e3a8a;
+    color: var(--sys-primary, #1e3a8a);
 }
 
 .br-terminal-section-heading strong,
@@ -2418,7 +2418,7 @@ body.br-modal-open {
 
 .br-token-toggle:hover {
     background: #eff6ff;
-    color: #1e3a8a;
+    color: var(--sys-primary, #1e3a8a);
 }
 
 .br-terminal-help {
@@ -2433,7 +2433,7 @@ body.br-modal-open {
 
 .br-terminal-help i {
     margin-top: 2px;
-    color: #1e3a8a;
+    color: var(--sys-primary, #1e3a8a);
 }
 
 .br-test-terminal-button.is-loading i {

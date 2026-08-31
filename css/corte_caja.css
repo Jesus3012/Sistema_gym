@@ -1,6 +1,6 @@
 :root {
-    --caja-azul: #244292;
-    --caja-azul-oscuro: #1e3a8a;
+    --caja-azul: var(--sys-primary, var(--sys-primary, #244292));
+    --caja-azul-oscuro: var(--sys-primary, #1e3a8a);
     --caja-azul-suave: #eef3ff;
     --caja-fondo: #f4f6f9;
     --caja-blanco: #ffffff;
@@ -1305,7 +1305,7 @@
     padding: 7px 11px;
     border: 1px solid #bfdbfe;
     border-radius: 999px;
-    color: #1e3a8a;
+    color: var(--sys-primary, #1e3a8a);
     background: #eff6ff;
     font-size: .72rem;
     font-weight: 850;
@@ -1350,7 +1350,7 @@
     height: 52px;
     place-items: center;
     border-radius: 14px;
-    color: #1e3a8a;
+    color: var(--sys-primary, #1e3a8a);
     background: #dbeafe;
     font-size: 1.15rem;
 }
@@ -1391,7 +1391,7 @@
     padding: 5px 8px;
     border: 1px solid #dbeafe;
     border-radius: 9px;
-    color: #1e3a8a;
+    color: var(--sys-primary, #1e3a8a);
     background: #eff6ff;
     font-size: .72rem;
     font-weight: 800;
@@ -1815,7 +1815,7 @@
     place-items: center;
     border-radius: 8px;
     background: #eaf0ff;
-    color: #244292;
+    color: var(--sys-primary, var(--sys-primary, #244292));
     font-size: .8rem;
 }
 
@@ -1846,7 +1846,7 @@
 }
 
 .caja-income-total {
-    color: #1e3a8a !important;
+    color: var(--sys-primary, #1e3a8a) !important;
     font-size: .83rem !important;
     font-weight: 800 !important;
 }

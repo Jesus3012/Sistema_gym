@@ -1,6 +1,6 @@
 :root {
-    --socios-primary: #1e3a8a;
-    --socios-primary-hover: #152c6b;
+    --socios-primary: var(--sys-primary, #1e3a8a);
+    --socios-primary-hover: var(--sys-primary-dark, #152c6b);
     --socios-bg: #f4f6f9;
     --socios-card: #ffffff;
     --socios-text: #1f2937;
@@ -575,7 +575,7 @@ body.sidebar-collapsed .main-content.socios-main {
 .socio-membership-time strong { display: block; }
 
 .socio-membership-summary small { color: #7b8798; font-size: .52rem; font-weight: 740; }
-.socio-membership-summary strong { overflow: hidden; margin-top: 1px; color: #1e3a8a; font-size: .73rem; white-space: nowrap; text-overflow: ellipsis; }
+.socio-membership-summary strong { overflow: hidden; margin-top: 1px; color: var(--sys-primary, #1e3a8a); font-size: .73rem; white-space: nowrap; text-overflow: ellipsis; }
 .socio-membership-summary span { margin-top: 2px; color: #7b8798; font-size: .51rem; }
 .socio-membership-time { align-self: center; text-align: right; }
 .socio-membership-time strong { color: #172554; font-size: .83rem; line-height: 1.05; }
@@ -594,7 +594,7 @@ body.sidebar-collapsed .main-content.socios-main {
     width: var(--membership-progress, 0%);
     height: 100%;
     border-radius: inherit;
-    background: linear-gradient(90deg, #1e3a8a, #3b82f6);
+    background: linear-gradient(90deg, var(--sys-primary, #1e3a8a), #3b82f6);
 }
 
 .socio-card-vigente .socio-membership-progress span { background: linear-gradient(90deg, #059669, #34d399); }

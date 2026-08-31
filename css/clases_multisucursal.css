@@ -23,7 +23,7 @@
     border: 1px solid #dbeafe;
     border-radius: 11px;
     background: #eff6ff;
-    color: #1e3a8a;
+    color: var(--sys-primary, #1e3a8a);
 }
 
 .class-context-badge.global {
@@ -88,7 +88,7 @@
     border: 1px solid #dbeafe;
     border-radius: 8px;
     background: #f8fbff;
-    color: #1e3a8a;
+    color: var(--sys-primary, #1e3a8a);
 }
 
 .class-branch-pill > i {
@@ -151,7 +151,7 @@
 
 .class-modal-branch i,
 .class-modal-branch strong {
-    color: #1e3a8a;
+    color: var(--sys-primary, #1e3a8a);
 }
 
 .class-branch-warning {

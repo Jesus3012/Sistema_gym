@@ -495,6 +495,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             .spinner { animation-duration: 1.6s; }
         }
     </style>
+    <link rel="stylesheet" href="tema.css.php?v=1" data-system-theme="true">
 </head>
 <body>
     <main class="recovery-card">

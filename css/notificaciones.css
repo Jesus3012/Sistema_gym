@@ -512,7 +512,7 @@ body.sidebar-collapsed.notificaciones-page .main-content {
     place-items: center;
     flex: 0 0 42px;
     border-radius: 10px;
-    color: #2563eb;
+    color: var(--sys-accent, #2563eb);
     background: #eaf2ff;
     font-size: 1rem;
 }

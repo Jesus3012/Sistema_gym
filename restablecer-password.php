@@ -221,7 +221,7 @@ $enlace_disponible = $token_formato_valido && $token_data !== null && !$restable
     <style>
         :root {
             --azul: #1e3a8a;
-            --azul-claro: #3154a5;
+            --azul-claro: var(--sys-accent, #3154a5);
             --azul-oscuro: #152c6b;
             --fondo: #eef2f8;
             --blanco: #ffffff;
@@ -559,6 +559,7 @@ $enlace_disponible = $token_formato_valido && $token_data !== null && !$restable
             .input-wrap input,.submit-button { transition:none; }
         }
     </style>
+    <link rel="stylesheet" href="tema.css.php?v=1" data-system-theme="true">
 </head>
 <body>
     <main class="auth-shell">

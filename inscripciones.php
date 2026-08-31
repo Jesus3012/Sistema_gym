@@ -23,6 +23,111 @@ require_once __DIR__ . '/includes/mercadopago_inscripciones.php'; // Validación
 
 // ==================== FIN FUNCIÓN QR ====================
 
+// ==================== CREDENCIAL DEL SOCIO ====================
+/*
+ * Tamaño físico CR80/PVC: 85.60 x 53.98 mm.
+ * `clientes.foto` es opcional: si no existe, se utiliza el logo.
+ */
+function inscripcionesClientesTieneFoto(mysqli $conn): bool
+{
+    try {
+        $resultado = $conn->query("SHOW COLUMNS FROM clientes LIKE 'foto'");
+        return $resultado instanceof mysqli_result
+            && $resultado->num_rows > 0;
+    } catch (Throwable $error) {
+        return false;
+    }
+}
+
+function inscripcionesRutaImagenPublica(string $ruta): string
+{
+    $ruta = trim(str_replace('\\', '/', $ruta));
+
+    if ($ruta === '') {
+        return '';
+    }
+
+    if (
+        preg_match('#^(?:https?:)?//#i', $ruta) === 1
+        || strpos($ruta, "\0") !== false
+    ) {
+        return '';
+    }
+
+    $ruta = ltrim($ruta, '/');
+    $absoluta = __DIR__ . DIRECTORY_SEPARATOR
+        . str_replace('/', DIRECTORY_SEPARATOR, $ruta);
+
+    return is_file($absoluta) ? $ruta : '';
+}
+
+function inscripcionesGuardarFotoSocio(array $archivo): string
+{
+    $error = (int) ($archivo['error'] ?? UPLOAD_ERR_NO_FILE);
+
+    if ($error === UPLOAD_ERR_NO_FILE) {
+        return '';
+    }
+
+    if ($error !== UPLOAD_ERR_OK) {
+        throw new RuntimeException('No fue posible recibir la foto del socio.');
+    }
+
+    $tamano = (int) ($archivo['size'] ?? 0);
+    if ($tamano <= 0 || $tamano > 5 * 1024 * 1024) {
+        throw new RuntimeException('La foto del socio debe pesar máximo 5 MB.');
+    }
+
+    $temporal = (string) ($archivo['tmp_name'] ?? '');
+    if ($temporal === '' || !is_uploaded_file($temporal)) {
+        throw new RuntimeException('La foto recibida no es un archivo válido.');
+    }
+
+    $finfo = new finfo(FILEINFO_MIME_TYPE);
+    $mime = (string) $finfo->file($temporal);
+
+    $extensiones = [
+        'image/jpeg' => 'jpg',
+        'image/png' => 'png',
+        'image/webp' => 'webp',
+    ];
+
+    if (!isset($extensiones[$mime])) {
+        throw new RuntimeException('La foto debe estar en formato JPG, PNG o WEBP.');
+    }
+
+    $directorioRelativo = 'uploads/socios';
+    $directorioAbsoluto = __DIR__
+        . DIRECTORY_SEPARATOR . 'uploads'
+        . DIRECTORY_SEPARATOR . 'socios';
+
+    if (
+        !is_dir($directorioAbsoluto)
+        && !@mkdir($directorioAbsoluto, 0775, true)
+        && !is_dir($directorioAbsoluto)
+    ) {
+        throw new RuntimeException('No fue posible crear la carpeta para fotos de socios.');
+    }
+
+    $nombreArchivo = 'socio_'
+        . date('Ymd_His')
+        . '_'
+        . bin2hex(random_bytes(8))
+        . '.'
+        . $extensiones[$mime];
+
+    $destinoAbsoluto = $directorioAbsoluto
+        . DIRECTORY_SEPARATOR
+        . $nombreArchivo;
+
+    if (!move_uploaded_file($temporal, $destinoAbsoluto)) {
+        throw new RuntimeException('No fue posible guardar la foto del socio.');
+    }
+
+    return $directorioRelativo . '/' . $nombreArchivo;
+}
+// ================== FIN CREDENCIAL DEL SOCIO ==================
+
 // Crear instancia de la base de datos y obtener la conexión
 $database = new Database();
 $conn = $database->getConnection();
@@ -31,6 +136,8 @@ $conn = $database->getConnection();
 if (!$conn) {
     die("Error: No se pudo establecer la conexión a la base de datos");
 }
+
+$clientes_tiene_foto = inscripcionesClientesTieneFoto($conn);
 
 // Verificar si el usuario está logueado
 if (!isset($_SESSION['user_id'])) {
@@ -526,36 +633,78 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
                 );
             }
             
+            $foto_cliente_nueva = '';
+            $alta_cliente_confirmada = false;
+
+            if (
+                $clientes_tiene_foto
+                && isset($_FILES['foto_socio'])
+            ) {
+                $foto_cliente_nueva = inscripcionesGuardarFotoSocio(
+                    $_FILES['foto_socio']
+                );
+            }
+
             $conn->begin_transaction();
             
-            // Insertar cliente (guardamos el código QR)
-            $stmt = $conn->prepare(
-                "INSERT INTO clientes (
-                    sucursal_registro_id,
-                    nombre,
-                    apellido,
-                    telefono,
-                    email,
-                    contacto_emergencia_nombre,
-                    contacto_emergencia_telefono,
-                    codigo_qr,
-                    estado
-                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'activo')"
-            );
-            $stmt->bind_param(
-                "isssssss",
-                $sucursal_id,
-                $nombre,
-                $apellido,
-                $telefono,
-                $email,
-                $contacto_emergencia_nombre,
-                $contacto_emergencia_telefono,
-                $codigo_qr
-            );
+            // Insertar cliente (guardamos QR y foto opcional para credencial)
+            if ($clientes_tiene_foto) {
+                $stmt = $conn->prepare(
+                    "INSERT INTO clientes (
+                        sucursal_registro_id,
+                        nombre,
+                        apellido,
+                        telefono,
+                        email,
+                        foto,
+                        contacto_emergencia_nombre,
+                        contacto_emergencia_telefono,
+                        codigo_qr,
+                        estado
+                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'activo')"
+                );
+                $stmt->bind_param(
+                    "issssssss",
+                    $sucursal_id,
+                    $nombre,
+                    $apellido,
+                    $telefono,
+                    $email,
+                    $foto_cliente_nueva,
+                    $contacto_emergencia_nombre,
+                    $contacto_emergencia_telefono,
+                    $codigo_qr
+                );
+            } else {
+                $stmt = $conn->prepare(
+                    "INSERT INTO clientes (
+                        sucursal_registro_id,
+                        nombre,
+                        apellido,
+                        telefono,
+                        email,
+                        contacto_emergencia_nombre,
+                        contacto_emergencia_telefono,
+                        codigo_qr,
+                        estado
+                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'activo')"
+                );
+                $stmt->bind_param(
+                    "isssssss",
+                    $sucursal_id,
+                    $nombre,
+                    $apellido,
+                    $telefono,
+                    $email,
+                    $contacto_emergencia_nombre,
+                    $contacto_emergencia_telefono,
+                    $codigo_qr
+                );
+            }
+
             $stmt->execute();
             $cliente_id = $conn->insert_id;
-            
+
             // Insertar inscripción
             $stmt = $conn->prepare(
                 "INSERT INTO inscripciones (
@@ -663,6 +812,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
             }
             
             $conn->commit();
+            $alta_cliente_confirmada = true;
 
 // ========== PREPARAR CUESTIONARIO MÉDICO ==========
 $invitacion_cuestionario_salud = null;
@@ -892,6 +1042,25 @@ $_SESSION['mensaje_exito'] = $mensaje_exito;
                 } catch (Throwable $rollbackError) {
                 }
             }
+
+            if (
+                isset($foto_cliente_nueva)
+                && $foto_cliente_nueva !== ''
+                && empty($alta_cliente_confirmada)
+            ) {
+                $fotoAbsoluta = __DIR__
+                    . DIRECTORY_SEPARATOR
+                    . str_replace(
+                        '/',
+                        DIRECTORY_SEPARATOR,
+                        ltrim($foto_cliente_nueva, '/')
+                    );
+
+                if (is_file($fotoAbsoluta)) {
+                    @unlink($fotoAbsoluta);
+                }
+            }
+
             $_SESSION['cerrar_ventana_documento_membresia'] = true;
             $_SESSION['error'] = $e->getMessage();
             header('Location: inscripciones.php');
@@ -1441,17 +1610,23 @@ $sort_columns = [
 $order_by = isset($sort_columns[$sort]) ? $sort_columns[$sort] : 'i.id';
 $order_dir = ($order == 'ASC') ? 'ASC' : 'DESC';
 
+$campo_foto_cliente = $clientes_tiene_foto
+    ? "c.foto AS cliente_foto,"
+    : "NULL AS cliente_foto,";
+
 $query = "SELECT
               i.*,
               c.nombre AS cliente_nombre,
               c.apellido AS cliente_apellido,
               c.telefono AS cliente_telefono,
               c.codigo_qr AS cliente_codigo_qr,
+              {$campo_foto_cliente}
               c.estado AS cliente_estado,
               p.nombre AS plan_nombre,
               p.duracion_dias,
               s.nombre AS sucursal_nombre,
               s.clave AS sucursal_clave,
+              s.logo AS sucursal_logo,
               s.es_matriz AS sucursal_es_matriz
           FROM inscripciones i
           INNER JOIN clientes c ON i.cliente_id = c.id
@@ -1544,6 +1719,57 @@ $stmtPlanes->bind_param('i', $sucursal_id);
 $stmtPlanes->execute();
 $planes = $stmtPlanes->get_result()->fetch_all(MYSQLI_ASSOC);
 $stmtPlanes->close();
+
+/*
+ * Identidad visual para la credencial.
+ * Prioridad: logo propio de sucursal -> logo corporativo -> logo por defecto.
+ */
+$credencial_config_gym = [
+    'nombre' => 'EGO',
+    'logo' => '',
+];
+
+try {
+    $resultadoCredencialGym = $conn->query(
+        "SELECT nombre, logo
+         FROM configuracion_gimnasio
+         WHERE id = 1
+         LIMIT 1"
+    );
+
+    if (
+        $resultadoCredencialGym instanceof mysqli_result
+        && ($filaCredencialGym = $resultadoCredencialGym->fetch_assoc())
+    ) {
+        $credencial_config_gym = array_merge(
+            $credencial_config_gym,
+            $filaCredencialGym
+        );
+    }
+} catch (Throwable $credencialConfigError) {
+    error_log(
+        '[Credencial socio] No se pudo leer configuracion_gimnasio: '
+        . $credencialConfigError->getMessage()
+    );
+}
+
+$credencial_gym_nombre = trim((string) (
+    $credencial_config_gym['nombre'] ?? 'EGO'
+));
+
+if ($credencial_gym_nombre === '') {
+    $credencial_gym_nombre = 'EGO';
+}
+
+$credencial_logo_corporativo = inscripcionesRutaImagenPublica(
+    (string) ($credencial_config_gym['logo'] ?? '')
+);
+
+if ($credencial_logo_corporativo === '') {
+    $credencial_logo_corporativo = inscripcionesRutaImagenPublica(
+        'img/logo-gym.png'
+    );
+}
 
 /*
  * La terminal Point se toma de config/mercadopago_config.php.
@@ -1827,7 +2053,197 @@ $correo_tokens_async = correo_cola_extraer_tokens_async();
                 overflow-x: visible !important;
             }
         }
-    </style>
+    
+        /* ===== Credencial socio CR80: 85.60 x 53.98 mm ===== */
+        .credencial-modal-dialog{max-width:1040px}
+        .credencial-modal-body{padding:22px 18px 14px;background:#f5f7fb}
+        .credencial-preview-shell{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;align-items:start;width:100%}
+        .credencial-side-preview{display:grid;gap:8px;justify-items:center;min-width:0}
+        .credencial-side-label{margin:0;color:#667085;font-size:.72rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
+        .credencial-socio-card{
+            position:relative;display:flex;flex-direction:column;width:85.60mm;height:53.98mm;max-width:100%;overflow:hidden;
+            border:.28mm solid #d7deea;border-radius:3.18mm;background:radial-gradient(circle at 12% 18%,rgba(37,99,235,.08),transparent 28%),linear-gradient(135deg,#fff 0%,#f8faff 100%);
+            box-shadow:0 12px 28px rgba(28,45,80,.14);isolation:isolate
+        }
+        .credencial-socio-card:after{content:"";position:absolute;right:-16mm;bottom:-20mm;width:44mm;height:44mm;border:7mm solid rgba(30,64,175,.045);border-radius:50%;pointer-events:none;z-index:-1}
+        .credencial-top-line{flex:0 0 3.6mm;background:linear-gradient(90deg,#17366f,#2f66b3)}
+        .credencial-head{display:flex;align-items:center;justify-content:space-between;gap:3mm;min-height:10.5mm;padding:1.8mm 4mm 1.4mm;border-bottom:.25mm solid #e4e9f1}
+        .credencial-brand{display:flex;align-items:center;min-width:0;gap:2.2mm}
+        .credencial-brand-logo-wrap{display:grid;place-items:center;flex:0 0 8.8mm;width:8.8mm;height:8.8mm;overflow:hidden;border-radius:2mm;background:#fff}
+        .credencial-brand-logo{width:100%;height:100%;object-fit:contain}
+        .credencial-brand-logo-fallback{display:none;align-items:center;justify-content:center;width:100%;height:100%;color:#254a8e;font-size:4.2mm}
+        .credencial-brand-copy{min-width:0}
+        .credencial-gym-name{display:block;max-width:45mm;overflow:hidden;color:#17366f;font-size:3.65mm;font-weight:900;line-height:1.05;text-overflow:ellipsis;white-space:nowrap}
+        .credencial-gym-caption{display:block;margin-top:.65mm;color:#7a8597;font-size:2.15mm;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
+        .credencial-type-chip{flex:0 0 auto;padding:1.25mm 2.2mm;border:.25mm solid #cbd9f4;border-radius:999px;background:#eef4ff;color:#244a91;font-size:2.1mm;font-weight:900;letter-spacing:.1em;text-transform:uppercase}
+        .credencial-main{display:grid;grid-template-columns:19.5mm minmax(0,1fr) 23.5mm;align-items:center;gap:2.8mm;flex:1 1 auto;min-height:0;padding:2.3mm 4mm 1.9mm}
+        .credencial-person-wrap{display:grid;place-items:center;width:19.5mm;height:22.5mm;overflow:hidden;border:.3mm solid #d7dfec;border-radius:2.4mm;background:#edf2f8}
+        .credencial-person-image{display:block;width:100%;height:100%;object-fit:cover}
+        .credencial-person-image.is-logo{padding:2.3mm;object-fit:contain;background:#fff}
+        .credencial-person-fallback{display:none;align-items:center;justify-content:center;width:100%;height:100%;color:#31548f;font-size:8mm}
+        .credencial-member-copy{min-width:0;align-self:center}
+        .credencial-member-label{margin-bottom:.85mm;color:#8993a3;font-size:2mm;font-weight:800;letter-spacing:.12em;text-transform:uppercase}
+        .credencial-member-name{display:-webkit-box;overflow:hidden;margin:0;color:#172033;font-size:4.05mm;font-weight:900;line-height:1.05;-webkit-box-orient:vertical;-webkit-line-clamp:2}
+        .credencial-member-branch{display:flex;align-items:center;gap:1.1mm;max-width:28mm;margin-top:2mm;color:#607087;font-size:2.35mm;font-weight:700;line-height:1.15}
+        .credencial-member-branch i{flex:0 0 auto;color:#2f66b3}
+        .credencial-member-branch span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+        .credencial-qr-wrap{display:grid;place-items:center;width:23.5mm;height:23.5mm;padding:1.25mm;overflow:hidden;border:.28mm solid #dce3ee;border-radius:2.3mm;background:#fff}
+        .credencial-qr-image{width:100%;height:100%;object-fit:contain}
+        .credencial-qr-fallback{display:none;place-items:center;width:100%;height:100%;color:#9aa5b5;text-align:center;font-size:4.5mm}
+        .credencial-footer{display:flex;align-items:center;justify-content:space-between;gap:2mm;flex:0 0 6mm;padding:0 4mm;border-top:.25mm solid #e4e9f1;background:rgba(248,250,252,.86);color:#68758a;font-size:2mm}
+        .credencial-code{max-width:47mm;overflow:hidden;color:#26354d;font-family:"Courier New",monospace;font-size:2.15mm;font-weight:800;letter-spacing:.025em;text-overflow:ellipsis;white-space:nowrap}
+        .credencial-footer-note{flex:0 0 auto;font-weight:700}
+        .credencial-back-card{
+            background:
+                radial-gradient(circle at 88% 18%,rgba(47,102,179,.08),transparent 20%),
+                radial-gradient(circle at 12% 88%,rgba(47,102,179,.05),transparent 24%),
+                linear-gradient(135deg,#ffffff 0%,#f8faff 100%);
+            color:#172033;
+            border-color:#d7deea;
+        }
+        .credencial-back-card:before{
+            content:"";
+            position:absolute;
+            right:-15mm;
+            bottom:-19mm;
+            width:40mm;
+            height:40mm;
+            border:6mm solid rgba(30,64,175,.035);
+            border-radius:50%;
+            pointer-events:none;
+        }
+        .credencial-back-card:after{
+            content:"";
+            position:absolute;
+            left:-12mm;
+            top:14mm;
+            width:28mm;
+            height:28mm;
+            border:5mm solid rgba(47,102,179,.025);
+            border-radius:50%;
+            pointer-events:none;
+        }
+        .credencial-back-head{
+            display:flex;
+            align-items:center;
+            justify-content:space-between;
+            gap:3mm;
+            flex:0 0 10mm;
+            min-height:0;
+            padding:1.45mm 4mm 1.15mm;
+            border-bottom:.25mm solid #e4e9f1;
+        }
+        .credencial-back-brand{display:flex;align-items:center;gap:2.2mm;min-width:0}
+        .credencial-back-logo-wrap{display:grid;place-items:center;flex:0 0 8mm;width:8mm;height:8mm;overflow:hidden;border-radius:1.8mm;background:#fff}
+        .credencial-back-logo{width:100%;height:100%;object-fit:contain}
+        .credencial-back-logo-fallback{display:none;align-items:center;justify-content:center;width:100%;height:100%;color:#244a91;font-size:3.3mm;font-weight:900}
+        .credencial-back-gym{min-width:0}
+        .credencial-back-gym strong{display:block;max-width:45mm;overflow:hidden;color:#17366f;font-size:3.35mm;font-weight:900;line-height:1;text-overflow:ellipsis;white-space:nowrap}
+        .credencial-back-gym span{display:block;margin-top:.45mm;color:#7a8597;font-size:1.8mm;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
+        .credencial-back-chip{flex:0 0 auto;padding:1.05mm 2mm;border:.25mm solid #cbd9f4;border-radius:999px;background:#eef4ff;color:#244a91;font-size:1.8mm;font-weight:900;letter-spacing:.1em;text-transform:uppercase}
+
+        .credencial-back-main{
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            flex:1 1 auto;
+            min-height:0;
+            padding:2.4mm 5mm 2mm;
+            overflow:hidden;
+        }
+        .credencial-back-simple{
+            display:grid;
+            grid-template-columns:12mm minmax(0,1fr);
+            align-items:center;
+            gap:3mm;
+            width:100%;
+            min-width:0;
+        }
+        .credencial-back-symbol{
+            display:grid;
+            place-items:center;
+            width:12mm;
+            height:12mm;
+            border:.3mm solid #cfe0fa;
+            border-radius:50%;
+            background:#eef5ff;
+            color:#2f66b3;
+            font-size:5mm;
+        }
+        .credencial-back-simple-copy{min-width:0}
+        .credencial-back-simple-copy h6{
+            margin:0;
+            color:#172033;
+            font-size:3.15mm;
+            font-weight:900;
+            line-height:1.05;
+        }
+        .credencial-back-simple-copy > p{
+            margin:1.1mm 0 0;
+            color:#66758a;
+            font-size:2mm;
+            font-weight:700;
+            line-height:1.3;
+        }
+        .credencial-back-simple-rules{
+            display:flex;
+            align-items:center;
+            flex-wrap:wrap;
+            gap:1mm 2.4mm;
+            margin-top:2.2mm;
+        }
+        .credencial-back-simple-rule{
+            display:inline-flex;
+            align-items:center;
+            gap:1mm;
+            color:#42526a;
+            font-size:1.85mm;
+            font-weight:800;
+            line-height:1.15;
+        }
+        .credencial-back-simple-rule i{
+            flex:0 0 auto;
+            color:#2f66b3;
+            font-size:1.9mm;
+        }
+        .credencial-back-footer{
+            display:flex;
+            align-items:center;
+            justify-content:space-between;
+            gap:2mm;
+            flex:0 0 5.3mm;
+            min-height:0;
+            padding:0 4mm;
+            border-top:.25mm solid #e4e9f1;
+            background:rgba(248,250,252,.92);
+            color:#68758a;
+            font-size:1.75mm;
+        }
+        .credencial-back-footer-note{
+            display:flex;
+            align-items:center;
+            gap:1mm;
+            min-width:0;
+            font-weight:700;
+        }
+        .credencial-back-footer-note i{flex:0 0 auto;color:#2f66b3;font-size:1.9mm}
+        .credencial-back-footer-note span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+        .credencial-back-footer-status{flex:0 0 auto;color:#244a91;font-size:1.9mm;font-weight:900;letter-spacing:.09em;text-transform:uppercase}
+        .credencial-size-hint{grid-column:1/-1;margin:0;color:#758196;font-size:.74rem;text-align:center}
+        .credencial-modal-footer{display:flex;justify-content:space-between;gap:10px}
+
+        .member-photo-upload{display:flex;align-items:center;gap:13px;margin:2px 0 16px;padding:12px 14px;border:1px solid #dce3ee;border-radius:10px;background:#f8fafc}
+        .member-photo-preview{display:grid;place-items:center;flex:0 0 72px;width:72px;height:82px;overflow:hidden;border:1px solid #d6deea;border-radius:11px;background:#eef3f9;color:#5d6c82}
+        .member-photo-preview img{display:none;width:100%;height:100%;object-fit:cover}
+        .member-photo-preview i{font-size:1.35rem}
+        .member-photo-upload-copy{flex:1 1 auto;min-width:0}
+        .member-photo-upload-copy .form-label{margin-bottom:5px}
+        .member-photo-upload-copy small{display:block;margin-top:5px;color:#768195;line-height:1.35}
+        .member-photo-input-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:7px}
+        .member-photo-input-actions .btn{padding:6px 10px;font-size:.76rem}
+        @media(max-width:991.98px){.credencial-modal-dialog{max-width:620px}.credencial-preview-shell{grid-template-columns:1fr}.credencial-size-hint{grid-column:auto}}
+        @media(max-width:420px){.credencial-modal-body{padding-left:8px;padding-right:8px}.credencial-side-preview{justify-items:start}.credencial-preview-shell{justify-items:start;overflow-x:auto}.member-photo-upload{align-items:flex-start}.member-photo-preview{flex-basis:62px;width:62px;height:72px}}
+</style>
 </head>
 <body>
     <?php include 'includes/sidebar.php'; ?>
@@ -1992,11 +2408,32 @@ $correo_tokens_async = correo_cola_extraer_tokens_async();
                                         $mensaje_renovar = $renovar_title;
                                     }
                                 }
-                            $nombre_cliente_qr = trim($ins['cliente_nombre'] . ' ' . $ins['cliente_apellido']);
-                            $codigo_cliente_qr = trim((string)($ins['cliente_codigo_qr'] ?? ''));
+                            $nombre_cliente_qr = trim(
+                                $ins['cliente_nombre'] . ' ' . $ins['cliente_apellido']
+                            );
+                            $codigo_cliente_qr = trim((string) (
+                                $ins['cliente_codigo_qr'] ?? ''
+                            ));
                             $archivo_cliente_qr = $codigo_cliente_qr !== ''
-                                ? 'qrcodes/' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $codigo_cliente_qr) . '.png'
+                                ? 'qrcodes/' . preg_replace(
+                                    '/[^a-zA-Z0-9_-]/',
+                                    '_',
+                                    $codigo_cliente_qr
+                                ) . '.png'
                                 : '';
+
+                            $foto_cliente_credencial = inscripcionesRutaImagenPublica(
+                                (string) ($ins['cliente_foto'] ?? '')
+                            );
+                            $logo_sucursal_credencial = inscripcionesRutaImagenPublica(
+                                (string) ($ins['sucursal_logo'] ?? '')
+                            );
+                            $logo_credencial = $logo_sucursal_credencial !== ''
+                                ? $logo_sucursal_credencial
+                                : $credencial_logo_corporativo;
+                            $sucursal_credencial = trim((string) (
+                                $ins['sucursal_nombre'] ?? $sucursal_nombre
+                            ));
                             ?>
                             <tr>
                                 <td data-label="Cliente"><strong><?php echo htmlspecialchars($ins['cliente_nombre'] . ' ' . $ins['cliente_apellido']); ?></strong></td>
@@ -2096,16 +2533,20 @@ $correo_tokens_async = correo_cola_extraer_tokens_async();
                                         
                                         <button
                                             type="button"
-                                            class="btn-accion btn-qr"
+                                            class="btn-accion btn-qr btn-credencial"
                                             data-bs-toggle="modal"
-                                            data-bs-target="#modalQr"
+                                            data-bs-target="#modalCredencial"
                                             data-cliente="<?php echo htmlspecialchars($nombre_cliente_qr, ENT_QUOTES, 'UTF-8'); ?>"
                                             data-codigo="<?php echo htmlspecialchars($codigo_cliente_qr, ENT_QUOTES, 'UTF-8'); ?>"
                                             data-ruta="<?php echo htmlspecialchars($archivo_cliente_qr, ENT_QUOTES, 'UTF-8'); ?>"
-                                            title="Ver código QR"
+                                            data-foto="<?php echo htmlspecialchars($foto_cliente_credencial, ENT_QUOTES, 'UTF-8'); ?>"
+                                            data-logo="<?php echo htmlspecialchars($logo_credencial, ENT_QUOTES, 'UTF-8'); ?>"
+                                            data-gym="<?php echo htmlspecialchars($credencial_gym_nombre, ENT_QUOTES, 'UTF-8'); ?>"
+                                            data-sucursal="<?php echo htmlspecialchars($sucursal_credencial, ENT_QUOTES, 'UTF-8'); ?>"
+                                            title="Ver credencial del socio"
                                             <?php echo $codigo_cliente_qr === '' ? 'disabled' : ''; ?>
                                         >
-                                            <i class="fas fa-qrcode"></i> <span>QR</span>
+                                            <i class="fas fa-id-card"></i> <span>Credencial</span>
                                         </button>
                                         
                                         <button class="btn-accion btn-renovar" 
@@ -2165,7 +2606,7 @@ $correo_tokens_async = correo_cola_extraer_tokens_async();
                     <h5 class="modal-title"><i class="fas fa-user-plus"></i> Nuevo Cliente e Inscripción</h5>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
-                <form id="formNuevoCliente" method="POST">
+                <form id="formNuevoCliente" method="POST" enctype="multipart/form-data">
                     <input type="hidden" name="action" value="crear_cliente_inscripcion">
                     <input type="hidden" name="csrf_token" value="<?php echo $_SESSION['csrf_token']; ?>">
                     <input type="hidden" name="mp_order_id" value="">
@@ -2186,6 +2627,38 @@ $correo_tokens_async = correo_cola_extraer_tokens_async();
                             </div>
                         </div>
                         
+                        <?php if ($clientes_tiene_foto): ?>
+                        <div class="member-photo-upload">
+                            <div class="member-photo-preview" id="fotoSocioPreviewWrap" aria-hidden="true">
+                                <img id="fotoSocioPreview" alt="Vista previa de la foto del socio">
+                                <i class="fas fa-user" id="fotoSocioPreviewIcon"></i>
+                            </div>
+                            <div class="member-photo-upload-copy">
+                                <label class="form-label" for="foto_socio">
+                                    Foto para credencial
+                                    <span class="text-muted fw-normal">(opcional)</span>
+                                </label>
+                                <input
+                                    type="file"
+                                    class="form-control"
+                                    name="foto_socio"
+                                    id="foto_socio"
+                                    accept="image/jpeg,image/png,image/webp"
+                                    capture="user"
+                                >
+                                <div class="member-photo-input-actions">
+                                    <button type="button" class="btn btn-outline-secondary btn-sm" id="btnQuitarFotoSocio" hidden>
+                                        <i class="fas fa-trash-can"></i> Quitar foto
+                                    </button>
+                                </div>
+                                <small>
+                                    Si no agregas foto,
+                                    la credencial mostrará automáticamente el logo de la sucursal o del gimnasio.
+                                </small>
+                            </div>
+                        </div>
+                        <?php endif; ?>
+
                         <div class="row">
                             <div class="col-md-6 mb-3">
                                 <label class="form-label" for="telefono_nuevo">Teléfono *</label>
@@ -2446,32 +2919,135 @@ $correo_tokens_async = correo_cola_extraer_tokens_async();
         </div>
     </div>
     
-    <!-- Modal QR -->
-    <div class="modal fade" id="modalQr" tabindex="-1" aria-labelledby="modalQrTitulo" aria-hidden="true">
-        <div class="modal-dialog modal-dialog-centered qr-modal-dialog">
+    <!-- Modal Credencial del socio -->
+    <div class="modal fade" id="modalCredencial" tabindex="-1" aria-labelledby="modalCredencialTitulo" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered credencial-modal-dialog">
             <div class="modal-content">
                 <div class="modal-header modal-header-brand">
-                    <h5 class="modal-title" id="modalQrTitulo">
-                        <i class="fas fa-qrcode"></i> Código QR del socio
+                    <h5 class="modal-title" id="modalCredencialTitulo">
+                        <i class="fas fa-id-card"></i> Credencial del socio
                     </h5>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
                 </div>
-                <div class="modal-body qr-modal-body">
-                    <div class="qr-modal-member" id="qrModalCliente">Socio</div>
-                    <div class="qr-modal-frame">
-                        <img id="qrModalImage" class="qr-modal-image" alt="Código QR del socio">
-                        <div id="qrModalFallback" class="qr-modal-fallback d-none">
-                            <i class="fas fa-triangle-exclamation"></i>
-                            <span>No se encontró la imagen del QR.</span>
-                        </div>
+
+                <div class="modal-body credencial-modal-body">
+                    <div class="credencial-preview-shell">
+                        <section class="credencial-side-preview" aria-label="Frente de la credencial">
+                            <p class="credencial-side-label">Frente</p>
+                            <article class="credencial-socio-card" id="credencialSocio">
+                                <div class="credencial-top-line"></div>
+
+                                <header class="credencial-head">
+                                    <div class="credencial-brand">
+                                        <div class="credencial-brand-logo-wrap">
+                                            <img id="credencialBrandLogo" class="credencial-brand-logo" alt="Logo del gimnasio">
+                                            <div id="credencialBrandFallback" class="credencial-brand-logo-fallback" aria-hidden="true">
+                                                <i class="fas fa-dumbbell"></i>
+                                            </div>
+                                        </div>
+                                        <div class="credencial-brand-copy">
+                                            <strong class="credencial-gym-name" id="credencialGymNombre">EGO</strong>
+                                            <span class="credencial-gym-caption">Credencial de acceso</span>
+                                        </div>
+                                    </div>
+                                    <span class="credencial-type-chip">Socio</span>
+                                </header>
+
+                                <div class="credencial-main">
+                                    <div class="credencial-person-wrap">
+                                        <img id="credencialFoto" class="credencial-person-image" alt="Foto del socio">
+                                        <div id="credencialFotoFallback" class="credencial-person-fallback" aria-hidden="true">
+                                            <i class="fas fa-user"></i>
+                                        </div>
+                                    </div>
+
+                                    <div class="credencial-member-copy">
+                                        <div class="credencial-member-label">Nombre del socio</div>
+                                        <h6 class="credencial-member-name" id="credencialCliente">Socio</h6>
+                                        <div class="credencial-member-branch">
+                                            <i class="fas fa-location-dot"></i>
+                                            <span id="credencialSucursal">Sucursal</span>
+                                        </div>
+                                    </div>
+
+                                    <div class="credencial-qr-wrap">
+                                        <img id="credencialQr" class="credencial-qr-image" alt="Código QR del socio">
+                                        <div id="credencialQrFallback" class="credencial-qr-fallback" aria-hidden="true">
+                                            <i class="fas fa-qrcode"></i>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <footer class="credencial-footer">
+                                    <code class="credencial-code" id="credencialCodigo">—</code>
+                                    <span class="credencial-footer-note">Acceso mediante QR</span>
+                                </footer>
+                            </article>
+                        </section>
+
+                        <section class="credencial-side-preview" aria-label="Reverso de la credencial">
+                            <p class="credencial-side-label">Reverso</p>
+                            <article class="credencial-socio-card credencial-back-card" id="credencialReverso">
+                                <div class="credencial-top-line"></div>
+
+                                <header class="credencial-back-head">
+                                    <div class="credencial-back-brand">
+                                        <div class="credencial-back-logo-wrap">
+                                            <img id="credencialBackLogo" class="credencial-back-logo" alt="Logo del gimnasio">
+                                            <div id="credencialBackLogoFallback" class="credencial-back-logo-fallback" aria-hidden="true">GYM</div>
+                                        </div>
+                                        <div class="credencial-back-gym">
+                                            <strong id="credencialBackGymNombre">EGO</strong>
+                                            <span>Información de la credencial</span>
+                                        </div>
+                                    </div>
+                                    <span class="credencial-back-chip">Acceso</span>
+                                </header>
+
+                                <div class="credencial-back-main">
+                                    <div class="credencial-back-simple">
+                                        <div class="credencial-back-symbol" aria-hidden="true">
+                                            <i class="fas fa-shield-halved"></i>
+                                        </div>
+
+                                        <div class="credencial-back-simple-copy">
+                                            <h6>Credencial de acceso</h6>
+                                            <p>Personal e intransferible. Preséntala al ingresar al gimnasio.</p>
+
+                                            <div class="credencial-back-simple-rules">
+                                                <span class="credencial-back-simple-rule">
+                                                    <i class="fas fa-circle-check"></i>
+                                                    Vigencia validada en sistema
+                                                </span>
+                                                <span class="credencial-back-simple-rule">
+                                                    <i class="fas fa-rotate"></i>
+                                                    Reposición en recepción
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <footer class="credencial-back-footer">
+                                    <div class="credencial-back-footer-note">
+                                        <i class="fas fa-circle-info"></i>
+                                        <span>En caso de extravío, repórtala en recepción.</span>
+                                    </div>
+                                    <span class="credencial-back-footer-status">Acceso</span>
+                                </footer>
+                            </article>
+                        </section>
+
+                        <p class="credencial-size-hint">
+                            Cada cara mide 85.60 × 53.98 mm (CR80/PVC). La impresión coloca frente y reverso al tamaño real para recortar y enmicar.
+                        </p>
                     </div>
-                    <div class="qr-modal-code-label">Código</div>
-                    <code class="qr-modal-code" id="qrModalCodigo">—</code>
                 </div>
-                <div class="modal-footer qr-modal-footer">
+
+                <div class="modal-footer credencial-modal-footer">
                     <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cerrar</button>
-                    <button type="button" class="btn btn-primary" id="btnImprimirQr">
-                        <i class="fas fa-print"></i> Imprimir
+                    <button type="button" class="btn btn-primary" id="btnImprimirCredencial">
+                        <i class="fas fa-print"></i> Imprimir frente y reverso
                     </button>
                 </div>
             </div>
@@ -2564,12 +3140,27 @@ $correo_tokens_async = correo_cola_extraer_tokens_async();
             ventanaDocumentoMembresia = null;
         }
 
-        const modalQrElement = document.getElementById('modalQr');
-        const qrModalImage = document.getElementById('qrModalImage');
-        const qrModalFallback = document.getElementById('qrModalFallback');
-        const qrModalCliente = document.getElementById('qrModalCliente');
-        const qrModalCodigo = document.getElementById('qrModalCodigo');
-        const btnImprimirQr = document.getElementById('btnImprimirQr');
+        const modalCredencialElement = document.getElementById('modalCredencial');
+        const credencialQr = document.getElementById('credencialQr');
+        const credencialQrFallback = document.getElementById('credencialQrFallback');
+        const credencialFoto = document.getElementById('credencialFoto');
+        const credencialFotoFallback = document.getElementById('credencialFotoFallback');
+        const credencialBrandLogo = document.getElementById('credencialBrandLogo');
+        const credencialBrandFallback = document.getElementById('credencialBrandFallback');
+        const credencialBackLogo = document.getElementById('credencialBackLogo');
+        const credencialBackLogoFallback = document.getElementById('credencialBackLogoFallback');
+        const credencialCliente = document.getElementById('credencialCliente');
+        const credencialCodigo = document.getElementById('credencialCodigo');
+        const credencialGymNombre = document.getElementById('credencialGymNombre');
+        const credencialSucursal = document.getElementById('credencialSucursal');
+        const credencialBackGymNombre = document.getElementById('credencialBackGymNombre');
+        const btnImprimirCredencial = document.getElementById('btnImprimirCredencial');
+
+        const fotoSocioInput = document.getElementById('foto_socio');
+        const fotoSocioPreview = document.getElementById('fotoSocioPreview');
+        const fotoSocioPreviewIcon = document.getElementById('fotoSocioPreviewIcon');
+        const btnQuitarFotoSocio = document.getElementById('btnQuitarFotoSocio');
+        let fotoSocioPreviewUrl = '';
 
         function escaparHtml(valor) {
             return String(valor ?? '').replace(/[&<>'"]/g, function(caracter) {
@@ -2583,84 +3174,394 @@ $correo_tokens_async = correo_cola_extraer_tokens_async();
             });
         }
 
-        if (modalQrElement) {
-            modalQrElement.addEventListener('show.bs.modal', function(event) {
+        function urlAbsolutaCredencial(ruta) {
+            const valor = String(ruta || '').trim();
+            if (!valor) return '';
+
+            try {
+                return new URL(valor, window.location.href).href;
+            } catch (error) {
+                return '';
+            }
+        }
+
+        function mostrarFallbackImagen(imagen, fallback) {
+            if (imagen) {
+                imagen.classList.add('d-none');
+                imagen.removeAttribute('src');
+            }
+            if (fallback) {
+                fallback.style.display = 'flex';
+            }
+        }
+
+        function limpiarVistaPreviaFotoSocio() {
+            if (fotoSocioPreviewUrl) {
+                URL.revokeObjectURL(fotoSocioPreviewUrl);
+                fotoSocioPreviewUrl = '';
+            }
+
+            if (fotoSocioPreview) {
+                fotoSocioPreview.removeAttribute('src');
+                fotoSocioPreview.style.display = 'none';
+            }
+
+            if (fotoSocioPreviewIcon) {
+                fotoSocioPreviewIcon.style.display = '';
+            }
+
+            if (btnQuitarFotoSocio) {
+                btnQuitarFotoSocio.hidden = true;
+            }
+        }
+
+        if (fotoSocioInput) {
+            fotoSocioInput.addEventListener('change', function() {
+                limpiarVistaPreviaFotoSocio();
+
+                const archivo = this.files && this.files[0] ? this.files[0] : null;
+                if (!archivo) return;
+
+                const formatosPermitidos = ['image/jpeg', 'image/png', 'image/webp'];
+                if (!formatosPermitidos.includes(archivo.type)) {
+                    this.value = '';
+                    Swal.fire('Formato no válido', 'La foto debe ser JPG, PNG o WEBP.', 'warning');
+                    return;
+                }
+
+                if (archivo.size > 5 * 1024 * 1024) {
+                    this.value = '';
+                    Swal.fire('Foto demasiado grande', 'La foto debe pesar máximo 5 MB.', 'warning');
+                    return;
+                }
+
+                fotoSocioPreviewUrl = URL.createObjectURL(archivo);
+                fotoSocioPreview.src = fotoSocioPreviewUrl;
+                fotoSocioPreview.style.display = 'block';
+                fotoSocioPreviewIcon.style.display = 'none';
+                btnQuitarFotoSocio.hidden = false;
+            });
+        }
+
+        if (btnQuitarFotoSocio) {
+            btnQuitarFotoSocio.addEventListener('click', function() {
+                if (fotoSocioInput) fotoSocioInput.value = '';
+                limpiarVistaPreviaFotoSocio();
+            });
+        }
+
+        function cargarLogoMarcaCredencial(logo) {
+            const ruta = urlAbsolutaCredencial(logo);
+            const configuraciones = [
+                [credencialBrandLogo, credencialBrandFallback],
+                [credencialBackLogo, credencialBackLogoFallback]
+            ];
+
+            configuraciones.forEach(function(par) {
+                const imagen = par[0];
+                const fallback = par[1];
+                if (!imagen || !fallback) return;
+
+                fallback.style.display = 'none';
+                imagen.classList.remove('d-none');
+
+                if (!ruta) {
+                    mostrarFallbackImagen(imagen, fallback);
+                    return;
+                }
+
+                imagen.src = ruta;
+            });
+        }
+
+        function cargarFotoCredencial(foto, logo) {
+            const fotoAbsoluta = urlAbsolutaCredencial(foto);
+            const logoAbsoluto = urlAbsolutaCredencial(logo);
+
+            credencialFotoFallback.style.display = 'none';
+            credencialFoto.classList.remove('d-none', 'is-logo');
+            credencialFoto.dataset.logoFallback = logoAbsoluto;
+            credencialFoto.dataset.esFoto = fotoAbsoluta ? '1' : '0';
+
+            if (fotoAbsoluta) {
+                credencialFoto.src = fotoAbsoluta;
+                credencialFoto.alt = 'Foto del socio';
+                return;
+            }
+
+            if (logoAbsoluto) {
+                credencialFoto.classList.add('is-logo');
+                credencialFoto.src = logoAbsoluto;
+                credencialFoto.alt = 'Logo del gimnasio';
+                return;
+            }
+
+            mostrarFallbackImagen(credencialFoto, credencialFotoFallback);
+        }
+
+        [
+            [credencialBrandLogo, credencialBrandFallback],
+            [credencialBackLogo, credencialBackLogoFallback]
+        ].forEach(function(par) {
+            const imagen = par[0];
+            const fallback = par[1];
+            if (!imagen) return;
+            imagen.addEventListener('error', function() {
+                mostrarFallbackImagen(imagen, fallback);
+            });
+        });
+
+        if (credencialFoto) {
+            credencialFoto.addEventListener('error', function() {
+                const logoFallback = String(credencialFoto.dataset.logoFallback || '');
+                const veniaDeFoto = credencialFoto.dataset.esFoto === '1';
+
+                if (veniaDeFoto && logoFallback) {
+                    credencialFoto.dataset.esFoto = '0';
+                    credencialFoto.classList.add('is-logo');
+                    credencialFoto.src = logoFallback;
+                    credencialFoto.alt = 'Logo del gimnasio';
+                    return;
+                }
+
+                mostrarFallbackImagen(credencialFoto, credencialFotoFallback);
+            });
+        }
+
+        if (credencialQr) {
+            credencialQr.addEventListener('error', function() {
+                credencialQr.classList.add('d-none');
+                credencialQrFallback.style.display = 'grid';
+            });
+        }
+
+        if (modalCredencialElement) {
+            modalCredencialElement.addEventListener('show.bs.modal', function(event) {
                 const boton = event.relatedTarget;
                 const cliente = boton ? boton.getAttribute('data-cliente') : '';
                 const codigo = boton ? boton.getAttribute('data-codigo') : '';
-                const ruta = boton ? boton.getAttribute('data-ruta') : '';
+                const rutaQr = boton ? boton.getAttribute('data-ruta') : '';
+                const foto = boton ? boton.getAttribute('data-foto') : '';
+                const logo = boton ? boton.getAttribute('data-logo') : '';
+                const gym = boton ? boton.getAttribute('data-gym') : '';
+                const sucursal = boton ? boton.getAttribute('data-sucursal') : '';
 
-                qrModalCliente.textContent = cliente || 'Socio';
-                qrModalCodigo.textContent = codigo || 'Sin código QR';
-                qrModalFallback.classList.add('d-none');
-                qrModalImage.classList.remove('d-none');
+                const clienteMostrar = cliente || 'Socio';
+                const codigoMostrar = codigo || 'Sin código';
+                const gymMostrar = gym || 'EGO';
+                const sucursalMostrar = sucursal || 'Sucursal';
 
-                if (ruta) {
-                    qrModalImage.alt = 'Código QR de ' + (cliente || 'socio');
-                    qrModalImage.src = ruta + '?v=' + Date.now();
+                credencialCliente.textContent = clienteMostrar;
+                credencialCodigo.textContent = codigoMostrar;
+                credencialGymNombre.textContent = gymMostrar;
+                credencialSucursal.textContent = sucursalMostrar;
+                credencialBackGymNombre.textContent = gymMostrar;
+
+                cargarLogoMarcaCredencial(logo);
+                cargarFotoCredencial(foto, logo);
+
+                credencialQrFallback.style.display = 'none';
+                credencialQr.classList.remove('d-none');
+
+                const qrAbsoluto = urlAbsolutaCredencial(rutaQr);
+                if (qrAbsoluto) {
+                    credencialQr.src = qrAbsoluto
+                        + (qrAbsoluto.indexOf('?') >= 0 ? '&' : '?')
+                        + 'v=' + Date.now();
                 } else {
-                    qrModalImage.removeAttribute('src');
-                    qrModalImage.classList.add('d-none');
-                    qrModalFallback.classList.remove('d-none');
+                    credencialQr.classList.add('d-none');
+                    credencialQr.removeAttribute('src');
+                    credencialQrFallback.style.display = 'grid';
                 }
-            });
-
-            qrModalImage.addEventListener('error', function() {
-                qrModalImage.classList.add('d-none');
-                qrModalFallback.classList.remove('d-none');
             });
         }
 
-        if (btnImprimirQr) {
-            btnImprimirQr.addEventListener('click', function() {
-                const ruta = qrModalImage.getAttribute('src') || '';
-                const cliente = qrModalCliente.textContent || 'Socio';
-                const codigo = qrModalCodigo.textContent || '';
+        function construirCredencialImpresion() {
+            const cliente = credencialCliente.textContent || 'Socio';
+            const codigo = credencialCodigo.textContent || '';
+            const gym = credencialGymNombre.textContent || 'EGO';
+            const sucursal = credencialSucursal.textContent || 'Sucursal';
 
-                if (!ruta || qrModalImage.classList.contains('d-none')) {
-                    Swal.fire('QR no disponible', 'No se encontró una imagen para imprimir.', 'warning');
-                    return;
-                }
+            const qrDisponible = credencialQr
+                && !credencialQr.classList.contains('d-none')
+                && credencialQr.src;
 
-                const ventana = window.open('', '_blank', 'width=520,height=650');
+            if (!qrDisponible) {
+                Swal.fire('QR no disponible', 'No se encontró la imagen del QR para imprimir la credencial.', 'warning');
+                return '';
+            }
+
+            const logoMarcaDisponible = credencialBrandLogo
+                && !credencialBrandLogo.classList.contains('d-none')
+                && credencialBrandLogo.src;
+
+            const fotoDisponible = credencialFoto
+                && !credencialFoto.classList.contains('d-none')
+                && credencialFoto.src;
+
+            const personaEsLogo = fotoDisponible && credencialFoto.classList.contains('is-logo');
+
+            const logoMarcaHtml = logoMarcaDisponible
+                ? `<img class="brand-logo" src="${escaparHtml(credencialBrandLogo.src)}" alt="Logo">`
+                : `<div class="brand-fallback">GYM</div>`;
+
+            const personaHtml = fotoDisponible
+                ? `<img class="person-image${personaEsLogo ? ' is-logo' : ''}" src="${escaparHtml(credencialFoto.src)}" alt="Identidad visual">`
+                : `<div class="person-fallback">SOCIO</div>`;
+
+            const frente = `
+                <article class="card card-front">
+                    <div class="top-line"></div>
+                    <header class="head">
+                        <div class="brand">
+                            <div class="brand-logo-wrap">${logoMarcaHtml}</div>
+                            <div class="brand-copy">
+                                <strong class="gym-name">${escaparHtml(gym)}</strong>
+                                <span class="gym-caption">Credencial de acceso</span>
+                            </div>
+                        </div>
+                        <span class="type-chip">Socio</span>
+                    </header>
+                    <div class="main">
+                        <div class="person-wrap">${personaHtml}</div>
+                        <div class="member-copy">
+                            <div class="member-label">Nombre del socio</div>
+                            <h1 class="member-name">${escaparHtml(cliente)}</h1>
+                            <span class="branch">${escaparHtml(sucursal)}</span>
+                        </div>
+                        <div class="qr-wrap">
+                            <img class="qr" src="${escaparHtml(credencialQr.src)}" alt="QR">
+                        </div>
+                    </div>
+                    <footer class="footer">
+                        <code class="code">${escaparHtml(codigo)}</code>
+                        <span class="footer-note">Acceso mediante QR</span>
+                    </footer>
+                </article>`;
+            const reverso = `
+                <article class="card card-back">
+                    <div class="top-line"></div>
+                    <header class="back-head">
+                        <div class="back-brand">
+                            <div class="back-logo-wrap">${logoMarcaHtml}</div>
+                            <div class="back-gym">
+                                <strong>${escaparHtml(gym)}</strong>
+                                <span>Información de la credencial</span>
+                            </div>
+                        </div>
+                        <span class="back-chip">Acceso</span>
+                    </header>
+
+                    <div class="back-main">
+                        <div class="back-simple">
+                            <div class="back-symbol">✓</div>
+                            <div class="back-simple-copy">
+                                <h2>Credencial de acceso</h2>
+                                <p>Personal e intransferible. Preséntala al ingresar al gimnasio.</p>
+                                <div class="back-simple-rules">
+                                    <span><b>✓</b> Vigencia validada en sistema</span>
+                                    <span><b>↻</b> Reposición en recepción</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <footer class="back-footer">
+                        <div class="back-footer-note">En caso de extravío, repórtala en recepción.</div>
+                        <span class="back-footer-status">Acceso</span>
+                    </footer>
+                </article>`;
+
+
+            return `<!doctype html>
+                <html lang="es">
+                <head>
+                    <meta charset="utf-8">
+                    <title>Credencial - ${escaparHtml(cliente)}</title>
+                    <style>
+                        @page { size: A4 landscape; margin: 12mm; }
+                        *{box-sizing:border-box;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
+                        html,body{margin:0;padding:0;background:#fff}
+                        body{font-family:Arial,Helvetica,sans-serif;color:#172033}
+                        .sheet{display:flex;align-items:flex-start;justify-content:center;gap:12mm;width:100%;padding-top:5mm}
+                        .side{display:grid;gap:3mm;justify-items:center}
+                        .label{margin:0;color:#667085;font-size:3mm;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
+                        .card{position:relative;display:flex;flex-direction:column;width:85.60mm;height:53.98mm;overflow:hidden;border:.28mm solid #d7deea;border-radius:3.18mm;isolation:isolate}
+                        .card-front{background:radial-gradient(circle at 12% 18%,rgba(37,99,235,.08),transparent 28%),linear-gradient(135deg,#fff 0%,#f8faff 100%)}
+                        .card-front:after{content:"";position:absolute;right:-16mm;bottom:-20mm;width:44mm;height:44mm;border:7mm solid rgba(30,64,175,.045);border-radius:50%;z-index:-1}
+                        .top-line{flex:0 0 3.6mm;background:linear-gradient(90deg,#17366f,#2f66b3)}
+                        .head{display:flex;align-items:center;justify-content:space-between;gap:3mm;min-height:10.5mm;padding:1.8mm 4mm 1.4mm;border-bottom:.25mm solid #e4e9f1}
+                        .brand{display:flex;align-items:center;min-width:0;gap:2.2mm}.brand-logo-wrap{display:grid;place-items:center;flex:0 0 8.8mm;width:8.8mm;height:8.8mm;overflow:hidden;border-radius:2mm;background:#fff}.brand-logo{width:100%;height:100%;object-fit:contain}.brand-fallback{display:grid;place-items:center;width:100%;height:100%;color:#244a91;font-size:2.4mm;font-weight:900}.brand-copy{min-width:0}.gym-name{display:block;max-width:45mm;overflow:hidden;color:#17366f;font-size:3.65mm;font-weight:900;line-height:1.05;text-overflow:ellipsis;white-space:nowrap}.gym-caption{display:block;margin-top:.65mm;color:#7a8597;font-size:2.15mm;font-weight:700;letter-spacing:.08em;text-transform:uppercase}.type-chip{flex:0 0 auto;padding:1.25mm 2.2mm;border:.25mm solid #cbd9f4;border-radius:999px;background:#eef4ff;color:#244a91;font-size:2.1mm;font-weight:900;letter-spacing:.1em;text-transform:uppercase}
+                        .main{display:grid;grid-template-columns:19.5mm minmax(0,1fr) 23.5mm;align-items:center;gap:2.8mm;flex:1 1 auto;min-height:0;padding:2.3mm 4mm 1.9mm}.person-wrap{display:grid;place-items:center;width:19.5mm;height:22.5mm;overflow:hidden;border:.3mm solid #d7dfec;border-radius:2.4mm;background:#edf2f8}.person-image{width:100%;height:100%;object-fit:cover}.person-image.is-logo{padding:2.3mm;object-fit:contain;background:#fff}.person-fallback{display:grid;place-items:center;width:100%;height:100%;color:#31548f;font-size:2.6mm;font-weight:900}.member-copy{min-width:0}.member-label{margin-bottom:.85mm;color:#8993a3;font-size:2mm;font-weight:800;letter-spacing:.12em;text-transform:uppercase}.member-name{overflow:hidden;margin:0;max-height:8.8mm;color:#172033;font-size:4.05mm;font-weight:900;line-height:1.05}.branch{display:block;max-width:28mm;overflow:hidden;margin-top:2mm;color:#607087;font-size:2.35mm;font-weight:700;text-overflow:ellipsis;white-space:nowrap}.qr-wrap{display:grid;place-items:center;width:23.5mm;height:23.5mm;padding:1.25mm;overflow:hidden;border:.28mm solid #dce3ee;border-radius:2.3mm;background:#fff}.qr{width:100%;height:100%;object-fit:contain}.footer{display:flex;align-items:center;justify-content:space-between;gap:2mm;flex:0 0 6mm;padding:0 4mm;border-top:.25mm solid #e4e9f1;background:rgba(248,250,252,.86);color:#68758a;font-size:2mm}.code{max-width:47mm;overflow:hidden;color:#26354d;font-family:"Courier New",monospace;font-size:2.15mm;font-weight:800;letter-spacing:.025em;text-overflow:ellipsis;white-space:nowrap}.footer-note{flex:0 0 auto;font-weight:700}
+                        .card-back{background:radial-gradient(circle at 88% 18%,rgba(47,102,179,.08),transparent 20%),radial-gradient(circle at 12% 88%,rgba(47,102,179,.05),transparent 24%),linear-gradient(135deg,#ffffff 0%,#f8faff 100%);color:#172033;border-color:#d7deea}
+                        .card-back:before{content:"";position:absolute;right:-15mm;bottom:-19mm;width:40mm;height:40mm;border:6mm solid rgba(30,64,175,.035);border-radius:50%}
+                        .card-back:after{content:"";position:absolute;left:-12mm;top:14mm;width:28mm;height:28mm;border:5mm solid rgba(47,102,179,.025);border-radius:50%}
+                        .back-head{display:flex;align-items:center;justify-content:space-between;gap:3mm;flex:0 0 10mm;min-height:0;padding:1.45mm 4mm 1.15mm;border-bottom:.25mm solid #e4e9f1}.back-brand{display:flex;align-items:center;gap:2.2mm;min-width:0}.back-logo-wrap{display:grid;place-items:center;flex:0 0 8mm;width:8mm;height:8mm;overflow:hidden;border-radius:1.8mm;background:#fff}.back-logo-wrap .brand-logo{width:100%;height:100%;object-fit:contain}.back-gym{min-width:0}.back-gym strong{display:block;max-width:45mm;overflow:hidden;color:#17366f;font-size:3.35mm;font-weight:900;line-height:1;text-overflow:ellipsis;white-space:nowrap}.back-gym span{display:block;margin-top:.45mm;color:#7a8597;font-size:1.8mm;font-weight:700;letter-spacing:.08em;text-transform:uppercase}.back-chip{flex:0 0 auto;padding:1.05mm 2mm;border:.25mm solid #cbd9f4;border-radius:999px;background:#eef4ff;color:#244a91;font-size:1.8mm;font-weight:900;letter-spacing:.1em;text-transform:uppercase}
+                        .back-main{display:flex;align-items:center;justify-content:center;flex:1 1 auto;min-height:0;padding:2.4mm 5mm 2mm;overflow:hidden}.back-simple{display:grid;grid-template-columns:12mm minmax(0,1fr);align-items:center;gap:3mm;width:100%;min-width:0}.back-symbol{display:grid;place-items:center;width:12mm;height:12mm;border:.3mm solid #cfe0fa;border-radius:50%;background:#eef5ff;color:#2f66b3;font-size:5mm;font-weight:900}.back-simple-copy{min-width:0}.back-simple-copy h2{margin:0;color:#172033;font-size:3.15mm;font-weight:900;line-height:1.05}.back-simple-copy p{margin:1.1mm 0 0;color:#66758a;font-size:2mm;font-weight:700;line-height:1.3}.back-simple-rules{display:flex;align-items:center;flex-wrap:wrap;gap:1mm 2.4mm;margin-top:2.2mm}.back-simple-rules span{display:inline-flex;align-items:center;gap:1mm;color:#42526a;font-size:1.85mm;font-weight:800;line-height:1.15}.back-simple-rules b{color:#2f66b3}
+                        .back-footer{display:flex;align-items:center;justify-content:space-between;gap:2mm;flex:0 0 5.3mm;min-height:0;padding:0 4mm;border-top:.25mm solid #e4e9f1;background:rgba(248,250,252,.92);color:#68758a;font-size:1.75mm}.back-footer-note{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700}.back-footer-status{flex:0 0 auto;color:#244a91;font-size:1.9mm;font-weight:900;letter-spacing:.09em;text-transform:uppercase}
+                        .cut-frame{position:relative;display:grid;place-items:center;width:97.6mm;height:65.98mm}
+                        .crop{position:absolute;background:#111}
+                        .crop-h{width:4.2mm;height:.35mm}
+                        .crop-v{width:.35mm;height:4.2mm}
+                        .crop.tl-h{top:3.6mm;left:0}.crop.tl-v{top:0;left:3.6mm}
+                        .crop.tr-h{top:3.6mm;right:0}.crop.tr-v{top:0;right:3.6mm}
+                        .crop.bl-h{bottom:3.6mm;left:0}.crop.bl-v{bottom:0;left:3.6mm}
+                        .crop.br-h{bottom:3.6mm;right:0}.crop.br-v{bottom:0;right:3.6mm}
+                        .print-note{margin:8mm auto 0;color:#667085;font-size:3mm;text-align:center}.print-note strong{color:#344054}
+                        @media print{.print-note{display:none}.label{display:none}}
+                    </style>
+                </head>
+                <body>
+                                        <main class="sheet">
+                        <section class="side">
+                            <p class="label">Frente</p>
+                            <div class="cut-frame">
+                                <span class="crop crop-h tl-h"></span><span class="crop crop-v tl-v"></span>
+                                <span class="crop crop-h tr-h"></span><span class="crop crop-v tr-v"></span>
+                                <span class="crop crop-h bl-h"></span><span class="crop crop-v bl-v"></span>
+                                <span class="crop crop-h br-h"></span><span class="crop crop-v br-v"></span>
+                                ${frente}
+                            </div>
+                        </section>
+                        <section class="side">
+                            <p class="label">Reverso</p>
+                            <div class="cut-frame">
+                                <span class="crop crop-h tl-h"></span><span class="crop crop-v tl-v"></span>
+                                <span class="crop crop-h tr-h"></span><span class="crop crop-v tr-v"></span>
+                                <span class="crop crop-h bl-h"></span><span class="crop crop-v bl-v"></span>
+                                <span class="crop crop-h br-h"></span><span class="crop crop-v br-v"></span>
+                                ${reverso}
+                            </div>
+                        </section>
+                    </main>
+                    <p class="print-note"><strong>Imprime al 100 % / Tamaño real.</strong> Recorta ambas caras y colócalas espalda con espalda antes de enmicar.</p>
+                    <script>
+                        window.addEventListener('load', function(){
+                            window.setTimeout(function(){ window.print(); }, 250);
+                            window.onafterprint = function(){ window.close(); };
+                        });
+                    <\/script>
+                </body>
+                </html>`;
+        }
+
+        if (btnImprimirCredencial) {
+            btnImprimirCredencial.addEventListener('click', function() {
+                const contenido = construirCredencialImpresion();
+                if (!contenido) return;
+
+                const ventana = window.open('', '_blank', 'width=1100,height=720');
                 if (!ventana) {
-                    Swal.fire('Ventana bloqueada', 'Permite ventanas emergentes para imprimir el QR.', 'info');
+                    Swal.fire('Ventana bloqueada', 'Permite ventanas emergentes para imprimir la credencial.', 'info');
                     return;
                 }
 
-                ventana.document.write(`
-                    <!doctype html>
-                    <html lang="es">
-                    <head>
-                        <meta charset="utf-8">
-                        <title>QR - ${escaparHtml(cliente)}</title>
-                        <style>
-                            body{margin:0;padding:32px;font-family:Arial,sans-serif;text-align:center;color:#172033}
-                            h1{margin:0 0 8px;font-size:24px}
-                            p{margin:0 0 24px;color:#667085}
-                            img{display:block;width:320px;max-width:100%;height:auto;margin:0 auto 20px}
-                            code{display:inline-block;padding:8px 12px;border:1px solid #dfe5ee;border-radius:6px;background:#f8fafc;font-size:15px}
-                            @media print{body{padding:10mm}}
-                        </style>
-                    </head>
-                    <body>
-                        <h1>${escaparHtml(cliente)}</h1>
-                        <p>Código de acceso del socio</p>
-                        <img src="${escaparHtml(ruta)}" alt="Código QR">
-                        <code>${escaparHtml(codigo)}</code>
-                        <script>
-                            window.addEventListener('load', function(){
-                                window.print();
-                                window.onafterprint = function(){ window.close(); };
-                            });
-                        <\/script>
-                    </body>
-                    </html>
-                `);
+                ventana.document.open();
+                ventana.document.write(contenido);
                 ventana.document.close();
             });
         }
-        
+
         function actualizarOpcionesCuestionarioSalud() {
             const checkbox = document.getElementById('solicitar_cuestionario_salud');
             const options = document.getElementById('healthEnrollmentOptions');
@@ -3111,6 +4012,8 @@ $correo_tokens_async = correo_cola_extraer_tokens_async();
         $('#modalNuevoCliente').on('hidden.bs.modal', function() {
             formularioEnviando = false;
             limpiarDatosPoint(document.getElementById('formNuevoCliente'));
+            if (fotoSocioInput) fotoSocioInput.value = '';
+            limpiarVistaPreviaFotoSocio();
             const healthCheckbox = document.getElementById('solicitar_cuestionario_salud');
             if (healthCheckbox) {
                 healthCheckbox.checked = false;

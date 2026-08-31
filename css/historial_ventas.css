@@ -1,6 +1,6 @@
 :root {
-    --ventas-azul: #244292;
-    --ventas-azul-oscuro: #1e3a8a;
+    --ventas-azul: var(--sys-primary, var(--sys-primary, #244292));
+    --ventas-azul-oscuro: var(--sys-primary, #1e3a8a);
     --ventas-azul-suave: #eef3ff;
     --ventas-fondo: #f4f6f9;
     --ventas-blanco: #ffffff;
@@ -947,7 +947,7 @@ body {
 .swal-ticket-popup .ticket-print-btn {
     color: #ffffff !important;
     border: 1px solid #1d4ed8 !important;
-    background: linear-gradient(135deg, #2563eb, #1d4ed8) !important;
+    background: linear-gradient(135deg, var(--sys-accent, #2563eb), #1d4ed8) !important;
     box-shadow: 0 7px 16px rgba(37, 99, 235, 0.22) !important;
 }
 
@@ -1051,7 +1051,7 @@ body {
     display: grid;
     place-items: center;
     border-radius: 50%;
-    color: #2563eb;
+    color: var(--sys-accent, #2563eb);
     background: #edf4ff;
     font-size: 1.2rem;
 }
@@ -1229,7 +1229,7 @@ body {
     border: 1px solid #bfdbfe;
     border-radius: 10px;
     background: #eff6ff;
-    color: #1e3a8a;
+    color: var(--sys-primary, #1e3a8a);
 }
 
 .historial-sucursal-chip > i {
@@ -1362,7 +1362,7 @@ body {
 }
 
 .venta-sucursal-badge.is-matriz > i {
-    color: #2563eb;
+    color: var(--sys-accent, #2563eb);
 }
 
 .venta-sucursal-badge.is-matriz .venta-sucursal-clave {

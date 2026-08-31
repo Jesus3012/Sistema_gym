@@ -1414,7 +1414,7 @@ if (
                     </p>
                 </div>
                 <div class="col-md-4 text-right">
-                    <i class="fas fa-chart-line" style="font-size: 60px; opacity: 0.3;"></i>
+                    <i class="fas fa-chart-line welcome-banner-hero-icon"></i>
                     <br>
                     <span class="badge badge-light mt-2">
                         <i class="fas fa-fingerprint"></i> <?php echo $asistencias_hoy; ?> asistencias hoy

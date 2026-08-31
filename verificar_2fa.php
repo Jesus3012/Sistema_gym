@@ -165,6 +165,7 @@ try {
     <title>Verificación en dos pasos</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
     <link rel="stylesheet" href="css/two_factor.css?v=1.0.0">
+    <link rel="stylesheet" href="tema.css.php?v=1" data-system-theme="true">
 </head>
 <body>
 <section class="tf-shell" style="max-width:560px;">

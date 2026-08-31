@@ -1,6 +1,6 @@
 :root {
     --health-navy: #172554;
-    --health-blue: #1e3a8a;
+    --health-blue: var(--sys-primary, #1e3a8a);
     --health-blue-soft: #eef4ff;
     --health-border: #dbe4f0;
     --health-muted: #64748b;
@@ -1340,7 +1340,7 @@ button.health-icon-button { appearance: none; }
 }
 
 .health-questionnaire-intro {
-    border-left: 4px solid #1e3a8a;
+    border-left: 4px solid var(--sys-primary, #1e3a8a);
 }
 
 .health-question-section {
@@ -1406,7 +1406,7 @@ button.health-icon-button { appearance: none; }
 
 .health-choice-row input:checked + span {
     border-color: #7ba1d3;
-    color: #1e3a8a;
+    color: var(--sys-primary, #1e3a8a);
     background: #eaf2ff;
     box-shadow: 0 0 0 3px rgba(30, 58, 138, .07);
 }
@@ -2154,7 +2154,7 @@ html {
     place-items: center;
     border: 1px solid #cfe0f5;
     border-radius: 13px;
-    color: #1e3a8a;
+    color: var(--sys-primary, #1e3a8a);
     background: #eef4ff;
     font-size: 1rem;
 }
@@ -2271,7 +2271,7 @@ html {
 
 .health-followup-option:has(input:checked) .health-followup-option-check {
     color: #fff;
-    background: #1e3a8a;
+    background: var(--sys-primary, #1e3a8a);
 }
 
 .health-followup-option.is-clear:has(input:checked) {
@@ -2582,7 +2582,7 @@ html {
     height: 34px;
     place-items: center;
     border-radius: 10px;
-    color: #1e3a8a;
+    color: var(--sys-primary, #1e3a8a);
     background: #eef4ff;
 }
 
@@ -2653,7 +2653,7 @@ html {
     height: 38px;
     place-items: center;
     border-radius: 11px;
-    color: #1e3a8a;
+    color: var(--sys-primary, #1e3a8a);
     background: #e8f0ff;
 }
 
@@ -2785,7 +2785,7 @@ html {
 .health-unified-history { margin-top: 18px; overflow: hidden; border: 1px solid #dbe4f0; border-radius: 14px; background: #fff; }
 .health-unified-history > summary { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 11px; padding: 13px 15px; cursor: pointer; list-style: none; background: #f8fafc; }
 .health-unified-history > summary::-webkit-details-marker { display: none; }
-.health-unified-history-icon { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 10px; color: #1e3a8a; background: #eaf2ff; }
+.health-unified-history-icon { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 10px; color: var(--sys-primary, #1e3a8a); background: #eaf2ff; }
 .health-unified-history summary strong, .health-unified-history summary small { display: block; }
 .health-unified-history summary strong { color: var(--health-navy); font-size: .76rem; }
 .health-unified-history summary small { margin-top: 3px; color: #64748b; font-size: .62rem; }

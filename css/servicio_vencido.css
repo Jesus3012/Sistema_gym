@@ -39,7 +39,7 @@ body {
     align-items: center;
     gap: 10px;
     margin-bottom: 28px;
-    color: #1e3a8a;
+    color: var(--sys-primary, #1e3a8a);
     font-size: 1.05rem;
     font-weight: 900;
     letter-spacing: .08em;
@@ -51,7 +51,7 @@ body {
     width: 35px;
     height: 35px;
     border-radius: 10px;
-    background: #1e3a8a;
+    background: var(--sys-primary, #1e3a8a);
     color: #fff;
 }
 
@@ -137,7 +137,7 @@ body {
     display: inline-flex;
     align-items: center;
     gap: 7px;
-    color: #1e3a8a;
+    color: var(--sys-primary, #1e3a8a);
     font-weight: 750;
     text-decoration: none;
 }

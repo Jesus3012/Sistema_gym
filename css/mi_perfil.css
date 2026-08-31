@@ -4,7 +4,7 @@
     --profile-text: #172033;
     --profile-muted: #667085;
     --profile-border: #e3e8f0;
-    --profile-primary: #1e3a8a;
+    --profile-primary: var(--sys-primary, #1e3a8a);
     --profile-primary-hover: #172e70;
     --profile-soft: #eff4ff;
     --profile-success: #059669;
@@ -862,7 +862,7 @@ button {
     padding: 9px;
     border: 1px solid #dce4ee;
     border-radius: 8px;
-    color: #1e3a8a;
+    color: var(--sys-primary, #1e3a8a);
     background: #f8fafc;
     font-size: .8rem;
     font-weight: 800;

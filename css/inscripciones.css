@@ -1,6 +1,6 @@
 :root {
-    --brand: #244292;
-    --brand-dark: #1d3678;
+    --brand: var(--sys-primary, var(--sys-primary, #244292));
+    --brand-dark: var(--sys-primary-dark, #1d3678);
     --brand-soft: #edf2ff;
     --navy: #0e2c47;
     --page-bg: #f4f7fb;
@@ -13,7 +13,7 @@
     --success-dark: #059669;
     --danger: #dc2626;
     --danger-dark: #b91c1c;
-    --info: #2563eb;
+    --info: var(--sys-accent, #2563eb);
     --info-dark: #1d4ed8;
     --warning: #d97706;
     --radius: 12px;

@@ -50,6 +50,7 @@ function servicioVencidoEscapar($valor): string
     <title>Servicio no disponible - EGO</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="css/servicio_vencido.css?v=1">
+    <link rel="stylesheet" href="tema.css.php?v=1" data-system-theme="true">
 </head>
 <body>
     <main class="expired-shell">

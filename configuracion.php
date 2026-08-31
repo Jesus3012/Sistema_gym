@@ -6,6 +6,7 @@ require_once __DIR__ . '/includes/super_admin_helper.php';
 require_once __DIR__ . '/includes/configuracion_context.php';
 require_once __DIR__ . '/includes/two_factor_helper.php';
 require_once __DIR__ . '/includes/password_temporal_helper.php';
+require_once __DIR__ . '/includes/tema_sistema.php';
 require_once __DIR__ . '/PHPMailer/PHPMailer.php';
 require_once __DIR__ . '/PHPMailer/SMTP.php';
 require_once __DIR__ . '/PHPMailer/Exception.php';
@@ -436,9 +437,18 @@ function enviarCredencialesAcceso(
 }
 
 
+// Tema corporativo del sistema.
+try {
+    tema_sistema_asegurar_tabla($conn);
+} catch (Throwable $temaSchemaError) {
+    error_log('[Configuración apariencia] ' . $temaSchemaError->getMessage());
+}
+$config_apariencia = tema_sistema_obtener($conn, false);
+
 // Resolver secciones disponibles según el contexto.
 $seccionesGlobales = array(
     'general',
+    'apariencia',
     'correo',
     'clientes',
     'planes',
@@ -551,6 +561,67 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = trim((string) ($_POST['action'] ?? ''));
 
     try {
+        if ($action === 'save_appearance') {
+            if (!$vistaGlobalConfiguracion) {
+                throw new RuntimeException(
+                    'La apariencia es corporativa. Cambia a Todas las sucursales para modificarla.'
+                );
+            }
+
+            $csrfTema = (string) ($_POST['security_csrf'] ?? '');
+            if (
+                $csrfTema === ''
+                || !hash_equals($configSecurityCsrf, $csrfTema)
+            ) {
+                throw new RuntimeException('Token de seguridad inválido. Actualiza la página e intenta nuevamente.');
+            }
+
+            $config_apariencia = tema_sistema_guardar(
+                $conn,
+                array(
+                    'tema' => (string) ($_POST['tema'] ?? 'personalizado'),
+                    'color_primario' => (string) ($_POST['color_primario'] ?? ''),
+                    'color_acento' => (string) ($_POST['color_acento'] ?? ''),
+                    'color_sidebar' => (string) ($_POST['color_sidebar'] ?? ''),
+                    'color_fondo' => (string) ($_POST['color_fondo'] ?? ''),
+                    'color_superficie' => (string) ($_POST['color_superficie'] ?? ''),
+                    'color_texto' => (string) ($_POST['color_texto'] ?? ''),
+                    'radio_componentes' => (int) ($_POST['radio_componentes'] ?? 12),
+                ),
+                $usuario_id
+            );
+
+            configuracion_json(array(
+                'success' => true,
+                'message' => 'La apariencia del sistema fue actualizada.',
+                'config' => $config_apariencia
+            ));
+        }
+
+        if ($action === 'reset_appearance') {
+            if (!$vistaGlobalConfiguracion) {
+                throw new RuntimeException(
+                    'La apariencia es corporativa. Cambia a Todas las sucursales para modificarla.'
+                );
+            }
+
+            $csrfTema = (string) ($_POST['security_csrf'] ?? '');
+            if (
+                $csrfTema === ''
+                || !hash_equals($configSecurityCsrf, $csrfTema)
+            ) {
+                throw new RuntimeException('Token de seguridad inválido. Actualiza la página e intenta nuevamente.');
+            }
+
+            $config_apariencia = tema_sistema_restaurar($conn, $usuario_id);
+
+            configuracion_json(array(
+                'success' => true,
+                'message' => 'Se restauró el tema predeterminado.',
+                'config' => $config_apariencia
+            ));
+        }
+
         if ($action === 'save_config') {
             if (!$vistaGlobalConfiguracion) {
                 throw new RuntimeException(
@@ -876,6 +947,49 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             configuracion_json(array(
                 'success' => true,
                 'message' => 'La política de verificación en dos pasos fue actualizada.'
+            ));
+        }
+
+        if ($action === 'get_password_temporal_actual') {
+            $csrfSeguridad = (string) (
+                $_POST['security_csrf'] ?? ''
+            );
+
+            if (
+                $csrfSeguridad === ''
+                || !hash_equals(
+                    $configSecurityCsrf,
+                    $csrfSeguridad
+                )
+            ) {
+                throw new RuntimeException(
+                    'La sesión de seguridad cambió. Recarga la página.'
+                );
+            }
+
+            if (!rol_es_administrativo($usuario_rol_real)) {
+                throw new RuntimeException(
+                    'No tienes permiso para consultar la contraseña temporal del sistema.'
+                );
+            }
+
+            /*
+             * La contraseña temporal del sistema se conserva cifrada y puede
+             * recuperarse mediante password_temporal_get(). Se entrega solo
+             * bajo petición autenticada y nunca se incrusta en el HTML inicial.
+             */
+            $passwordTemporalActual = generarPasswordTemporal($conn);
+
+            header(
+                'Cache-Control: no-store, no-cache, must-revalidate, max-age=0'
+            );
+            header('Pragma: no-cache');
+
+            configuracion_json(array(
+                'success' => true,
+                'password_temporal' => $passwordTemporalActual,
+                'configurada' => !empty($config_acceso['configured']),
+                'message' => 'Contraseña temporal consultada.'
             ));
         }
 
@@ -3054,6 +3168,7 @@ $configuracionVista = array(
     'sucursal_nombre' => $sucursalNombreConfiguracion,
     'seccion' => $seccion,
     'config_gimnasio' => $config_gimnasio,
+    'config_apariencia' => $config_apariencia,
     'config_correo' => $config_correo,
     'config_2fa' => $config_2fa,
     'config_acceso' => $config_acceso,

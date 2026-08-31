@@ -1,5 +1,5 @@
 body.permisos-page {
-    --rp-blue: #1e3a8a;
+    --rp-blue: var(--sys-primary, #1e3a8a);
     --rp-blue-dark: #14275c;
     --rp-blue-soft: #eef4ff;
     --rp-bg: #f4f6f9;
